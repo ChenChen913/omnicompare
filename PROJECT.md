@@ -27,7 +27,7 @@
 | 样式 | Tailwind CSS v4 + shadcn/ui（Radix 封装） | 暗色主题；组件在 `src/components/ui/` |
 | 提示 | sonner（toast）+ 自定义 AlertDialog | toast 按通道固定 id 去重，位置 bottom-center |
 | 图标 | lucide-react | |
-| 存储 | **文件系统 + JSON 清单**（无数据库） | `data/uploads/` 存视频，`data/manifest.json` 存索引 |
+| 存储 | **文件系统 + JSON 清单**（无数据库） | `data/projects/[id]/files/` 存内容文件，`data/projects/[id]/manifest.json` 存索引 |
 | 包管理 | Bun（含 `bun.lock`） | npm/pnpm 亦可，但没有 lock 文件 |
 | 流媒体 | 原生 `<video>` + 自实现 HTTP Range 206 | 见 `src/app/api/files/[name]/route.ts` |
 
@@ -92,16 +92,16 @@ data/                             # 运行时数据（gitignore，不入库）
 - `items[].id`：全生命周期稳定锚点；`order` 决定矩阵位置，**恒为 0..n-1 紧凑无空洞**（任何增删后服务端重排）
 - `items[].kind`：`video | html`（MVP）；html 另有 `status` 加载状态字段；image/svg 等第二阶段预留
 - `slotCount`：可见窗格数（v1 count 的沿用，1–12）；`layout` 可为显式行列或 `"auto"`（近方形）
-- v1 兼容：`/api/videos*` 仍以 slot 位置语义工作（slot i ↔ order i），由 `video-store.ts` 门面适配
+- v1 兼容：`/api/videos*` 仍以 slot 位置语义工作（slot i ↔ order i），由 `video-store.ts` 门面适配；Step 5 起 slot 视图携带扩展字段 `kind`（'video' | 'html'）与 `html`（HTML 条目的文件元数据），旧客户端可安全忽略
 - 旧清单/旧文件迁移后改名为 `manifest.v1.bak.json` / `uploads.v1.bak/`，确认无误后可删除
 
 ### 4.2 并发与一致性（重要不变量）
 
 1. **原子写**：清单写盘一律先写临时文件再 `rename`，杜绝半截 JSON（`project-store.ts: writeProject`）
-2. **进程内互斥锁（按项目维度）**：所有「读清单 → 改 → 写回」的临界区必须包在 `withProjectLock(projectId, fn)` 里（每项目一条 Promise 队列串行化），否则并发上传会互相覆盖（lost update）。v1 的 `withManifestLock()` 即默认项目锁。**新增改清单的 API 时必须同样包锁**
-3. **上传严格校验**：v1 `slot` 参数必须是匹配 `/^\d{1,2}$/` 的字符串后才转数字（防 `Number(null) === 0` 静默落位 0）；v2 上传 kind 由服务端按 MIME + 扩展名双判，HTML 限 ≤10MB
-4. **删条目必须删文件**：替换上传、缩减布局、清空、删除条目时，服务端同步删除被移除的磁盘文件，防止孤儿文件；v2 删除条目先写清单再删文件，即使文件删除失败也不产生死链
-5. **HTML 安全响应头**：`/api/files/[name]` 对 `.html` 强制 `CSP: sandbox allow-scripts` + `nosniff` + `no-store` + `Content-Disposition: inline; filename=sandbox.html`，绝不可去掉（蓝图 §11）
+2. **进程内互斥锁（按项目维度）**：所有「读清单 → 改 → 写回」的临界区必须包在 `withProjectLock(projectId, fn)` 里（每项目一条 Promise 队列串行化），否则并发上传会互相覆盖（lost update）。v1 的 `withManifestLock()` 即默认项目锁。**新增改清单的 API 时必须同样包锁**。锁队列挂在 `globalThis` 上：Next dev 下模块会被重复求值（HMR、按路由独立打包），模块级 Map 会随实例重建而丢失、导致并发请求各自持锁
+3. **上传严格校验**：v1 `slot` 参数必须是匹配 `/^\d{1,2}$/` 的字符串后才转数字（防 `Number(null) === 0` 静默落位 0）；v1/v2 上传 kind 均由服务端按 MIME + 扩展名双判（视频或单文件 HTML，HTML 限 ≤10MB）
+4. **删条目必须删文件（集中式清理）**：v1 门面的 `writeManifest` 在写盘前对比新旧条目的文件引用差集，统一删除被移除/被替换的文件（含 v1 视图 `video=null` 看不见的 HTML 文件）；v2 删除条目先写清单再删文件。即使文件删除失败也不产生死链
+5. **HTML 安全响应头**：`/api/files/[name]` 对 `.html` 强制 `CSP: sandbox allow-scripts` + `nosniff` + `no-store` + `Content-Disposition: inline; filename=sandbox.html`，绝不可去掉（蓝图 §11）；前端 iframe 同样仅给 `allow-scripts`（绝不 `allow-same-origin`）
 
 ### 4.3 播放与同步
 
@@ -166,7 +166,7 @@ bun run start        # NODE_ENV=production bun .next/standalone/server.js
 | 方法与路径 | 参数 | 成功返回 | 失败 |
 |---|---|---|---|
 | `GET /api/videos` | — | 完整 Manifest | — |
-| `POST /api/videos/upload` | FormData：`file`（≤200MB 的视频）、`slot`（0-based 数字字符串） | 更新后的 Manifest；替换上传会删除旧文件 | 400 缺参/类型/大小/位置非法 |
+| `POST /api/videos/upload` | FormData：`file`（视频 ≤200MB 或单文件 HTML ≤10MB，kind 服务端双判）、`slot`（0-based 数字字符串） | 更新后的 Manifest（slots 带扩展字段 kind/html）；被替换条目的旧文件同步删除 | 400 缺参/类型/大小/位置非法 |
 | `PATCH /api/videos` | JSON：`{ slot, title }`，标题 trim 后截断到 100 字 | 更新后的 Manifest | 400 |
 | `DELETE /api/videos?slot=i` | 删除位置 i 的视频 | 更新后的 Manifest | 400/404 |
 | `DELETE /api/videos?all=1` | 清空全部视频与标题，**保留**当前数量与矩阵 | 更新后的 Manifest | 400 |

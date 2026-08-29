@@ -9,7 +9,7 @@
  * - 缩减 count          → order >= count 的条目连同文件删除
  */
 import { randomUUID } from 'crypto';
-import { ContentItem, DEFAULT_PROJECT_ID, FileMeta, Layout, Manifest, Slot } from './types';
+import { ContentItem, ContentKind, DEFAULT_PROJECT_ID, FileMeta, Layout, Manifest, Slot } from './types';
 import {
   deleteFile,
   ensureDefaultProject,
@@ -20,7 +20,7 @@ import {
   writeProject,
 } from './project-store';
 
-export { isValidLayout, isSafeFilename } from './project-store';
+export { isValidLayout, isSafeFilename, validateUploadFile } from './project-store';
 
 /**
  * 清单「读-改-写」互斥锁：单进程内将临界区串行化，
@@ -42,33 +42,58 @@ export async function readManifest(): Promise<Manifest> {
   };
 }
 
-/** 写清单：body 为 v1 视图（readManifest 的产物），按 slots 差量写回 items */
+/** 写清单：body 为 v1 视图（readManifest 的产物），按 slots 差量写回 items。
+ * Step 5 起视图携带 kind/html 扩展字段，HTML 条目在 v1 写路径中原样保留；
+ * 兼容未携带扩展字段的旧客户端（仅有 video 字段的槽位照常落为视频条目）。 */
 export async function writeManifest(manifest: Manifest): Promise<void> {
   const project = await readProject(DEFAULT_PROJECT_ID);
+  const previousFiles = new Set(project.items.map((it) => it.file.filename));
+
   project.slotCount = manifest.count;
   // v1 视图无 auto 概念：矩阵始终为显式行列
   project.layout = manifest.layout;
-  project.items = manifest.slots
-    .map((slot: Slot, order: number): ContentItem | null => {
-      if (!slot.video) return null;
-      const existing = project.items[order];
-      const now = new Date().toISOString();
-      return {
-        id: existing?.id ?? randomUUID(),
-        kind: 'video',
-        title: slot.title,
-        order,
-        aspectRatio: existing?.aspectRatio ?? null,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-        file: slot.video,
-      };
-    })
-    .filter((it): it is ContentItem => it !== null)
+
+  const now = new Date().toISOString();
+  const items: ContentItem[] = [];
+  manifest.slots.forEach((slot: Slot, order: number) => {
+    const existing = project.items[order];
+    const base = {
+      id: existing?.id ?? randomUUID(),
+      title: slot.title,
+      order,
+      aspectRatio: existing?.aspectRatio ?? null,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    if (slot.kind === 'html' && slot.html) {
+      // HTML 条目：保留原有加载状态（status 由客户端渲染时本地流转）
+      items.push({
+        ...base,
+        kind: 'html',
+        file: slot.html,
+        status: existing && existing.kind === 'html' ? existing.status : 'ready',
+      });
+    } else if (slot.video) {
+      items.push({ ...base, kind: 'video', file: slot.video });
+    }
+    // 其余（video 与 html 均为空）= 空位：不生成条目，紧凑序由下方重排保证
+  });
+  project.items = items
     // 紧凑序不变量：删除/替换后重排为 0..n-1（空洞在写入时即消除，蓝图 §19.4）
     .map((it, i) => (it.order === i ? it : { ...it, order: i }));
-  project.updatedAt = new Date().toISOString();
+
+  // 集中式孤儿清理：被移除/被替换条目的文件统一在此删除（含 v1 视图 video=null 看不见的
+  // HTML 文件），保证任意 v1 写路径（上传替换/删除/清空/缩容/改标题）后清单与磁盘 1:1
+  const keptFiles = new Set(project.items.map((it) => it.file.filename));
+  const removed = [...previousFiles].filter((f) => !keptFiles.has(f));
+
+  project.updatedAt = now;
   await writeProject(project);
+
+  // 清单落盘后再删文件（与 v2 端点同序）：即便删除失败也不产生死链
+  if (removed.length > 0) {
+    await Promise.all(removed.map((f) => deleteFile(DEFAULT_PROJECT_ID, f)));
+  }
 }
 
 /**
@@ -85,9 +110,10 @@ export function applyCountAndLayout(
   for (let i = count; i < manifest.slots.length; i++) {
     const old = manifest.slots[i];
     if (old?.video) removedFilenames.push(old.video.filename);
+    else if (old?.html) removedFilenames.push(old.html.filename);
   }
   while (nextSlots.length < count) {
-    nextSlots.push({ index: nextSlots.length, title: '', video: null });
+    nextSlots.push({ index: nextSlots.length, title: '', video: null, html: null });
   }
   return {
     manifest: { count, layout, slots: nextSlots.map((s, i) => ({ ...s, index: i })) },
@@ -95,21 +121,9 @@ export function applyCountAndLayout(
   };
 }
 
-/** 服务端校验视频文件，返回错误信息（null 表示通过） */
-export function validateVideoFile(name: string, mimeType: string, size: number): string | null {
-  if (size === 0) return '文件内容为空';
-  if (size > 200 * 1024 * 1024) return '文件超过 200MB 大小限制';
-  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
-  const videoExts = ['.mp4', '.m4v', '.mov', '.webm', '.ogv', '.avi', '.mkv'];
-  if (!mimeType.startsWith('video/') && !videoExts.includes(ext)) {
-    return '仅支持视频文件（MP4 / MOV / WebM 等）';
-  }
-  return null;
-}
-
-/** 保存上传的视频文件（写入默认项目 files/ 目录），返回其元数据 */
-export async function saveVideoFile(file: File): Promise<FileMeta> {
-  return saveFile(DEFAULT_PROJECT_ID, file, 'video');
+/** 保存上传的内容文件（视频或 HTML，写入默认项目 files/ 目录），返回其元数据 */
+export async function saveContentFile(file: File, kind: ContentKind): Promise<FileMeta> {
+  return saveFile(DEFAULT_PROJECT_ID, file, kind);
 }
 
 /** 删除默认项目中的视频文件（忽略不存在的情况） */

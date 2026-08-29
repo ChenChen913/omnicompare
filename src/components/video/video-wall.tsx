@@ -26,12 +26,12 @@ import { cn } from '@/lib/utils';
 import {
   Layout,
   Manifest,
-  MAX_FILE_SIZE,
   SLOT_MAX,
   Slot,
   defaultLayoutFor,
-  isVideoFile,
+  isContentFile,
   layoutOptionsFor,
+  validateClientFile,
 } from '@/lib/types';
 import {
   AlertDialog,
@@ -139,7 +139,7 @@ export function VideoWall() {
   }, []);
 
   const busy = importing || Object.values(uploading).some(Boolean);
-  const filledCount = slots.filter((s) => s.video).length;
+  const filledCount = slots.filter((s) => s.video || s.html).length;
   const getActiveVideos = useCallback(
     () =>
       slots
@@ -279,42 +279,42 @@ export function VideoWall() {
     [],
   );
 
-  /** 缩减到 n 个位置时，将被移除区间内实际存在的视频数 */
-  const removedVideoCount = useCallback(
-    (n: number) => slots.slice(n).filter((s) => s.video).length,
+  /** 缩减到 n 个位置时，将被移除区间内实际存在的内容数（视频或 HTML） */
+  const removedContentCount = useCallback(
+    (n: number) => slots.slice(n).filter((s) => s.video || s.html).length,
     [slots],
   );
 
-  /** 选择数量：缩减且被移除区间内有视频时弹确认框 */
+  /** 选择数量：缩减且被移除区间内有内容时弹确认框 */
   const handleCountSelect = useCallback(
     (n: number) => {
       if (busy || n === count) return;
-      if (removedVideoCount(n) > 0) {
+      if (removedContentCount(n) > 0) {
         setPendingCount(n);
         return;
       }
       void requestLayout(n, defaultLayoutFor(n)).then((m) => {
         // 固定 id：连续快速切换数量时只更新同一条提示，不会叠加成一堆
-        if (m) toast.success(`已切换为 ${n} 个视频位`, { id: 'layout', duration: 2000 });
+        if (m) toast.success(`已切换为 ${n} 个内容位`, { id: 'layout', duration: 2000 });
       });
     },
-    [busy, count, removedVideoCount, requestLayout],
+    [busy, count, removedContentCount, requestLayout],
   );
 
   const confirmShrink = useCallback(() => {
     const n = pendingCount;
     setPendingCount(null);
     if (n === null) return;
-    const removed = removedVideoCount(n);
+    const removed = removedContentCount(n);
     void requestLayout(n, defaultLayoutFor(n)).then((m) => {
       if (m) {
         toast.success(
-          removed > 0 ? `已缩减为 ${n} 个视频位，${removed} 个视频已移除` : `已切换为 ${n} 个视频位`,
+          removed > 0 ? `已缩减为 ${n} 个内容位，${removed} 个内容已移除` : `已切换为 ${n} 个内容位`,
           { id: 'layout', duration: 2000 },
         );
       }
     });
-  }, [pendingCount, removedVideoCount, requestLayout]);
+  }, [pendingCount, removedContentCount, requestLayout]);
 
   const handleLayoutSelect = useCallback(
     (l: Layout) => {
@@ -327,8 +327,8 @@ export function VideoWall() {
   /* ---------- 上传与分配 ---------- */
   /** 上传单个文件到指定位置；返回失败原因（null 表示成功），提示由调用方聚合成一条 */
   const uploadToSlot = useCallback(async (index: number, file: File): Promise<string | null> => {
-    if (!isVideoFile(file.name, file.type)) return `「${file.name}」不是视频文件`;
-    if (file.size > MAX_FILE_SIZE) return `「${file.name}」超过 200MB 限制`;
+    const invalid = validateClientFile(file);
+    if (invalid) return `「${file.name}」${invalid}`;
     setUploading((prev) => ({ ...prev, [index]: true }));
     try {
       const fd = new FormData();
@@ -357,14 +357,14 @@ export function VideoWall() {
    */
   const distributeFiles = useCallback(
     async (files: File[], primarySlot?: number) => {
-      const vids = files.filter((f) => isVideoFile(f.name, f.type));
+      const vids = files.filter((f) => isContentFile(f.name, f.type));
       const skipped = files.length - vids.length;
       if (vids.length === 0) {
-        toast.error('请选择视频文件（MP4、MOV、WebM 等）', { id: 'import' });
+        toast.error('仅支持视频或单文件 HTML，请重新选择', { id: 'import' });
         return;
       }
       if (vids.length > SLOT_MAX) {
-        toast.warning(`单次最多导入 ${SLOT_MAX} 个视频，超出部分已忽略`, { id: 'import' });
+        toast.warning(`单次最多导入 ${SLOT_MAX} 个内容，超出部分已忽略`, { id: 'import' });
       }
       const batch = vids.slice(0, SLOT_MAX);
 
@@ -382,10 +382,11 @@ export function VideoWall() {
         primary = undefined;
       }
 
+      // 目标位选择：空位（无 video 也无 html）优先
       const targets: number[] = [];
       if (primary !== undefined) targets.push(primary);
-      targets.push(...targetSlots.filter((s) => !s.video && s.index !== primary).map((s) => s.index));
-      targets.push(...targetSlots.filter((s) => s.video && s.index !== primary).map((s) => s.index));
+      targets.push(...targetSlots.filter((s) => !s.video && !s.html && s.index !== primary).map((s) => s.index));
+      targets.push(...targetSlots.filter((s) => (s.video || s.html) && s.index !== primary).map((s) => s.index));
 
       setImporting(true);
       try {
@@ -401,15 +402,15 @@ export function VideoWall() {
         if (ok > 0) {
           const parts: string[] = [
             expanded
-              ? `已扩展至 ${batch.length} 位并导入 ${ok} 个视频`
+              ? `已扩展至 ${batch.length} 位并导入 ${ok} 个内容`
               : batch.length === 1
-                ? '已导入 1 个视频'
-                : `已导入 ${ok} 个视频`,
+                ? '已导入 1 个内容'
+                : `已导入 ${ok} 个内容`,
           ];
           if (failures.length > 0) {
             parts.push(`${failures.length} 个失败（${failures[0]}${failures.length > 1 ? ' 等' : ''}）`);
           }
-          if (skipped > 0) parts.push(`${skipped} 个非视频文件已跳过`);
+          if (skipped > 0) parts.push(`${skipped} 个不支持的文件已跳过`);
           if (failures.length > 0) {
             toast.warning(parts.join('，'), { id: 'import', duration: 4500 });
           } else {
@@ -457,7 +458,7 @@ export function VideoWall() {
         return;
       }
       setSlots(data.slots);
-      toast.success(`已移除位置 ${index + 1} 的视频`, { id: 'slot' });
+      toast.success(`已移除位置 ${index + 1} 的内容`, { id: 'slot' });
     } catch {
       toast.error('移除失败，请重试', { id: 'slot' });
     }
@@ -474,7 +475,7 @@ export function VideoWall() {
       setCount(data.count);
       setLayout(data.layout);
       setSlots(data.slots);
-      toast.success('已清空全部视频', { id: 'clear' });
+      toast.success('已清空全部内容', { id: 'clear' });
     } catch {
       toast.error('清空失败，请重试', { id: 'clear' });
     }
@@ -484,7 +485,7 @@ export function VideoWall() {
   const handlePlayAll = useCallback(() => {
     const active = getActiveVideos();
     if (active.length === 0) {
-      toast.error('还没有视频，请先上传', { id: 'play' });
+      toast.error('还没有可播放的视频，请先上传', { id: 'play' });
       return;
     }
     // 先统一暂停并回到开头，再一起播放，保证起始同步
@@ -509,7 +510,7 @@ export function VideoWall() {
   const handlePauseAll = useCallback(() => {
     const active = getActiveVideos();
     if (active.length === 0) {
-      toast.error('还没有视频，请先上传', { id: 'play' });
+      toast.error('还没有可播放的视频，请先上传', { id: 'play' });
       return;
     }
     active.forEach((v) => {
@@ -615,8 +616,8 @@ export function VideoWall() {
                       ctlBtn,
                       'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
                     )}
-                    title="设置视频数量与排列矩阵"
-                    aria-label="设置视频数量与排列矩阵"
+                    title="设置内容位数量与排列矩阵"
+                    aria-label="设置内容位数量与排列矩阵"
                   >
                     <LayoutGrid className="h-4 w-4" aria-hidden />
                     <span className="hidden sm:inline">布局</span>
@@ -629,7 +630,7 @@ export function VideoWall() {
                   align="end"
                   className="w-80 border-border bg-card p-4 text-card-foreground"
                 >
-                  <p className="text-xs font-semibold tracking-wide text-muted-foreground">视频数量</p>
+                  <p className="text-xs font-semibold tracking-wide text-muted-foreground">内容位数量</p>
                   <div className="mt-2 grid grid-cols-6 gap-1.5">
                     {Array.from({ length: SLOT_MAX }, (_, i) => i + 1).map((n) => (
                       <button
@@ -735,17 +736,17 @@ export function VideoWall() {
                         ctlBtn,
                         'border-transparent bg-transparent px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:px-2.5',
                       )}
-                      title="清空全部视频"
-                      aria-label="清空全部视频"
+                      title="清空全部内容"
+                      aria-label="清空全部内容"
                     >
                       <Trash2 className="h-4 w-4" aria-hidden />
                     </button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>清空全部视频？</AlertDialogTitle>
+                      <AlertDialogTitle>清空全部内容？</AlertDialogTitle>
                       <AlertDialogDescription>
-                        将移除全部 {filledCount} 个视频及其标题，此操作无法恢复。
+                        将移除全部 {filledCount} 个内容及其标题，此操作无法恢复。
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -812,7 +813,7 @@ export function VideoWall() {
         <div className="pointer-events-none fixed inset-x-0 top-16 z-50 flex justify-center">
           <div className="flex items-center gap-2 rounded-full border border-primary/60 bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-xl shadow-primary/10 backdrop-blur">
             <UploadCloud className="h-4 w-4" aria-hidden />
-            松开鼠标导入视频 · 文件较多时会自动扩展位数
+            松开鼠标导入内容 · 文件较多时会自动扩展位数
           </div>
         </div>
       )}
@@ -924,13 +925,18 @@ export function VideoWall() {
                     <span
                       className={cn(
                         'h-1.5 w-1.5 shrink-0 rounded-full',
-                        s.video ? 'bg-emerald-500' : 'bg-muted-foreground/30',
+                        s.kind === 'html' ? 'bg-sky-500' : s.video ? 'bg-emerald-500' : 'bg-muted-foreground/30',
                       )}
                       aria-hidden
                     />
                     <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">
-                      {s.title || (s.video ? s.video.originalName : `空位 ${s.index + 1}`)}
+                      {s.title || s.video?.originalName || s.html?.originalName || `空位 ${s.index + 1}`}
                     </span>
+                    {s.kind === 'html' && (
+                      <span className="shrink-0 rounded border border-border px-1 text-[9px] font-semibold leading-4 text-muted-foreground/70">
+                        HTML
+                      </span>
+                    )}
                     <span
                       className={cn(
                         'shrink-0 text-[10px] tabular-nums',
@@ -971,6 +977,7 @@ export function VideoWall() {
                 loop={loop}
                 muted={mutedAll}
                 highlighted={highlight === slot.index}
+                dragActive={gridDrag}
                 onFiles={(files, primary) => void distributeFiles(files, primary)}
                 onTitleChange={handleTitleChange}
                 onClear={handleClearSlot}
@@ -997,19 +1004,19 @@ export function VideoWall() {
             <ol className="flex flex-col gap-1.5 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-x-6">
               <li>
                 <span className="mr-1 font-semibold text-foreground/80">1.</span>
-                点右上「布局」选择视频个数与几行几列，单视频会自动满幅展示
+                点右上「布局」选择内容位个数与几行几列，单内容会自动满幅展示
               </li>
               <li>
                 <span className="mr-1 font-semibold text-foreground/80">2.</span>
-                点击空位上传，或把文件直接拖进页面（一次拖多个会自动扩展位数）
+                点击空位上传视频或单文件 HTML（页面自动运行），或把文件直接拖进页面
               </li>
               <li>
                 <span className="mr-1 font-semibold text-foreground/80">3.</span>
-                在视频下方填写标题或介绍，点「同时播放」一起观看；右上角可切换明暗与专注模式
+                在内容下方填写标题或介绍，点「同时播放」一起观看视频；右上角可切换明暗与专注模式
               </li>
             </ol>
             <p className="mt-2.5 text-[11px] text-muted-foreground/60">
-              视频与设置保存在服务器上，刷新页面或换台设备打开都不会丢失。
+              内容与设置保存在服务器上，刷新页面或换台设备打开都不会丢失；HTML 页面在独立沙箱中运行，无法访问本站数据。
             </p>
           </div>
         </footer>
@@ -1024,10 +1031,10 @@ export function VideoWall() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>缩减视频数量？</AlertDialogTitle>
+            <AlertDialogTitle>缩减内容位数量？</AlertDialogTitle>
             <AlertDialogDescription>
               缩减到 {pendingCount} 个将移除末尾多余的{' '}
-              {removedVideoCount(pendingCount ?? 0)} 个视频及其标题，且无法恢复。
+              {removedContentCount(pendingCount ?? 0)} 个内容及其标题，且无法恢复。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1042,11 +1049,11 @@ export function VideoWall() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* 一键导入的隐藏文件选择框 */}
+      {/* 一键导入的隐藏文件选择框（视频与单文件 HTML） */}
       <input
         ref={importInputRef}
         type="file"
-        accept="video/mp4,video/*"
+        accept="video/mp4,video/*,.html,.htm"
         multiple
         className="hidden"
         onChange={(e) => {

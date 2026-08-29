@@ -47,8 +47,12 @@ export interface Slot {
   index: number;
   /** 用户自定义标题 / 介绍 */
   title: string;
-  /** 已放置的视频，空位为 null */
+  /** 已放置的视频文件；空位或 HTML 条目为 null */
   video: SlotVideo | null;
+  /** 条目类型（Step 5 扩展字段，向后兼容）：缺省视为 video；旧客户端只需忽略 */
+  kind?: ContentKind;
+  /** 已放置的 HTML 文件；仅 kind='html' 时存在 */
+  html?: FileMeta | null;
 }
 
 /** 排列矩阵：rows 行 × cols 列（rows*cols >= 视频数量，多出的为留空格） */
@@ -215,6 +219,33 @@ export function isVideoFile(name: string, mimeType: string): boolean {
   const m = /\.([A-Za-z0-9]{1,8})$/.exec(name);
   if (!m) return false;
   return (VIDEO_EXTS as readonly string[]).includes(`.${m[1].toLowerCase()}`);
+}
+
+/** 判断是否为可接受的 HTML 文件（扩展名判别，与服务端 validateUploadFile 的 ext 规则一致） */
+export function isHtmlFile(name: string): boolean {
+  const m = /\.([A-Za-z0-9]{1,8})$/.exec(name);
+  if (!m) return false;
+  return (HTML_EXTS as readonly string[]).includes(`.${m[1].toLowerCase()}`);
+}
+
+/** 判断是否为可导入的内容文件（视频或单文件 HTML） */
+export function isContentFile(name: string, mimeType: string): boolean {
+  return isVideoFile(name, mimeType) || isHtmlFile(name);
+}
+
+/**
+ * 客户端上传预检：返回错误信息（null 表示通过）。
+ * 与服务端 validateUploadFile 保持同一套规则，提前拦截以免浪费一次请求。
+ */
+export function validateClientFile(file: { name: string; type: string; size: number }): string | null {
+  if (file.size === 0) return '文件内容为空';
+  if (isHtmlFile(file.name)) {
+    if (file.size > MAX_HTML_SIZE) return 'HTML 文件超过 10MB 大小限制';
+    return null;
+  }
+  if (!isVideoFile(file.name, file.type)) return '仅支持视频或单文件 HTML';
+  if (file.size > MAX_FILE_SIZE) return '文件超过 200MB 大小限制';
+  return null;
 }
 
 /** 字节数格式化为可读文本 */

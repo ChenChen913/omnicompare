@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
+import { Code2, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Slot, formatBytes } from '@/lib/types';
 
@@ -12,6 +12,8 @@ interface VideoCardProps {
   muted: boolean;
   /** 侧栏「当前窗格列表」点击定位时的高亮态 */
   highlighted?: boolean;
+  /** 页面级拖拽导入进行中（用于在 iframe 上方临时铺一层可落放的护盾） */
+  dragActive?: boolean;
   /** 处理文件（可多个）：第一个放入本位置，其余按顺序分配到其它位置 */
   onFiles: (files: File[], primarySlot: number) => void;
   onTitleChange: (slotIndex: number, title: string) => void;
@@ -19,25 +21,57 @@ interface VideoCardProps {
   setVideoRef: (index: number, el: HTMLVideoElement | null) => void;
 }
 
+type HtmlStatus = 'loading' | 'ready' | 'error';
+
+/** iframe 加载超时（毫秒）：超时仍未 onload 判定为失败（BLUEPRINT §10） */
+const HTML_LOAD_TIMEOUT = 15000;
+
 export function VideoCard({
   slot,
   uploading,
   loop,
   muted,
   highlighted,
+  dragActive,
   onFiles,
   onTitleChange,
   onClear,
   setVideoRef,
 }: VideoCardProps) {
   const { index, title, video } = slot;
+  const isHtml = slot.kind === 'html' && !!slot.html;
+  const htmlFile = slot.html ?? null;
   const [dragOver, setDragOver] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [prevFilename, setPrevFilename] = useState(video?.filename);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 切换视频时在渲染期重置错误状态（React 推荐模式，避免额外 effect）
+  /* ---------- HTML 状态机：loading → ready（onload）/ error（onerror 或 15s 超时） ---------- */
+  const [htmlStatus, setHtmlStatus] = useState<HtmlStatus>('loading');
+  const [iframeNonce, setIframeNonce] = useState(0);
+  const [prevHtmlName, setPrevHtmlName] = useState<string | undefined>(undefined);
+
+  // 切换 HTML 文件时在渲染期重置状态（React 推荐模式，避免额外 effect）
+  if (prevHtmlName !== htmlFile?.filename) {
+    setPrevHtmlName(htmlFile?.filename);
+    setHtmlStatus('loading');
+  }
+
+  // loading 状态下启动超时计时；就绪/出错/重挂载后重置
+  useEffect(() => {
+    if (!isHtml || htmlStatus !== 'loading') return;
+    const timer = setTimeout(() => setHtmlStatus('error'), HTML_LOAD_TIMEOUT);
+    return () => clearTimeout(timer);
+  }, [isHtml, htmlStatus, htmlFile?.filename, iframeNonce]);
+
+  /** 重试：换 key 强制重挂载 iframe，重新走一遍 loading → ready/error */
+  const retryHtml = useCallback(() => {
+    setHtmlStatus('loading');
+    setIframeNonce((n) => n + 1);
+  }, []);
+
+  /* ---------- 视频错误状态：切换视频时重置 ---------- */
   if (prevFilename !== video?.filename) {
     setPrevFilename(video?.filename);
     setVideoError(false);
@@ -67,7 +101,20 @@ export function VideoCard({
     if (files.length > 0) onFiles(files, index);
   };
 
-  const src = video ? `/api/files/${encodeURIComponent(video.filename)}` : undefined;
+  const src = video
+    ? `/api/files/${encodeURIComponent(video.filename)}`
+    : htmlFile
+      ? `/api/files/${encodeURIComponent(htmlFile.filename)}`
+      : undefined;
+  const displayName = video?.originalName ?? htmlFile?.originalName ?? '';
+  const displaySize = video?.size ?? htmlFile?.size ?? 0;
+
+  // 文件选择框按当前卡片状态收窄类型：空位两者都收，已放置按类型收
+  const accept = isHtml
+    ? '.html,.htm,text/html'
+    : video
+      ? 'video/mp4,video/*'
+      : 'video/mp4,video/*,.html,.htm';
 
   return (
     <article
@@ -88,7 +135,7 @@ export function VideoCard({
         {index + 1}
       </span>
 
-      {/* 视频区域：固定宽高比，object-contain 保证不裁切原始画面 */}
+      {/* 内容区域：固定宽高比，视频 object-contain 不裁切；HTML 为沙箱 iframe */}
       <div
         className="relative aspect-video w-full overflow-hidden bg-black"
         onDragOver={(e) => {
@@ -123,20 +170,78 @@ export function VideoCard({
               </div>
             )}
           </>
+        ) : htmlFile ? (
+          <>
+            {/* 沙箱渲染：仅 allow-scripts，绝不给 allow-same-origin（BLUEPRINT §11.3）；
+                服务端对该 URL 还强制 CSP sandbox + nosniff + no-store 双保险 */}
+            <iframe
+              key={iframeNonce}
+              src={src}
+              sandbox="allow-scripts"
+              referrerPolicy="no-referrer"
+              title={title || htmlFile.originalName}
+              onLoad={() => setHtmlStatus('ready')}
+              onError={() => setHtmlStatus('error')}
+              className="h-full w-full border-0 bg-white"
+            />
+            {htmlStatus === 'loading' && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-card">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden />
+                <p className="text-xs text-muted-foreground">页面加载中…</p>
+              </div>
+            )}
+            {htmlStatus === 'error' && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-card px-4 text-center">
+                <p className="text-sm font-medium text-destructive">页面加载失败</p>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  文件可能缺失或内容无法渲染
+                </p>
+                <button
+                  type="button"
+                  onClick={retryHtml}
+                  className="mt-1 inline-flex h-8 items-center rounded-lg border border-border bg-muted/60 px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                >
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  重试
+                </button>
+              </div>
+            )}
+            {/* 拖拽护盾：iframe 会吞掉拖拽事件，页面级拖入时在其上方铺一层可落放遮罩，
+                保证「拖文件到 HTML 卡片」与视频卡片体验一致 */}
+            {dragActive && (
+              <div
+                className="absolute inset-0 z-20 flex items-center justify-center border-2 border-dashed border-primary/70 bg-primary/10"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleDrop}
+              >
+                <p className="rounded-full bg-background/90 px-3 py-1 text-xs font-medium text-primary shadow">
+                  松开鼠标导入到此位置
+                </p>
+              </div>
+            )}
+          </>
         ) : (
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
             className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2 px-3 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed"
-            aria-label={`位置 ${index + 1}：暂无视频，点击上传`}
+            aria-label={`位置 ${index + 1}：暂无内容，点击上传`}
           >
             <span className="flex h-11 w-11 items-center justify-center rounded-full border border-dashed border-muted-foreground/40">
               <UploadCloud className="h-5 w-5" aria-hidden />
             </span>
-            <span className="text-sm font-medium">暂无视频</span>
-            <span className="text-[11px] text-muted-foreground/60">点击选择或拖拽视频到此处</span>
+            <span className="text-sm font-medium">暂无内容</span>
+            <span className="text-[11px] text-muted-foreground/60">点击选择或拖入视频 / HTML 文件</span>
           </button>
+        )}
+
+        {/* HTML 类型角标（内容区左上，位置角标右侧） */}
+        {isHtml && (
+          <span className="absolute left-2.5 top-2.5 z-10 ml-9 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm">
+            <Code2 className="h-3 w-3" aria-hidden />
+            HTML
+          </span>
         )}
 
         {/* 上传中遮罩 */}
@@ -158,22 +263,39 @@ export function VideoCard({
           onChange={(e) => onTitleChange(index, e.target.value)}
           onFocus={() => recalcHeight(true)}
           onBlur={() => recalcHeight(false)}
-          placeholder="给视频起个标题，或写点介绍…"
+          placeholder="给内容起个标题，或写点介绍…"
           aria-label={`位置 ${index + 1} 的标题与介绍`}
           className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 text-[13px] leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
         />
-        {video && (
+        {(video || htmlFile) && (
           <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-            <span className="min-w-0 truncate" title={video.originalName}>
-              {video.originalName} · {formatBytes(video.size)}
+            {/* 状态点：HTML 显示加载状态（绿=就绪 / 琥珀=加载中 / 红=失败）；视频默认就绪 */}
+            <span className="flex min-w-0 items-center gap-1.5">
+              {isHtml && (
+                <span
+                  role="status"
+                  aria-label={
+                    htmlStatus === 'ready' ? '页面就绪' : htmlStatus === 'loading' ? '页面加载中' : '页面加载失败'
+                  }
+                  className={cn(
+                    'h-1.5 w-1.5 shrink-0 rounded-full',
+                    htmlStatus === 'ready' && 'bg-emerald-500',
+                    htmlStatus === 'loading' && 'animate-pulse bg-amber-500',
+                    htmlStatus === 'error' && 'bg-destructive',
+                  )}
+                />
+              )}
+              <span className="min-w-0 truncate" title={displayName}>
+                {displayName} · {formatBytes(displaySize)}
+              </span>
             </span>
             <span className="flex shrink-0 items-center gap-0.5">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                title="替换视频"
-                aria-label={`替换位置 ${index + 1} 的视频`}
+                title={isHtml ? '替换 HTML 页面' : '替换视频'}
+                aria-label={`替换位置 ${index + 1} 的内容`}
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40"
               >
                 <RefreshCw className="h-3.5 w-3.5" aria-hidden />
@@ -182,8 +304,8 @@ export function VideoCard({
                 type="button"
                 onClick={() => onClear(index)}
                 disabled={uploading}
-                title="移除视频"
-                aria-label={`移除位置 ${index + 1} 的视频`}
+                title={isHtml ? '移除 HTML 页面' : '移除视频'}
+                aria-label={`移除位置 ${index + 1} 的内容`}
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/50 disabled:opacity-40"
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden />
@@ -193,11 +315,11 @@ export function VideoCard({
         )}
       </div>
 
-      {/* 隐藏的文件选择框 */}
+      {/* 隐藏的文件选择框（按当前卡片状态收窄类型） */}
       <input
         ref={fileInputRef}
         type="file"
-        accept="video/mp4,video/*"
+        accept={accept}
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];

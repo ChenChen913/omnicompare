@@ -193,7 +193,7 @@ MVP 阶段默认单项目 + 草稿/归档状态；多项目列表页第二阶段
 | 2 | 双主题落地：DESIGN token → globals.css、next-themes、顶栏切换按钮、现有页面全面主题化（去硬编码 zinc/violet） | 完成（Token 基建先行，硬编码清扫与 Tailwind 扫描排除随 Step 4 补完） |
 | 3 | schema v2 + v1→v2 迁移脚本 + items API 重构（id 锚点、order） | 完成（project-store.ts 存储核心 + 幂等迁移 + 按项目锁；v1 端点经 video-store 门面兼容；新增 /api/projects 全套 11 端点；HTML 安全响应头随文件路由先行落地；v1 47 项 + v2 38 项测试全绿） |
 | 4 | Studio/Focus 双模式壳（左侧栏 + 顶栏改造 + 模式切换不丢状态） | 完成（含精简侧栏：项目卡/视图导航/窗格列表定位高亮；项目卡动态化随 Step 8 接活） |
-| 5 | HTML 类型：上传校验、sandbox iframe 渲染、状态机、安全响应头 | 待做 |
+| 5 | HTML 类型：上传校验、sandbox iframe 渲染、状态机、安全响应头 | 完成（v1 门面扩展 kind/html 视图 + writeManifest 集中式孤儿清理；前端 iframe sandbox=allow-scripts + loading/ready/error 状态机（15s 超时+重试）+拖拽护盾；v1 对抗 47→71 项全绿；锁队列挂 globalThis 防 dev 模式多实例丢失） |
 | 6 | 布局升级：Auto Layout + 拖拽排序（dnd-kit） | 待做 |
 | 7 | 比例系统 + 标题显隐 + 播放速度 | 待做 |
 | 8 | 项目状态（草稿/归档）+ 多项目页签 + 空状态引导页（遵循 D7：简单提示，不做花哨插画） | 待做 |

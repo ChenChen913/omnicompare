@@ -48,8 +48,19 @@ function projectManifestPath(id: string): string {
 
 /* ============================== 互斥锁 ============================== */
 
-/** 每个 projectId 一条互斥队列；'*' 保留给跨项目的初始化/迁移临界区 */
-const lockQueues = new Map<string, Promise<unknown>>();
+/**
+ * 每个 projectId 一条互斥队列；'*' 保留给跨项目的初始化/迁移临界区。
+ * 队列挂在 globalThis：Next dev 下模块会被重复求值（HMR、按路由独立打包），
+ * 模块级 Map 会随实例重建而丢失，导致并发请求各自持有独立锁（丢更新）；
+ * 挂在全局对象上可保证同进程内恒为同一实例（与 Prisma client 单例同款模式）。
+ */
+const LOCK_QUEUE_KEY = '__omnicompareProjectLockQueues';
+const globalRef = globalThis as typeof globalThis & {
+  [LOCK_QUEUE_KEY]?: Map<string, Promise<unknown>>;
+};
+const lockQueues: Map<string, Promise<unknown>> =
+  globalRef[LOCK_QUEUE_KEY] ?? new Map<string, Promise<unknown>>();
+globalRef[LOCK_QUEUE_KEY] = lockQueues;
 
 function enqueue(key: string, fn: () => Promise<unknown>): Promise<unknown> {
   const prev = lockQueues.get(key) ?? Promise.resolve();
@@ -229,11 +240,11 @@ export async function readProject(id: string): Promise<Project> {
   }
 }
 
-/** 原子写入项目清单（先写临时文件再 rename） */
+/** 原子写入项目清单（先写临时文件再 rename；临时名含随机后缀，防跨实例同名踩踏） */
 export async function writeProject(project: Project): Promise<void> {
   await fsp.mkdir(projectFilesDir(project.id), { recursive: true });
   const target = projectManifestPath(project.id);
-  const tmp = `${target}.${process.pid}.tmp`;
+  const tmp = `${target}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(project, null, 2), 'utf-8');
   await fsp.rename(tmp, target);
 }
@@ -275,15 +286,18 @@ export function applyReorder(items: ContentItem[], orderedIds: string[]): Conten
 
 /* ============================== v1 兼容视图 ============================== */
 
-/** 项目 → v1 slots 视图（order=位置；items 紧凑序保证对齐） */
+/**
+ * 项目 → v1 slots 视图（order=位置；items 紧凑序保证对齐）。
+ * Step 5 起视图携带 kind/html 扩展字段（向后兼容：旧客户端忽略即可），
+ * 使 v1 写路径经 writeManifest 往返时能原样保留 HTML 条目。
+ */
 export function toSlots(project: Project): Slot[] {
   return Array.from({ length: project.slotCount }, (_, i) => {
     const item = project.items[i];
-    return {
-      index: i,
-      title: item?.title ?? '',
-      video: item?.kind === 'video' ? item.file : null,
-    };
+    if (!item) return { index: i, title: '', video: null, html: null };
+    return item.kind === 'html'
+      ? { index: i, title: item.title, video: null, kind: 'html' as const, html: item.file }
+      : { index: i, title: item.title, video: item.file, kind: 'video' as const, html: null };
   });
 }
 
@@ -379,21 +393,22 @@ export async function resolveFileAnyProject(name: string): Promise<ResolvedFile 
 
 /* ============================== v1 → v2 迁移 ============================== */
 
-let migrationPromise: Promise<void> | null = null;
-
-/** 确保默认项目存在；首次访问时把 v1 数据一次性搬入（幂等） */
+/** 确保默认项目存在；首次访问时把 v1 数据一次性搬入（幂等）。
+ * 迁移单例同样挂 globalThis：防止模块多实例时迁移并发重入。 */
 export function ensureDefaultProject(): Promise<void> {
-  if (!migrationPromise) {
-    migrationPromise = enqueue('*', migrateV1ToV2).then(
+  const MIGRATION_KEY = '__omnicompareMigrationPromise';
+  const ref = globalThis as typeof globalThis & { [MIGRATION_KEY]?: Promise<void> };
+  if (!ref[MIGRATION_KEY]) {
+    ref[MIGRATION_KEY] = enqueue('*', migrateV1ToV2).then(
       () => undefined,
       (err) => {
         // 迁移失败时重置单例，允许下次请求重试
-        migrationPromise = null;
+        ref[MIGRATION_KEY] = undefined;
         throw err;
       },
     );
   }
-  return migrationPromise;
+  return ref[MIGRATION_KEY];
 }
 
 async function migrateV1ToV2(): Promise<void> {

@@ -82,8 +82,9 @@ export async function DELETE(req: NextRequest) {
     if (target.video) {
       await deleteVideoFile(target.video.filename);
     }
-    target.video = null;
-    target.title = '';
+    // 整槽归一化（同时清除 v1.5 扩展的 kind/html 字段）；
+    // 被移除条目的文件（含 v1 视图不可见的 HTML）由 writeManifest 集中清理
+    manifest.slots[slot] = { index: slot, title: '', video: null };
     await writeManifest(manifest);
     return NextResponse.json(await readManifest(), { headers: noStore });
   });

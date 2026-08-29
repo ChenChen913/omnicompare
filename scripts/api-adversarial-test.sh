@@ -74,14 +74,18 @@ NEW=$(echo "$R" | jq -r '.slots[0].video.filename')
 BEFORE_N=$(ls /home/z/my-project/data/projects/default/files/ | wc -l)
 
 echo "== 7. 并发上传一致性 =="
-curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v03-square.mp4" -F "slot=1" >/dev/null &
-curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v04-ultrawide.mp4" -F "slot=2" >/dev/null &
-curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v05-tiny.mp4" -F "slot=3" -o /tmp/concurrent-resp.json >/dev/null &
+curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v03-square.mp4" -F "slot=1" > /tmp/ccA.txt &
+curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v04-ultrawide.mp4" -F "slot=2" > /tmp/ccB.txt &
+curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v05-tiny.mp4" -F "slot=3" -o /tmp/concurrent-resp.json > /tmp/ccC.txt &
 wait
-check "3 路并发上传全部成功（清单可读）" "$(curl -s "$BASE/api/videos" | jq -e '.slots[1].video and .slots[2].video and .slots[3].video' >/dev/null; echo $?)"
+CA=$(cat /tmp/ccA.txt); CB=$(cat /tmp/ccB.txt); CC=$(cat /tmp/ccC.txt)
+check "3 路并发上传全部 200（实际 $CA/$CB/$CC）" "$([ "$CA" = "200" ] && [ "$CB" = "200" ] && [ "$CC" = "200" ]; echo $?)"
+# 注：并发上传到不同 slot 时，因紧凑左填语义与到达顺序交互，落位不确定（后者可能替换前者），
+# 但不变量确定：条目数 = 磁盘文件数（替换时文件同步清理），且无孤儿无死链
 AFTER_N=$(ls /home/z/my-project/data/projects/default/files/ | wc -l)
 REF_N=$(curl -s "$BASE/api/videos" | jq '[.slots[].video | select(. != null)] | length')
 [ "$AFTER_N" -eq "$REF_N" ]; check "并发后磁盘文件数与清单 1:1（磁盘 $AFTER_N / 引用 $REF_N）" $?
+[ "$REF_N" -ge 2 ] && [ "$REF_N" -le 4 ]; check "条目数在合法区间（实际 $REF_N，确定性 2-4）" $?
 
 echo "== 8. 缩减数量删除被移除位置的文件 =="
 BEFORE_N=$(ls /home/z/my-project/data/projects/default/files/ | wc -l)
@@ -120,6 +124,79 @@ CNT=$(curl -s "$BASE/api/videos" | jq '.count')
 [ "$CNT" = "2" ]; check "清空后保留 count=$CNT 与布局设置" $?
 AFTER_N=$(ls /home/z/my-project/data/projects/default/files/ | wc -l)
 [ "$AFTER_N" = "0" ]; check "清空后磁盘无残留文件（实际 $AFTER_N）" $?
+
+echo "== 11. HTML 上传与 v1 门面往返（Step 5）=="
+# 准备测试 HTML：含 JS 与尝试读取 parent 的对抗代码（页面自身在沙箱里报错属预期）
+cat > /tmp/adv-test-page.html <<'EOF'
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>body{font-family:sans-serif;background:#101014;color:#7dd3fc}h1{font-size:28px}</style></head>
+<body><h1>ADV-TEST-PAGE-OK</h1><script>document.body.setAttribute('data-js','ran');
+try { void parent.document.title; } catch (e) { document.body.setAttribute('data-sandbox','blocked'); }</script></body></html>
+EOF
+FILES_DIR="/home/z/my-project/data/projects/default/files"
+# 前置：恢复 6 位（2×3）并清空；门面语义为紧凑左填——上传到空洞位会落在首个空位（slot 0）
+curl -s -X PATCH "$BASE/api/videos/layout" -H 'Content-Type: application/json' -d '{"count":6,"rows":2,"cols":3}' >/dev/null
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+BEFORE_N=$(ls "$FILES_DIR" | wc -l)
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/tmp/adv-test-page.html;type=text/html" -F "slot=0")
+check "HTML 上传 -> 200 且槽位带 kind=html" "$(expect_json_field "$R" '.slots[0].kind=="html" and .slots[0].html.filename'; echo $?)"
+HF=$(echo "$R" | jq -r '.slots[0].html.filename')
+[ -f "$FILES_DIR/$HF" ]; check "HTML 文件已落盘（$HF）" $?
+AFTER_N=$(ls "$FILES_DIR" | wc -l)
+[ "$AFTER_N" -eq "$((BEFORE_N+1))" ]; check "HTML 上传后磁盘文件数 +1（$BEFORE_N -> $AFTER_N）" $?
+
+echo "== 12. HTML 视图往返保护（v1 写路径不得丢弃 HTML 条目）=="
+R=$(curl -s -X PATCH "$BASE/api/videos" -H 'Content-Type: application/json' -d '{"slot":0,"title":"对抗测试页"}')
+check "v1 改标题后 HTML 条目仍在（kind/html 字段保留）" "$(expect_json_field "$R" '.slots[0].kind=="html" and .slots[0].html.filename=="'$HF'" and .slots[0].title=="对抗测试页"'; echo $?)"
+[ -f "$FILES_DIR/$HF" ]; check "改标题后 HTML 文件仍在磁盘" $?
+R=$(curl -s -X PATCH "$BASE/api/videos/layout" -H 'Content-Type: application/json' -d '{"count":6,"rows":2,"cols":3}')
+check "v1 改布局后 HTML 条目仍在" "$(expect_json_field "$R" '.slots[0].kind=="html" and .slots[0].html.filename=="'$HF'"'; echo $?)"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/files/$HF")
+[ "$CODE" = "200" ]; check "HTML 直链可访问 -> 200" $?
+H=$(curl -s -o /dev/null -D - "$BASE/api/files/$HF" | tr -d '\r')
+echo "$H" | rg -qi "^Content-Security-Policy: sandbox allow-scripts"; check "HTML 响应带 CSP sandbox allow-scripts" $?
+echo "$H" | rg -qi "^X-Content-Type-Options: nosniff"; check "HTML 响应带 nosniff" $?
+echo "$H" | rg -qi "^Cache-Control: no-store"; check "HTML 响应带 no-store" $?
+echo "$H" | rg -qi "^Content-Disposition: inline"; check "HTML 响应带 inline" $?
+
+echo "== 13. HTML 替换/删除/清空的文件清理 =="
+# 13a 视频替换 HTML（同槽位原地替换）：旧 HTML 文件必须被清理（v1 视图看不见 HTML 文件，靠集中式清理）
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v01-landscape.mp4" -F "slot=0")
+check "视频替换 HTML 槽位 -> 槽位变为 video" "$(expect_json_field "$R" '.slots[0].kind=="video" and .slots[0].video.filename and .slots[0].html==null'; echo $?)"
+[ ! -f "$FILES_DIR/$HF" ]; check "被替换的 HTML 文件已从磁盘删除" $?
+# 13b 追加 HTML 到 slot 1，随后 DELETE 该槽位
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/tmp/adv-test-page.html;type=text/html" -F "slot=1")
+HF2=$(echo "$R" | jq -r '.slots[1].html.filename')
+[ -f "$FILES_DIR/$HF2" ]; check "第二个 HTML 文件已落盘" $?
+R=$(curl -s -X DELETE "$BASE/api/videos?slot=1")
+check "DELETE 槽位 1 -> 槽位归空（kind/html 一并清除）" "$(expect_json_field "$R" '.slots[1].video==null and .slots[1].html==null and .slots[1].kind==null'; echo $?)"
+[ ! -f "$FILES_DIR/$HF2" ]; check "DELETE 后第二个 HTML 文件已从磁盘删除" $?
+# 13c 再追加 HTML 到 slot 1，缩容到 count=1 后越界文件删除
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/tmp/adv-test-page.html;type=text/html" -F "slot=1")
+HF3=$(echo "$R" | jq -r '.slots[1].html.filename')
+R=$(curl -s -X PATCH "$BASE/api/videos/layout" -H 'Content-Type: application/json' -d '{"count":1,"rows":1,"cols":1}')
+[ ! -f "$FILES_DIR/$HF3" ]; check "缩容后越界 HTML 文件已从磁盘删除" $?
+# 13d 清空全部：恢复 6 位后铺 HTML + 视频，然后 all=1
+curl -s -X PATCH "$BASE/api/videos/layout" -H 'Content-Type: application/json' -d '{"count":6,"rows":2,"cols":3}' >/dev/null
+curl -s -X POST "$BASE/api/videos/upload" -F "file=@/tmp/adv-test-page.html;type=text/html" >/dev/null
+curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v02-portrait.mp4" >/dev/null
+R=$(curl -s -X DELETE "$BASE/api/videos?all=1")
+check "清空全部 -> 槽位全空" "$(expect_json_field "$R" '([.slots[].video] | all(. == null)) and ([.slots[] | .html == null] | all)'; echo $?)"
+AFTER_N=$(ls "$FILES_DIR" | wc -l)
+[ "$AFTER_N" = "0" ]; check "清空后磁盘无残留（含 HTML，实际 $AFTER_N）" $?
+
+echo "== 14. HTML 校验对抗 =="
+echo "plain text" > /tmp/not-html.txt
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/tmp/not-html.txt;type=text/html" -F "slot=0")
+[ "$CODE" = "400" ]; check "text MIME 但非 .html 扩展名 -> 400" $?
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v03-square.mp4;type=text/html" -F "slot=0")
+[ "$CODE" = "400" ]; check "MP4 字节伪装 text/html MIME（扩展名不符）-> 400" $?
+: > /tmp/empty.html
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/tmp/empty.html;type=text/html" -F "slot=0")
+[ "$CODE" = "400" ]; check "空 HTML 文件 -> 400" $?
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/tmp/adv-test-page.html;type=text/html" -F "slot=99")
+[ "$CODE" = "400" ]; check "HTML 上传到越界槽位 -> 400" $?
+
 
 echo ""
 echo "========== 汇总 =========="
