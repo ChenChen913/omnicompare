@@ -44,7 +44,8 @@ export async function PATCH(req: NextRequest) {
 
     manifest.slots[slot].title = title.trim().slice(0, TITLE_MAX);
     await writeManifest(manifest);
-    return NextResponse.json(manifest, { headers: noStore });
+    // 重读返回：写入层会做紧凑序重排（v2 不变量），保证客户端视图与存储一致
+    return NextResponse.json(await readManifest(), { headers: noStore });
   });
 }
 
@@ -65,7 +66,7 @@ export async function DELETE(req: NextRequest) {
         slots: manifest.slots.map((s) => ({ index: s.index, title: '', video: null })),
       };
       await writeManifest(cleared);
-      return NextResponse.json(cleared, { headers: noStore });
+      return NextResponse.json(await readManifest(), { headers: noStore });
     }
 
     const slot = Number(searchParams.get('slot'));
@@ -84,6 +85,6 @@ export async function DELETE(req: NextRequest) {
     target.video = null;
     target.title = '';
     await writeManifest(manifest);
-    return NextResponse.json(manifest, { headers: noStore });
+    return NextResponse.json(await readManifest(), { headers: noStore });
   });
 }

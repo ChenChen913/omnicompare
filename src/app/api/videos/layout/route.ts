@@ -48,7 +48,7 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  const manifest = await withManifestLock(async () => {
+  return withManifestLock(async () => {
     const current = await readManifest();
     const { manifest: next, removedFilenames } = applyCountAndLayout(current, count, layout);
     await writeManifest(next);
@@ -56,8 +56,7 @@ export async function PATCH(req: NextRequest) {
     if (removedFilenames.length > 0) {
       await Promise.all(removedFilenames.map((f) => deleteVideoFile(f)));
     }
-    return next;
+    // 重读返回：写入层会做紧凑序重排（v2 不变量），保证客户端视图与存储一致
+    return NextResponse.json(await readManifest(), { headers: noStore });
   });
-
-  return NextResponse.json(manifest, { headers: noStore });
 }

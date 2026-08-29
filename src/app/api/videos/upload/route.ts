@@ -64,6 +64,7 @@ export async function POST(req: NextRequest) {
       await deleteVideoFile(previous.filename);
     }
 
-    return NextResponse.json(manifest, { headers: noStore });
+    // 重读返回：写入层会做紧凑序重排（v2 不变量），保证客户端视图与存储一致
+    return NextResponse.json(await readManifest(), { headers: noStore });
   });
 }

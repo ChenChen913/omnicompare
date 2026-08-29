@@ -1,13 +1,16 @@
 /**
- * 视频文件流式服务（支持 HTTP Range 分段请求，保证进度条拖动与 iOS Safari 兼容）
+ * 文件流式服务（支持 HTTP Range 分段请求，保证进度条拖动与 iOS Safari 兼容）
  * GET /api/files/[name]
+ *
+ * schema v2：文件按项目存放 data/projects/[id]/files/，此路由按文件名跨项目解析
+ * （文件名为 uuid 全局唯一）；v1 遗留目录与迁移备份目录作兜底。
+ * 安全（BLUEPRINT §11）：.html 响应强制 CSP sandbox + nosniff + no-store，
+ * 防止用户上传页面在主域上下文执行脚本或读取主站数据。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { promises as fsp } from 'fs';
-import { createReadStream } from 'fs';
-import path from 'path';
+import { promises as fsp, createReadStream } from 'fs';
 import { Readable } from 'stream';
-import { UPLOAD_DIR, isSafeFilename } from '@/lib/video-store';
+import { resolveFileAnyProject } from '@/lib/project-store';
 import { mimeFromExt } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -49,27 +52,36 @@ export async function GET(
   { params }: { params: Promise<{ name: string }> },
 ) {
   const { name } = await params;
-  if (!isSafeFilename(name)) {
+
+  const resolved = await resolveFileAnyProject(name);
+  if (!resolved) {
     return NextResponse.json({ error: '文件不存在' }, { status: 404 });
   }
 
-  const filePath = path.join(UPLOAD_DIR, name);
   let stat;
   try {
-    stat = await fsp.stat(filePath);
+    stat = await fsp.stat(resolved.absolutePath);
   } catch {
     return NextResponse.json({ error: '文件不存在' }, { status: 404 });
   }
-  if (!stat.isFile() || stat.size === 0) {
-    return NextResponse.json({ error: '文件不存在' }, { status: 404 });
-  }
-
   const size = stat.size;
-  const contentType = mimeFromExt(name);
+
+  // HTML：一律走沙箱安全响应头（即使嵌入 iframe 也维持最小权限），且禁止缓存
+  const htmlHeaders: Record<string, string> = resolved.isHtml
+    ? {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Security-Policy': 'sandbox allow-scripts',
+        'Content-Disposition': 'inline; filename="sandbox.html"',
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
+      }
+    : {};
+
   const baseHeaders: Record<string, string> = {
-    'Content-Type': contentType,
+    ...htmlHeaders,
+    'Content-Type': resolved.isHtml ? 'text/html; charset=utf-8' : mimeFromExt(name),
     'Accept-Ranges': 'bytes',
-    'Cache-Control': 'public, max-age=31536000, immutable',
+    ...(resolved.isHtml ? {} : { 'Cache-Control': 'public, max-age=31536000, immutable' }),
   };
 
   const rangeHeader = _req.headers.get('range');
@@ -82,17 +94,20 @@ export async function GET(
       });
     }
     const { start, end } = parsed;
-    return new NextResponse(toWebStream(createReadStream(filePath, { start, end })), {
-      status: 206,
-      headers: {
-        ...baseHeaders,
-        'Content-Range': `bytes ${start}-${end}/${size}`,
-        'Content-Length': String(end - start + 1),
+    return new NextResponse(
+      toWebStream(createReadStream(resolved.absolutePath, { start, end })),
+      {
+        status: 206,
+        headers: {
+          ...baseHeaders,
+          'Content-Range': `bytes ${start}-${end}/${size}`,
+          'Content-Length': String(end - start + 1),
+        },
       },
-    });
+    );
   }
 
-  return new NextResponse(toWebStream(createReadStream(filePath)), {
+  return new NextResponse(toWebStream(createReadStream(resolved.absolutePath)), {
     status: 200,
     headers: { ...baseHeaders, 'Content-Length': String(size) },
   });

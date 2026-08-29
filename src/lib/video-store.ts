@@ -1,111 +1,74 @@
 /**
- * 服务端视频存储：data/uploads/ 保存视频文件，data/manifest.json 保存清单
- * 清单包含：视频个数 count、排列矩阵 layout、各位置 slots
+ * v1 兼容门面：视频墙旧 API（/api/videos*）仍以 slot 位置语义工作，
+ * 内部全部委托 schema v2 的 project-store（默认项目）。
+ *
+ * v1 语义映射（v1 slot i ↔ v2 order i，items 恒为紧凑 0..n-1）：
+ * - GET slots[i]        → items[i]（越界即空位）
+ * - 上传到 slot i       → i < items.length 替换 items[i]；否则追加到末尾
+ * - 删除 slot i         → 删除 items[i]，其后条目前移（紧凑序，不再留空洞）
+ * - 缩减 count          → order >= count 的条目连同文件删除
  */
-import { promises as fsp } from 'fs';
-import path from 'path';
 import { randomUUID } from 'crypto';
+import { ContentItem, DEFAULT_PROJECT_ID, FileMeta, Layout, Manifest, Slot } from './types';
 import {
-  Layout,
-  Manifest,
-  MAX_FILE_SIZE,
-  SLOT_MAX,
-  SLOT_MIN,
-  Slot,
-  SlotVideo,
-  defaultLayoutFor,
-  isVideoFile,
-  mimeFromExt,
-} from './types';
+  deleteFile,
+  ensureDefaultProject,
+  readProject,
+  saveFile,
+  toSlots,
+  withProjectLock,
+  writeProject,
+} from './project-store';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
-const MANIFEST_PATH = path.join(DATA_DIR, 'manifest.json');
-
-async function ensureDirs(): Promise<void> {
-  await fsp.mkdir(UPLOAD_DIR, { recursive: true });
-}
-
-function clampInt(value: unknown, min: number, max: number, fallback: number): number {
-  const n = typeof value === 'number' ? Math.round(value) : NaN;
-  if (!Number.isFinite(n) || n < min || n > max) return fallback;
-  return n;
-}
-
-function defaultManifest(): Manifest {
-  const count = 6;
-  return {
-    count,
-    layout: defaultLayoutFor(count),
-    slots: Array.from({ length: count }, (_, i) => ({ index: i, title: '', video: null })),
-  };
-}
-
-/** 校验布局合法性（行列均为 1-SLOT_MAX 的整数，且容量 >= count） */
-export function isValidLayout(layout: unknown, count: number): layout is Layout {
-  if (!layout || typeof layout !== 'object') return false;
-  const { rows, cols } = layout as Record<string, unknown>;
-  if (typeof rows !== 'number' || typeof cols !== 'number') return false;
-  if (!Number.isInteger(rows) || !Number.isInteger(cols)) return false;
-  if (rows < SLOT_MIN || rows > SLOT_MAX || cols < SLOT_MIN || cols > SLOT_MAX) return false;
-  return rows * cols >= count;
-}
-
-/** 读取清单；文件缺失或损坏时返回默认清单，并兼容旧格式（无 count/layout 字段） */
-export async function readManifest(): Promise<Manifest> {
-  await ensureDirs();
-  try {
-    const raw = await fsp.readFile(MANIFEST_PATH, 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<Manifest> & { slots?: Partial<Slot>[] };
-    const rawSlots = Array.isArray(parsed.slots) ? parsed.slots : [];
-    const count = clampInt(parsed.count ?? rawSlots.length ?? 6, SLOT_MIN, SLOT_MAX, 6);
-    const layout: Layout = isValidLayout(parsed.layout, count)
-      ? { rows: parsed.layout.rows, cols: parsed.layout.cols }
-      : defaultLayoutFor(count);
-
-    const slots: Slot[] = Array.from({ length: count }, (_, i) => {
-      const s = rawSlots.find((x) => x?.index === i) ?? rawSlots[i];
-      return {
-        index: i,
-        title: typeof s?.title === 'string' ? s.title : '',
-        video:
-          s?.video && typeof s.video.filename === 'string'
-            ? {
-                filename: s.video.filename,
-                originalName: typeof s.video.originalName === 'string' ? s.video.originalName : 'video',
-                size: Number(s.video.size) || 0,
-                mimeType: typeof s.video.mimeType === 'string' ? s.video.mimeType : 'video/mp4',
-              }
-            : null,
-      };
-    });
-    return { count, layout, slots };
-  } catch {
-    return defaultManifest();
-  }
-}
-
-/** 原子写入清单（先写临时文件再 rename） */
-export async function writeManifest(manifest: Manifest): Promise<void> {
-  await ensureDirs();
-  const tmp = `${MANIFEST_PATH}.${process.pid}.tmp`;
-  await fsp.writeFile(tmp, JSON.stringify(manifest, null, 2), 'utf-8');
-  await fsp.rename(tmp, MANIFEST_PATH);
-}
+export { isValidLayout, isSafeFilename } from './project-store';
 
 /**
  * 清单「读-改-写」互斥锁：单进程内将临界区串行化，
  * 防止并发请求互相覆盖（lost update）产生丢失的清单条目与磁盘孤儿文件。
+ * v1 全局锁 = v2 默认项目锁。
  */
-let manifestQueue: Promise<unknown> = Promise.resolve();
 export function withManifestLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = manifestQueue.then(fn, fn);
-  // 队尾吞掉错误，保证后续排队任务不受前一个失败影响
-  manifestQueue = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
+  return withProjectLock(DEFAULT_PROJECT_ID, fn);
+}
+
+/** 读取默认项目的 v1 视图清单 */
+export async function readManifest(): Promise<Manifest> {
+  await ensureDefaultProject();
+  const project = await readProject(DEFAULT_PROJECT_ID);
+  return {
+    count: project.slotCount,
+    layout: project.layout === 'auto' ? { rows: 1, cols: project.slotCount } : project.layout,
+    slots: toSlots(project),
+  };
+}
+
+/** 写清单：body 为 v1 视图（readManifest 的产物），按 slots 差量写回 items */
+export async function writeManifest(manifest: Manifest): Promise<void> {
+  const project = await readProject(DEFAULT_PROJECT_ID);
+  project.slotCount = manifest.count;
+  // v1 视图无 auto 概念：矩阵始终为显式行列
+  project.layout = manifest.layout;
+  project.items = manifest.slots
+    .map((slot: Slot, order: number): ContentItem | null => {
+      if (!slot.video) return null;
+      const existing = project.items[order];
+      const now = new Date().toISOString();
+      return {
+        id: existing?.id ?? randomUUID(),
+        kind: 'video',
+        title: slot.title,
+        order,
+        aspectRatio: existing?.aspectRatio ?? null,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        file: slot.video,
+      };
+    })
+    .filter((it): it is ContentItem => it !== null)
+    // 紧凑序不变量：删除/替换后重排为 0..n-1（空洞在写入时即消除，蓝图 §19.4）
+    .map((it, i) => (it.order === i ? it : { ...it, order: i }));
+  project.updatedAt = new Date().toISOString();
+  await writeProject(project);
 }
 
 /**
@@ -117,59 +80,39 @@ export function applyCountAndLayout(
   count: number,
   layout: Layout,
 ): { manifest: Manifest; removedFilenames: string[] } {
-  const nextSlots: Slot[] = [];
-  for (let i = 0; i < count; i++) {
-    const old = manifest.slots[i];
-    nextSlots.push(old ? { ...old, index: i } : { index: i, title: '', video: null });
-  }
   const removedFilenames: string[] = [];
+  const nextSlots = manifest.slots.slice(0, count).map((s) => s);
   for (let i = count; i < manifest.slots.length; i++) {
     const old = manifest.slots[i];
     if (old?.video) removedFilenames.push(old.video.filename);
   }
+  while (nextSlots.length < count) {
+    nextSlots.push({ index: nextSlots.length, title: '', video: null });
+  }
   return {
-    manifest: { count, layout, slots: nextSlots },
+    manifest: { count, layout, slots: nextSlots.map((s, i) => ({ ...s, index: i })) },
     removedFilenames,
   };
-}
-
-/** 清理文件名中的危险字符，保留可读性 */
-function sanitizeOriginalName(name: string): string {
-  const cleaned = name.replace(/[/\\:*?"<>|\u0000-\u001f]/g, '_').trim();
-  return (cleaned || 'video').slice(0, 120);
 }
 
 /** 服务端校验视频文件，返回错误信息（null 表示通过） */
 export function validateVideoFile(name: string, mimeType: string, size: number): string | null {
   if (size === 0) return '文件内容为空';
-  if (size > MAX_FILE_SIZE) return '文件超过 200MB 大小限制';
-  if (!isVideoFile(name, mimeType)) return '仅支持视频文件（MP4 / MOV / WebM 等）';
+  if (size > 200 * 1024 * 1024) return '文件超过 200MB 大小限制';
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+  const videoExts = ['.mp4', '.m4v', '.mov', '.webm', '.ogv', '.avi', '.mkv'];
+  if (!mimeType.startsWith('video/') && !videoExts.includes(ext)) {
+    return '仅支持视频文件（MP4 / MOV / WebM 等）';
+  }
   return null;
 }
 
-/** 保存上传的视频文件，返回其元数据 */
-export async function saveVideoFile(file: File): Promise<SlotVideo> {
-  await ensureDirs();
-  const extMatch = /\.([A-Za-z0-9]{1,8})$/.exec(file.name);
-  const ext = extMatch ? `.${extMatch[1].toLowerCase()}` : '.mp4';
-  const filename = `${randomUUID()}${ext}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await fsp.writeFile(path.join(UPLOAD_DIR, filename), buffer);
-  return {
-    filename,
-    originalName: sanitizeOriginalName(file.name),
-    size: file.size,
-    mimeType: file.type || mimeFromExt(filename),
-  };
+/** 保存上传的视频文件（写入默认项目 files/ 目录），返回其元数据 */
+export async function saveVideoFile(file: File): Promise<FileMeta> {
+  return saveFile(DEFAULT_PROJECT_ID, file, 'video');
 }
 
-/** 校验文件名是否安全（仅允许 uuid + 扩展名的形式） */
-export function isSafeFilename(name: string): boolean {
-  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,8}$/.test(name) && !name.includes('..');
-}
-
-/** 删除上传目录中的视频文件（忽略不存在的情况） */
+/** 删除默认项目中的视频文件（忽略不存在的情况） */
 export async function deleteVideoFile(filename: string): Promise<void> {
-  if (!isSafeFilename(filename)) return;
-  await fsp.rm(path.join(UPLOAD_DIR, filename), { force: true });
+  return deleteFile(DEFAULT_PROJECT_ID, filename);
 }

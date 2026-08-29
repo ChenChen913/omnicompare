@@ -70,8 +70,8 @@ OLD=$(echo "$R" | jq -r '.slots[0].video.filename')
 R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v02-portrait.mp4" -F "slot=0")
 NEW=$(echo "$R" | jq -r '.slots[0].video.filename')
 [ "$OLD" != "$NEW" ]; check "替换上传 -> 新文件名" $?
-[ ! -f "/home/z/my-project/data/uploads/$OLD" ]; check "替换后旧文件已从磁盘删除" $?
-BEFORE_N=$(ls /home/z/my-project/data/uploads/ | wc -l)
+[ ! -f "/home/z/my-project/data/projects/default/files/$OLD" ]; check "替换后旧文件已从磁盘删除" $?
+BEFORE_N=$(ls /home/z/my-project/data/projects/default/files/ | wc -l)
 
 echo "== 7. 并发上传一致性 =="
 curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v03-square.mp4" -F "slot=1" >/dev/null &
@@ -79,21 +79,21 @@ curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/t
 curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v05-tiny.mp4" -F "slot=3" -o /tmp/concurrent-resp.json >/dev/null &
 wait
 check "3 路并发上传全部成功（清单可读）" "$(curl -s "$BASE/api/videos" | jq -e '.slots[1].video and .slots[2].video and .slots[3].video' >/dev/null; echo $?)"
-AFTER_N=$(ls /home/z/my-project/data/uploads/ | wc -l)
-EXPECT_N=$((BEFORE_N+3))
-[ "$AFTER_N" -eq "$EXPECT_N" ]; check "并发后磁盘文件数 = $EXPECT_N（实际 $AFTER_N）" $?
+AFTER_N=$(ls /home/z/my-project/data/projects/default/files/ | wc -l)
+REF_N=$(curl -s "$BASE/api/videos" | jq '[.slots[].video | select(. != null)] | length')
+[ "$AFTER_N" -eq "$REF_N" ]; check "并发后磁盘文件数与清单 1:1（磁盘 $AFTER_N / 引用 $REF_N）" $?
 
 echo "== 8. 缩减数量删除被移除位置的文件 =="
-BEFORE_N=$(ls /home/z/my-project/data/uploads/ | wc -l)
+BEFORE_N=$(ls /home/z/my-project/data/projects/default/files/ | wc -l)
 R=$(curl -s -X PATCH "$BASE/api/videos/layout" -H 'Content-Type: application/json' -d '{"count":2,"rows":1,"cols":2}')
 check "缩减到 count=2 -> 200，slots 截断" "$(expect_json_field "$R" '.count==2 and (.slots|length)==2'; echo $?)"
-AFTER_N=$(ls /home/z/my-project/data/uploads/ | wc -l)
+AFTER_N=$(ls /home/z/my-project/data/projects/default/files/ | wc -l)
 [ "$AFTER_N" -lt "$BEFORE_N" ]; check "被移除位置的视频文件已删除（$BEFORE_N -> $AFTER_N）" $?
 
 echo "== 9. 文件流与 Range 对抗 =="
 R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v06-landscape.mp4" -F "slot=0")
 FN=$(echo "$R" | jq -r '.slots[0].video.filename')
-SIZE=$(stat -c %s "/home/z/my-project/data/uploads/$FN")
+SIZE=$(stat -c %s "/home/z/my-project/data/projects/default/files/$FN")
 H=$(curl -s -o /dev/null -D - "$BASE/api/files/$FN" -H 'Range: bytes=0-99' | tr -d '\r')
 echo "$H" | rg -q "^HTTP.*206"; check "Range bytes=0-99 -> 206" $?
 echo "$H" | rg -qi "^content-range: bytes 0-99/$SIZE"; check "Content-Range 正确 (0-99/$SIZE)" $?
@@ -118,7 +118,7 @@ R=$(curl -s -X DELETE "$BASE/api/videos?all=1")
 check "DELETE ?all=1 -> 全部置空" "$(expect_json_field "$R" '([.slots[].video] | all(. == null))'; echo $?)"
 CNT=$(curl -s "$BASE/api/videos" | jq '.count')
 [ "$CNT" = "2" ]; check "清空后保留 count=$CNT 与布局设置" $?
-AFTER_N=$(ls /home/z/my-project/data/uploads/ | wc -l)
+AFTER_N=$(ls /home/z/my-project/data/projects/default/files/ | wc -l)
 [ "$AFTER_N" = "0" ]; check "清空后磁盘无残留文件（实际 $AFTER_N）" $?
 
 echo ""

@@ -12,10 +12,23 @@ export const MAX_FILE_SIZE = 200 * 1024 * 1024;
 /** 允许的视频扩展名 */
 export const VIDEO_EXTS = ['.mp4', '.m4v', '.mov', '.webm', '.ogv', '.avi', '.mkv'] as const;
 
+/** 单个 HTML 文件大小上限（10MB，见 BLUEPRINT §8） */
+export const MAX_HTML_SIZE = 10 * 1024 * 1024;
+
+/** 允许的 HTML 扩展名 */
+export const HTML_EXTS = ['.html', '.htm'] as const;
+
 /** 标题最大长度 */
 export const TITLE_MAX = 100;
 
-export interface SlotVideo {
+/** 内容类型：MVP 仅 video / html；image、svg、markdown、pdf 为第二阶段预留 */
+export type ContentKind = 'video' | 'html';
+
+/** 内容比例：original = 16:9 容器 + contain（v1 行为） */
+export type AspectRatio = '16:9' | '9:16' | '1:1' | 'original' | 'custom';
+
+/** 文件元数据（v1 SlotVideo 的沿用） */
+export interface FileMeta {
   /** 服务器上生成的唯一文件名（uuid + 扩展名） */
   filename: string;
   /** 用户上传时的原始文件名 */
@@ -25,6 +38,9 @@ export interface SlotVideo {
   /** MIME 类型 */
   mimeType: string;
 }
+
+/** 兼容别名：v1 代码中的 SlotVideo 即 FileMeta */
+export type SlotVideo = FileMeta;
 
 export interface Slot {
   /** 位置序号 0-based */
@@ -47,6 +63,71 @@ export interface Manifest {
   /** 当前排列矩阵 */
   layout: Layout;
   slots: Slot[];
+}
+
+/* ============================== schema v2 ============================== */
+
+/** 内容条目基础字段（id 为全生命周期稳定锚点，order 决定矩阵位置，0..n-1 紧凑无空洞） */
+export interface ContentItemBase {
+  id: string;
+  kind: ContentKind;
+  title: string;
+  order: number;
+  /** null = 跟随全局比例 */
+  aspectRatio: AspectRatio | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VideoAsset {
+  kind: 'video';
+  file: FileMeta;
+}
+
+export interface HtmlAsset {
+  kind: 'html';
+  file: FileMeta;
+  /** 加载状态：服务端落库即 ready，客户端渲染时按 iframe 事件本地流转 */
+  status: 'loading' | 'ready' | 'error';
+}
+
+export type ContentItem = ContentItemBase & (VideoAsset | HtmlAsset);
+
+/** 项目级播放与展示设置 */
+export interface ProjectSettings {
+  aspectRatio: AspectRatio;
+  customRatio?: { w: number; h: number };
+  showTitles: boolean;
+  loop: boolean;
+  muted: boolean;
+  playbackRate: number;
+}
+
+/** 项目（schema v2 顶层）：items 顺序即矩阵填充顺序 */
+export interface Project {
+  id: string;
+  name: string;
+  status: 'active' | 'draft' | 'archived';
+  items: ContentItem[];
+  layout: Layout | 'auto';
+  /** 可见窗格数（v1 count 的沿用，1-12）；新 UI 全面接管后评估移除 */
+  slotCount: number;
+  settings: ProjectSettings;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 默认项目 id：v1 数据迁移的目标项目，API 兼容层的操作对象 */
+export const DEFAULT_PROJECT_ID = 'default';
+
+export function defaultSettings(): ProjectSettings {
+  return {
+    aspectRatio: 'original',
+    showTitles: true,
+    loop: false,
+    muted: true,
+    playbackRate: 1,
+  };
 }
 
 function isPrime(n: number): boolean {

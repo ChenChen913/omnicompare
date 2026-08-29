@@ -52,43 +52,56 @@ src/
 ├── components/ui/                # shadcn/ui 基础组件（button/dialog/popover/sonner 等）
 ├── lib/
 │   ├── types.ts                  # 前后端共享常量与类型（SLOT_MAX、MAX_FILE_SIZE、Layout…）
-│   ├── video-store.ts            # 服务端存储层：清单读写、原子写、withManifestLock 互斥锁
+│   ├── project-store.ts          # schema v2 存储核心：多项目目录、幂等迁移、按项目互斥锁、条目操作、跨项目文件解析
+│   ├── video-store.ts            # v1 兼容门面：旧 /api/videos* 语义适配到默认项目（v2）
 │   └── utils.ts                  # cn() 工具
 scripts/
-├── api-adversarial-test.sh       # API 对抗测试（47 项二元断言，依赖 curl + jq）
+├── api-adversarial-test.sh       # v1 API 对抗测试（47 项二元断言，依赖 curl + jq）
+├── api-v2-smoke-test.sh          # v2 API 冒烟 + 对抗测试（38 项）
+├── restore-demo-state.py         # 从 data-backup-before-step3 恢复演示状态
 └── gen-test-videos.sh            # 用 ffmpeg 生成多规格测试视频（本机未入库，可自行重建）
+standalone.html                   # 免部署单页精简版（零依赖，与主应用互不依赖）
 data/                             # 运行时数据（gitignore，不入库）
-├── manifest.json                 # 清单：数量、矩阵、各位置标题与视频元数据
-└── uploads/                      # 上传的视频文件（uuid 命名）
+├── projects/[id]/manifest.json   # 项目清单（schema v2：items + layout + settings）
+├── projects/[id]/files/          # 项目内容文件（uuid 命名）
+├── manifest.v1.bak.json          # v1 清单迁移备份
+└── uploads.v1.bak/               # v1 上传目录迁移备份（文件已搬入项目 files/）
 ```
 
 ## 4. 架构与数据流
 
-### 4.1 清单（Manifest）结构
+### 4.1 存储结构（schema v2，含 v1 自动迁移）
 
-`data/manifest.json` 是唯一的索引源：
+`data/projects/[id]/manifest.json` 是索引源（v1 的 `data/manifest.json` 在首次访问时自动迁移为默认项目并备份，一次性、幂等）：
 
 ```json
 {
-  "count": 6,
+  "id": "default",
+  "name": "默认项目",
+  "status": "active",
+  "items": [
+    { "id": "uuid", "kind": "video", "title": "示例视频 1", "order": 0, "aspectRatio": null,
+      "file": { "filename": "uuid.mp4", "originalName": "demo-01.mp4", "size": 104767, "mimeType": "video/mp4" } }
+  ],
   "layout": { "rows": 2, "cols": 3 },
-  "slots": [
-    { "index": 0, "title": "示例视频 1",
-      "video": { "filename": "uuid.mp4", "originalName": "demo-01.mp4", "size": 104767, "mimeType": "video/mp4" } },
-    { "index": 1, "title": "", "video": null }
-  ]
+  "slotCount": 6,
+  "settings": { "aspectRatio": "original", "showTitles": true, "loop": false, "muted": true, "playbackRate": 1 }
 }
 ```
 
-- `count`：当前视频位数量（1–12）；`layout.rows * layout.cols >= count`，多出的格子为留空占位
-- `slots.length === count` 恒成立；调整数量/矩阵由服务端保证裁剪与补齐
+- `items[].id`：全生命周期稳定锚点；`order` 决定矩阵位置，**恒为 0..n-1 紧凑无空洞**（任何增删后服务端重排）
+- `items[].kind`：`video | html`（MVP）；html 另有 `status` 加载状态字段；image/svg 等第二阶段预留
+- `slotCount`：可见窗格数（v1 count 的沿用，1–12）；`layout` 可为显式行列或 `"auto"`（近方形）
+- v1 兼容：`/api/videos*` 仍以 slot 位置语义工作（slot i ↔ order i），由 `video-store.ts` 门面适配
+- 旧清单/旧文件迁移后改名为 `manifest.v1.bak.json` / `uploads.v1.bak/`，确认无误后可删除
 
 ### 4.2 并发与一致性（重要不变量）
 
-1. **原子写**：清单写盘一律先写临时文件再 `rename`，杜绝半截 JSON（`video-store.ts: writeManifest`）
-2. **进程内互斥锁**：所有「读清单 → 改 → 写回」的临界区必须包在 `withManifestLock()` 里（Promise 队列串行化），否则并发上传会互相覆盖（lost update）。现有 4 个 API 的临界区均已包锁——**新增改清单的 API 时必须同样包锁**
-3. **上传严格校验**：`slot` 参数必须是匹配 `/^\d{1,2}$/` 的字符串后才转数字（防 `Number(null) === 0` 静默落位 0）
-4. **删视频必须删文件**：替换上传、缩减布局、清空时，服务端同步删除被移除的磁盘文件，防止孤儿文件
+1. **原子写**：清单写盘一律先写临时文件再 `rename`，杜绝半截 JSON（`project-store.ts: writeProject`）
+2. **进程内互斥锁（按项目维度）**：所有「读清单 → 改 → 写回」的临界区必须包在 `withProjectLock(projectId, fn)` 里（每项目一条 Promise 队列串行化），否则并发上传会互相覆盖（lost update）。v1 的 `withManifestLock()` 即默认项目锁。**新增改清单的 API 时必须同样包锁**
+3. **上传严格校验**：v1 `slot` 参数必须是匹配 `/^\d{1,2}$/` 的字符串后才转数字（防 `Number(null) === 0` 静默落位 0）；v2 上传 kind 由服务端按 MIME + 扩展名双判，HTML 限 ≤10MB
+4. **删条目必须删文件**：替换上传、缩减布局、清空、删除条目时，服务端同步删除被移除的磁盘文件，防止孤儿文件；v2 删除条目先写清单再删文件，即使文件删除失败也不产生死链
+5. **HTML 安全响应头**：`/api/files/[name]` 对 `.html` 强制 `CSP: sandbox allow-scripts` + `nosniff` + `no-store` + `Content-Disposition: inline; filename=sandbox.html`，绝不可去掉（蓝图 §11）
 
 ### 4.3 播放与同步
 
@@ -158,7 +171,23 @@ bun run start        # NODE_ENV=production bun .next/standalone/server.js
 | `DELETE /api/videos?slot=i` | 删除位置 i 的视频 | 更新后的 Manifest | 400/404 |
 | `DELETE /api/videos?all=1` | 清空全部视频与标题，**保留**当前数量与矩阵 | 更新后的 Manifest | 400 |
 | `PATCH /api/videos/layout` | JSON：`{ count(1-12), rows, cols }`，须满足 `rows*cols >= count`；缩减时删除被移除区间的文件 | 更新后的 Manifest | 400 非法参数/矩阵放不下 |
-| `GET /api/files/[name]` | `name` 为 uuid 文件名；支持 `Range` 请求头 | 200 全量 / 206 分片流 | 404（含路径穿越 `..%2F`）；非法 Range 416 |
+| `GET /api/files/[name]` | `name` 为 uuid 文件名（跨项目解析）；支持 `Range` 请求头；`.html` 强制沙箱安全响应头且禁缓存 | 200 全量 / 206 分片流 | 404（含路径穿越 `..%2F`）；非法 Range 416 |
+
+**schema v2 接口（新 UI 与二次开发使用）：**
+
+| 方法与路径 | 参数 | 成功返回 | 失败 |
+|---|---|---|---|
+| `GET /api/projects` | — | 项目数组 | — |
+| `POST /api/projects` | JSON：`{ name? }` | 201 + 新项目（uuid id） | 400 |
+| `GET /api/projects/[id]` | — | 项目全量（含 items） | 400 非法 id |
+| `PATCH /api/projects/[id]` | JSON：`{ name?, status? }`，status ∈ active/draft/archived | 更新后的项目 | 400 |
+| `DELETE /api/projects/[id]` | — | `{ ok: true }`；默认项目受保护 | 403 删默认项目 |
+| `GET /api/projects/[id]/items` | — | 条目数组（order 紧凑） | 400 |
+| `POST /api/projects/[id]/items/upload` | FormData：`file`（视频 ≤200MB 或单文件 HTML ≤10MB，kind 服务端判定）、`order?`（插入位置，缺省追加）、`title?` | 201 + `{ item, items }` | 400 类型/大小/缺参 |
+| `PATCH /api/projects/[id]/items/[itemId]` | JSON：`{ title?, aspectRatio?(枚举或 null), order? }` | `{ item, items }` | 400/404 |
+| `DELETE /api/projects/[id]/items/[itemId]` | — | `{ items }`（其余条目紧凑重排，文件同步删除） | 404 |
+| `PATCH /api/projects/[id]/layout` | JSON：`{ mode: 'auto' }` 或 `{ rows, cols }`（容量 ≥ max(slotCount, 条目数)） | 更新后的项目 | 400 |
+| `PATCH /api/projects/[id]/settings` | JSON：`{ aspectRatio?, customRatio?, showTitles?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2) }` | 更新后的项目 | 400 |
 
 ## 8. 数据持久化与备份
 
@@ -175,10 +204,11 @@ ffmpeg -y -f lavfi -i testsrc2=size=640x360:rate=24:duration=3 -pix_fmt yuv420p 
 # …按需生成更多不同分辨率/时长的视频
 
 # 2) 启动开发服务器后运行对抗测试（需 curl + jq）
-bash scripts/api-adversarial-test.sh
+bash scripts/api-adversarial-test.sh   # v1 兼容层 47 项
+bash scripts/api-v2-smoke-test.sh      # v2 API 38 项（会在 default 外新建临时项目并自动清理）
 ```
 
-测试覆盖：清单结构、布局非法参数 9 组、标题非法 7 组 + 截断、上传对抗 6 组、替换删旧文件、3 路并发一致性、缩减删文件、Range 206/416、路径穿越防护、清空无残留。每项二元判定（通过/失败），末尾汇总。
+测试覆盖：v1 清单结构、布局非法参数 9 组、标题非法 7 组 + 截断、上传对抗 6 组、替换删旧文件、3 路并发一致性、缩减删文件、Range 206/416、路径穿越防护、清空无残留；v2 项目 CRUD、双类型上传与 kind 判别、HTML 安全响应头（CSP sandbox/nosniff/no-store）、条目排序/删除紧凑重排、布局 auto/显式、设置逐字段校验、默认项目删除保护。每项二元判定（通过/失败），末尾汇总。
 
 ## 10. 注意事项与已知限制
 
