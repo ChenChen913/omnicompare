@@ -1,6 +1,6 @@
 /**
- * 项目级播放与展示设置 API（v1 视图，蓝图 §7/§9/§13）
- * PATCH /api/videos/settings  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate? }
+ * 项目级播放与展示设置 API（v1 视图，蓝图 §7/§9/§13；Step 8 起支持 ?project= 多项目）
+ * PATCH /api/videos/settings[?project=id]  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate? }
  * - 全部字段可选，仅更新提供的字段；播放设置只作用于 kind=video 的内容
  * - 与其它 v1 写路径共用清单互斥锁，杜绝并发丢更新
  * - 成功返回更新后的完整 v1 清单视图（响应即回填）
@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AspectRatio, DEFAULT_PROJECT_ID, ProjectSettings } from '@/lib/types';
 import { ensureDefaultProject, readProject, withProjectLock, writeProject } from '@/lib/project-store';
 import { readManifest } from '@/lib/video-store';
+import { resolveProjectParam } from '@/lib/v1-project-param';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,12 +61,15 @@ export async function PATCH(req: NextRequest) {
     return badRequest('至少提供一个待更新字段');
   }
 
-  return withProjectLock(DEFAULT_PROJECT_ID, async () => {
-    await ensureDefaultProject();
-    const project = await readProject(DEFAULT_PROJECT_ID);
+  const p = await resolveProjectParam(req);
+  if (p.error) return p.error;
+
+  return withProjectLock(p.id, async () => {
+    if (p.id === DEFAULT_PROJECT_ID) await ensureDefaultProject();
+    const project = await readProject(p.id);
     project.settings = { ...project.settings, ...patch };
     project.updatedAt = new Date().toISOString();
     await writeProject(project);
-    return NextResponse.json(await readManifest(), { headers: noStore });
+    return NextResponse.json(await readManifest(p.id), { headers: noStore });
   });
 }

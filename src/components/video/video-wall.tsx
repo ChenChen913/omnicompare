@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ChevronDown,
   Clapperboard,
   Expand,
   Eye,
   EyeOff,
+  FolderPlus,
   Gauge,
   Info,
   LayoutGrid,
@@ -48,9 +50,11 @@ import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import {
   AspectRatio,
+  DEFAULT_PROJECT_ID,
   Layout,
   Manifest,
   ManifestSettings,
+  Project,
   SLOT_MAX,
   Slot,
   aspectCss,
@@ -80,10 +84,27 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { VideoCard, VideoCardProps } from './video-card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 
-/** 工作模式与侧栏开关（仅 UI 偏好，业务数据永远以服务端为准） */
+/** 工作模式与侧栏开关（仅 UI 偏好，业务数据永远以服务端为准）；当前项目同此列 */
 const PREF_MODE = 'omnicompare:mode';
 const PREF_SIDEBAR = 'omnicompare:sidebar';
+const PREF_PROJECT = 'omnicompare:project';
+
+/** 项目状态展示名与状态点配色（蓝图 §7：active/draft/archived） */
+const STATUS_META = {
+  active: { label: '进行中', dot: 'bg-emerald-500' },
+  draft: { label: '草稿', dot: 'bg-amber-500' },
+  archived: { label: '已归档', dot: 'bg-muted-foreground/40' },
+} as const;
 
 function defaultSlots(): Slot[] {
   return Array.from({ length: 6 }, (_, i) => ({ index: i, title: '', video: null }));
@@ -203,6 +224,13 @@ export function VideoWall() {
   const [themeMounted, setThemeMounted] = useState(false);
   /** 窄屏（<768px）标记：仅 auto 模式渲染列数收窄用 */
   const [narrow, setNarrow] = useState(false);
+  /* 多项目（Step 8）：当前项目 id + 项目列表（顶栏切换器与侧栏项目卡共用） */
+  const [projectId, setProjectId] = useState<string>(DEFAULT_PROJECT_ID);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
   const { resolvedTheme, setTheme } = useTheme();
 
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
@@ -216,6 +244,18 @@ export function VideoWall() {
 
   const busy = importing || Object.values(uploading).some(Boolean);
   const filledCount = slots.filter((s) => s.video || s.html).length;
+  const currentProject = projects.find((p) => p.id === projectId) ?? null;
+  const projectName =
+    currentProject?.name ?? (projectId === DEFAULT_PROJECT_ID ? '默认项目' : '加载中…');
+
+  /** v1 API 多项目参数（Step 8）：默认项目不带参数（旧端点零改动），其余项目追加 project= */
+  const withPid = useCallback(
+    (url: string) =>
+      projectId === DEFAULT_PROJECT_ID
+        ? url
+        : `${url}${url.includes('?') ? '&' : '?'}project=${encodeURIComponent(projectId)}`,
+    [projectId],
+  );
   const getActiveVideos = useCallback(
     () =>
       slots
@@ -248,7 +288,17 @@ export function VideoWall() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/videos', { cache: 'no-store' });
+        const res = await fetch(withPid('/api/videos'), { cache: 'no-store' });
+        if (res.status === 404) {
+          // 当前项目已被其他会话删除：清除本地偏好并回落默认项目（触发重载）
+          if (!cancelled) {
+            try {
+              localStorage.removeItem(PREF_PROJECT);
+            } catch {}
+            setProjectId(DEFAULT_PROJECT_ID);
+          }
+          return;
+        }
         const data = (await res.json()) as Manifest;
         if (!cancelled && Array.isArray(data?.slots)) {
           setCount(data.count);
@@ -266,7 +316,7 @@ export function VideoWall() {
     return () => {
       cancelled = true;
     };
-  }, [applySettings]);
+  }, [applySettings, withPid]);
 
   /* 窄屏检测：auto 模式下列数收窄到 2 竖向堆叠（蓝图 §12；仅影响渲染，不改存储矩阵） */
   useEffect(() => {
@@ -283,6 +333,8 @@ export function VideoWall() {
       if (savedMode === 'studio' || savedMode === 'focus') setMode(savedMode);
       const savedSidebar = localStorage.getItem(PREF_SIDEBAR);
       if (savedSidebar !== null) setSidebarOpen(savedSidebar === '1');
+      const savedProject = localStorage.getItem(PREF_PROJECT);
+      if (savedProject) setProjectId(savedProject);
     } catch {
       /* 忽略隐私模式下的存储错误 */
     }
@@ -299,6 +351,129 @@ export function VideoWall() {
       localStorage.setItem(PREF_SIDEBAR, sidebarOpen ? '1' : '0');
     } catch {}
   }, [sidebarOpen]);
+
+  /* ---------- 多项目管理（Step 8）：列表加载 / 切换 / 新建 / 改名 / 状态 / 删除 ---------- */
+  /** 项目列表加载；同时校正本地持久化的当前项目（被其他会话删除后回落默认） */
+  const refreshProjects = useCallback(async () => {
+    try {
+      const res = await fetch('/api/projects', { cache: 'no-store' });
+      const list = (await res.json().catch(() => null)) as Project[] | null;
+      if (!Array.isArray(list)) return;
+      setProjects(list);
+      setProjectId((cur) => {
+        if (cur !== DEFAULT_PROJECT_ID && !list.some((p) => p.id === cur)) {
+          try {
+            localStorage.removeItem(PREF_PROJECT);
+          } catch {}
+          return DEFAULT_PROJECT_ID;
+        }
+        return cur;
+      });
+    } catch {
+      /* 列表加载失败不阻塞主流程，下次操作重试 */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProjects();
+  }, [refreshProjects]);
+
+  /** 切换项目：内容处理中禁止切换，避免在途请求把旧项目数据写进新项目视图 */
+  const switchProject = useCallback(
+    (id: string) => {
+      if (id === projectId) return;
+      if (busy) {
+        toast.warning('内容处理中，请稍后再切换项目', { id: 'project' });
+        return;
+      }
+      try {
+        localStorage.setItem(PREF_PROJECT, id);
+      } catch {}
+      setLoading(true);
+      setProjectId(id);
+    },
+    [projectId, busy],
+  );
+
+  const createProject = useCallback(async () => {
+    if (busy) {
+      toast.warning('内容处理中，请稍后再新建项目', { id: 'project' });
+      return;
+    }
+    setProjectBusy(true);
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName }),
+      });
+      const p = (await res.json().catch(() => null)) as (Project & { error?: string }) | null;
+      if (!res.ok || !p?.id) {
+        toast.error(p?.error || '新建项目失败，请重试', { id: 'project' });
+        return;
+      }
+      setProjects((prev) => [...prev, p]);
+      setNewName('');
+      setCreating(false);
+      try {
+        localStorage.setItem(PREF_PROJECT, p.id);
+      } catch {}
+      setLoading(true);
+      setProjectId(p.id);
+      toast.success(`已创建「${p.name}」并切换`, { id: 'project' });
+    } catch {
+      toast.error('新建项目失败，请重试', { id: 'project' });
+    } finally {
+      setProjectBusy(false);
+    }
+  }, [newName, busy]);
+
+  /** 改名 / 状态：乐观更新 + 失败回滚（同 updateSettings 风格） */
+  const updateProject = useCallback(
+    async (id: string, patch: { name?: string; status?: Project['status'] }) => {
+      const prevList = projects;
+      setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+      try {
+        const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        const p = (await res.json().catch(() => null)) as (Project & { error?: string }) | null;
+        if (!res.ok || !p?.id) throw new Error(p?.error || '保存失败');
+        toast.success(patch.name !== undefined ? '项目已重命名' : '项目状态已更新', { id: 'project' });
+      } catch {
+        setProjects(prevList);
+        toast.error('项目更新失败，请重试', { id: 'project' });
+      }
+    },
+    [projects],
+  );
+
+  const deleteProject = useCallback(
+    async (id: string) => {
+      try {
+        const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: string } | null;
+          toast.error(data?.error || '删除项目失败', { id: 'project' });
+          return;
+        }
+        setProjects((prev) => prev.filter((p) => p.id !== id));
+        if (id === projectId) {
+          try {
+            localStorage.removeItem(PREF_PROJECT);
+          } catch {}
+          setLoading(true);
+          setProjectId(DEFAULT_PROJECT_ID);
+        }
+        toast.success('项目已删除', { id: 'project' });
+      } catch {
+        toast.error('删除项目失败', { id: 'project' });
+      }
+    },
+    [projectId],
+  );
 
   /* next-themes 首帧渲染后才确定主题，先挂载再渲染图标避免水合不一致 */
   useEffect(() => setThemeMounted(true), []);
@@ -339,7 +514,7 @@ export function VideoWall() {
       if (partial.muted !== undefined) setMutedAll(partial.muted);
       if (partial.playbackRate !== undefined) setRate(partial.playbackRate);
       try {
-        const res = await fetch('/api/videos/settings', {
+        const res = await fetch(withPid('/api/videos/settings'), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(partial),
@@ -358,7 +533,7 @@ export function VideoWall() {
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, showTitles, showInfo, loop, mutedAll, rate, applySettings],
+    [aspect, showTitles, showInfo, loop, mutedAll, rate, applySettings, withPid],
   );
 
   /** 单卡比例覆盖：null = 恢复跟随全局（蓝图 §13）；乐观更新 + 失败回滚 */
@@ -368,7 +543,7 @@ export function VideoWall() {
       setSlots((s) => s.map((it) => (it.index === index ? { ...it, aspectRatio: ar } : it)));
       void (async () => {
         try {
-          const res = await fetch('/api/videos', {
+          const res = await fetch(withPid('/api/videos'), {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ slot: index, aspectRatio: ar }),
@@ -382,7 +557,7 @@ export function VideoWall() {
         }
       })();
     },
-    [slots],
+    [slots, withPid],
   );
 
   /* React 对 video 的 muted/loop/playbackRate 属性更新不可靠，直接同步到 DOM 元素 */
@@ -412,7 +587,7 @@ export function VideoWall() {
   const requestLayout = useCallback(
     async (nextCount: number, nextLayout: Layout | 'auto'): Promise<Manifest | null> => {
       try {
-        const res = await fetch('/api/videos/layout', {
+        const res = await fetch(withPid('/api/videos/layout'), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body:
@@ -435,7 +610,7 @@ export function VideoWall() {
         return null;
       }
     },
-    [],
+    [withPid],
   );
 
   /** 缩减到 n 个位置时，将被移除区间内实际存在的内容数（视频或 HTML） */
@@ -514,7 +689,7 @@ export function VideoWall() {
       setSlots([...reordered, ...empties].map((s, i) => ({ ...s, index: i })));
       void (async () => {
         try {
-          const res = await fetch('/api/videos/reorder', {
+          const res = await fetch(withPid('/api/videos/reorder'), {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ order }),
@@ -532,7 +707,7 @@ export function VideoWall() {
         }
       })();
     },
-    [slots, filledSlots, sortableIds],
+    [slots, filledSlots, sortableIds, withPid],
   );
 
   /* ---------- 上传与分配 ---------- */
@@ -545,7 +720,7 @@ export function VideoWall() {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('slot', String(index));
-      const res = await fetch('/api/videos/upload', { method: 'POST', body: fd });
+      const res = await fetch(withPid('/api/videos/upload'), { method: 'POST', body: fd });
       const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
       if (!res.ok || !data?.slots) {
         return data?.error || `「${file.name}」上传失败，请重试`;
@@ -560,7 +735,7 @@ export function VideoWall() {
     } finally {
       setUploading((prev) => ({ ...prev, [index]: false }));
     }
-  }, []);
+  }, [withPid]);
 
   /**
    * 分配一批文件：第一个进入 primarySlot（如果指定），
@@ -654,19 +829,19 @@ export function VideoWall() {
     titleTimers.current.set(
       index,
       setTimeout(() => {
-        fetch('/api/videos', {
+        fetch(withPid('/api/videos'), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ slot: index, title }),
         }).catch(() => {});
       }, 600),
     );
-  }, []);
+  }, [withPid]);
 
   /* ---------- 移除 ---------- */
   const handleClearSlot = useCallback(async (index: number) => {
     try {
-      const res = await fetch(`/api/videos?slot=${index}`, { method: 'DELETE' });
+      const res = await fetch(withPid(`/api/videos?slot=${index}`), { method: 'DELETE' });
       const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
       if (!res.ok || !data?.slots) {
         toast.error(data?.error || '移除失败，请重试', { id: 'slot' });
@@ -677,11 +852,11 @@ export function VideoWall() {
     } catch {
       toast.error('移除失败，请重试', { id: 'slot' });
     }
-  }, []);
+  }, [withPid]);
 
   const handleClearAll = useCallback(async () => {
     try {
-      const res = await fetch('/api/videos?all=1', { method: 'DELETE' });
+      const res = await fetch(withPid('/api/videos?all=1'), { method: 'DELETE' });
       const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
       if (!res.ok || !data?.slots) {
         toast.error(data?.error || '清空失败，请重试', { id: 'clear' });
@@ -694,7 +869,7 @@ export function VideoWall() {
     } catch {
       toast.error('清空失败，请重试', { id: 'clear' });
     }
-  }, []);
+  }, [withPid]);
 
   /* ---------- 批量播放控制 ---------- */
   const handlePlayAll = useCallback(() => {
@@ -764,6 +939,65 @@ export function VideoWall() {
               )}
             </div>
           </div>
+
+          {/* 项目切换器（Step 8 多项目；Studio 模式显示，Focus 保持极简顶栏） */}
+          {mode === 'studio' && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  disabled={busy}
+                  title="切换项目"
+                  aria-label={`当前项目：${projectName}，点击切换`}
+                  className="inline-flex h-9 max-w-[180px] items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-[13px] font-semibold text-foreground/90 transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[240px]"
+                >
+                  <span className="truncate">{projectName}</span>
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[15rem] border-border bg-card">
+                {(['active', 'draft', 'archived'] as const).map((st) => {
+                  const group = projects.filter((p) => p.status === st);
+                  if (group.length === 0) return null;
+                  return (
+                    <div key={st}>
+                      <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                        {STATUS_META[st].label}
+                      </p>
+                      {group.map((p) => (
+                        <DropdownMenuItem
+                          key={p.id}
+                          onClick={() => switchProject(p.id)}
+                          className={cn('gap-2 text-[13px]', p.id === projectId && 'font-semibold text-primary')}
+                        >
+                          <span
+                            className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATUS_META[st].dot)}
+                            aria-hidden
+                          />
+                          <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                            {p.items.length}
+                          </span>
+                        </DropdownMenuItem>
+                      ))}
+                    </div>
+                  );
+                })}
+                <div className="mt-1.5 border-t border-border/70 pt-1.5">
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setNewName('');
+                      setCreating(true);
+                    }}
+                    className="text-[13px] font-semibold text-primary"
+                  >
+                    <FolderPlus className="mr-1.5 h-4 w-4" aria-hidden />
+                    新建项目
+                  </DropdownMenuItem>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
           <div className="ml-auto flex flex-wrap items-center gap-1.5 sm:gap-2">
             {mode === 'studio' ? (
@@ -1166,27 +1400,128 @@ export function VideoWall() {
           if (files.length > 0) void distributeFiles(files);
         }}
       >
-        {/* 左侧栏：仅 Studio + 桌面端（项目卡/视图导航为静态展示，随项目化步骤接活） */}
+        {/* 左侧栏：仅 Studio + 桌面端（项目卡已随 Step 8 接活；库/设置视图仍为占位） */}
         {mode === 'studio' && sidebarOpen && (
           <aside
             className="sticky top-[74px] hidden h-fit w-60 shrink-0 flex-col gap-4 pb-6 lg:flex"
             aria-label="工作台侧栏"
           >
-            {/* 项目卡 */}
+            {/* 项目卡（Step 8 动态化：当前项目 + 状态 + 管理入口） */}
             <div className="rounded-xl border border-border bg-card p-3.5">
               <div className="flex items-center gap-2.5">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                   <Clapperboard className="h-[18px] w-[18px]" aria-hidden />
                 </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">默认项目</p>
-                  <p className="text-[11px] leading-tight text-muted-foreground">多内容对比工作台</p>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold" title={projectName}>
+                    {projectName}
+                  </p>
+                  <p className="text-[11px] leading-tight text-muted-foreground">
+                    {filledCount} / {count} 个内容位
+                  </p>
                 </div>
               </div>
-              <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
-                进行中
-              </span>
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
+                  <span
+                    className={cn('h-1.5 w-1.5 rounded-full', STATUS_META[currentProject?.status ?? 'active'].dot)}
+                    aria-hidden
+                  />
+                  {STATUS_META[currentProject?.status ?? 'active'].label}
+                </span>
+                <Popover onOpenChange={(open) => open && setRenameDraft(currentProject?.name ?? projectName)}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    >
+                      管理
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-72 border-border bg-card p-3.5">
+                    {/* 改名 */}
+                    <p className="text-xs font-semibold tracking-wide text-muted-foreground">项目名称</p>
+                    <div className="mt-1.5 flex gap-1.5">
+                      <Input
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        maxLength={100}
+                        placeholder="项目名称"
+                        aria-label="项目名称"
+                        className="h-8 text-[13px]"
+                      />
+                      <button
+                        type="button"
+                        disabled={
+                          !currentProject ||
+                          projectBusy ||
+                          !renameDraft.trim() ||
+                          renameDraft.trim() === currentProject.name
+                        }
+                        onClick={() => currentProject && void updateProject(currentProject.id, { name: renameDraft.trim() })}
+                        className="h-8 shrink-0 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        保存
+                      </button>
+                    </div>
+                    {/* 状态 */}
+                    <p className="mt-3 text-xs font-semibold tracking-wide text-muted-foreground">项目状态</p>
+                    <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                      {(['active', 'draft', 'archived'] as const).map((st) => (
+                        <button
+                          key={st}
+                          type="button"
+                          disabled={!currentProject}
+                          aria-pressed={currentProject?.status === st}
+                          onClick={() => currentProject && void updateProject(currentProject.id, { status: st })}
+                          className={cn(
+                            'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50',
+                            currentProject?.status === st
+                              ? 'border-primary bg-primary/20 text-primary'
+                              : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
+                          )}
+                        >
+                          {STATUS_META[st].label}
+                        </button>
+                      ))}
+                    </div>
+                    {/* 删除（默认项目受保护） */}
+                    {currentProject && currentProject.id !== DEFAULT_PROJECT_ID ? (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <button
+                            type="button"
+                            className="mt-3 h-8 w-full rounded-lg border border-destructive/40 text-xs font-semibold text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/50"
+                          >
+                            删除项目
+                          </button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>删除项目「{currentProject.name}」？</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              将删除该项目的全部内容文件与设置，此操作无法恢复。
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>取消</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => void deleteProject(currentProject.id)}
+                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive"
+                            >
+                              确认删除
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    ) : (
+                      <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/60">
+                        默认项目不可删除；删除其他项目会连同其内容文件一并移除。
+                      </p>
+                    )}
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
 
             {/* 添加内容：与顶栏「一键导入」同源，多选后按顺序填充空位 */}
@@ -1295,6 +1630,31 @@ export function VideoWall() {
               </div>
             ))}
           </div>
+        ) : filledCount === 0 ? (
+          /* 空状态引导（D7：仅简单文字提示 + 最小上传入口，不做花哨插画） */
+          <div className="flex min-h-[420px] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/70 bg-card/40 px-6 py-14 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full border border-dashed border-muted-foreground/40 text-muted-foreground/60">
+              <UploadCloud className="h-6 w-6" aria-hidden />
+            </span>
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-foreground/90">「{projectName}」暂无内容</p>
+              <p className="mx-auto max-w-md text-[13px] leading-relaxed text-muted-foreground">
+                把视频或 HTML 文件拖到页面任意位置，或点击下方按钮选择文件，内容将按顺序填入内容位
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+              disabled={busy}
+              className="mt-1 inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <UploadCloud className="h-4 w-4" aria-hidden />
+              选择文件导入
+            </button>
+            <p className="text-[11px] text-muted-foreground/60">
+              支持视频（MP4 / MOV / WebM 等）与单文件 HTML；内容超过内容位数量时会自动扩位
+            </p>
+          </div>
         ) : (
           <DndContext
             sensors={sensors}
@@ -1395,6 +1755,49 @@ export function VideoWall() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 新建项目（Step 8 多项目）：创建后立即切换到新项目 */}
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent className="border-border bg-card text-card-foreground sm:max-w-[24rem]">
+          <DialogHeader>
+            <DialogTitle>新建项目</DialogTitle>
+            <DialogDescription>
+              为一批新内容创建独立工作台：内容、布局与设置互相隔离，可随时在顶栏切换。
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void createProject();
+              }
+            }}
+            maxLength={100}
+            placeholder="项目名称（留空则自动命名）"
+            aria-label="项目名称"
+            autoFocus
+          />
+          <DialogFooter className="gap-2">
+            <button
+              type="button"
+              onClick={() => setCreating(false)}
+              className="inline-flex h-9 items-center rounded-lg border border-border bg-card px-4 text-[13px] font-medium text-foreground/90 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={projectBusy}
+              onClick={() => void createProject()}
+              className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {projectBusy ? '创建中…' : '创建并切换'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 一键导入的隐藏文件选择框（视频与单文件 HTML） */}
       <input

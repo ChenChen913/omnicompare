@@ -33,21 +33,21 @@ import {
   writeProject,
 } from './project-store';
 
-export { isValidLayout, isSafeFilename, validateUploadFile } from './project-store';
+export { isValidLayout, isSafeFilename, projectExists, validateUploadFile } from './project-store';
 
 /**
  * 清单「读-改-写」互斥锁：单进程内将临界区串行化，
  * 防止并发请求互相覆盖（lost update）产生丢失的清单条目与磁盘孤儿文件。
- * v1 全局锁 = v2 默认项目锁。
+ * Step 8 起按项目维度加锁（projectId 由路由层解析后传入）。
  */
-export function withManifestLock<T>(fn: () => Promise<T>): Promise<T> {
-  return withProjectLock(DEFAULT_PROJECT_ID, fn);
+export function withManifestLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+  return withProjectLock(projectId, fn);
 }
 
-/** 读取默认项目的 v1 视图清单 */
-export async function readManifest(): Promise<Manifest> {
+/** 读取项目的 v1 视图清单（缺省为默认项目，兼容旧调用） */
+export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Promise<Manifest> {
   await ensureDefaultProject();
-  const project = await readProject(DEFAULT_PROJECT_ID);
+  const project = await readProject(projectId);
   // v2 layout='auto' → 视图返回按 slotCount 计算的近方形矩阵 + layoutMode 标记；
   // 旧客户端忽略 layoutMode 字段，拿到的是仍然有效的显式矩阵（向后兼容）
   const st = project.settings;
@@ -71,8 +71,8 @@ export async function readManifest(): Promise<Manifest> {
 /** 写清单：body 为 v1 视图（readManifest 的产物），按 slots 差量写回 items。
  * Step 5 起视图携带 kind/html 扩展字段，HTML 条目在 v1 写路径中原样保留；
  * 兼容未携带扩展字段的旧客户端（仅有 video 字段的槽位照常落为视频条目）。 */
-export async function writeManifest(manifest: Manifest): Promise<void> {
-  const project = await readProject(DEFAULT_PROJECT_ID);
+export async function writeManifest(manifest: Manifest, projectId: string = DEFAULT_PROJECT_ID): Promise<void> {
+  const project = await readProject(projectId);
   const previousFiles = new Set(project.items.map((it) => it.file.filename));
 
   project.slotCount = manifest.count;
@@ -126,7 +126,7 @@ export async function writeManifest(manifest: Manifest): Promise<void> {
 
   // 清单落盘后再删文件（与 v2 端点同序）：即便删除失败也不产生死链
   if (removed.length > 0) {
-    await Promise.all(removed.map((f) => deleteFile(DEFAULT_PROJECT_ID, f)));
+    await Promise.all(removed.map((f) => deleteFile(projectId, f)));
   }
 }
 
@@ -175,12 +175,16 @@ export function applyCountAndLayout(
   };
 }
 
-/** 保存上传的内容文件（视频或 HTML，写入默认项目 files/ 目录），返回其元数据 */
-export async function saveContentFile(file: File, kind: ContentKind): Promise<FileMeta> {
-  return saveFile(DEFAULT_PROJECT_ID, file, kind);
+/** 保存上传的内容文件（视频或 HTML，写入目标项目 files/ 目录；缺省为默认项目），返回其元数据 */
+export async function saveContentFile(
+  file: File,
+  kind: ContentKind,
+  projectId: string = DEFAULT_PROJECT_ID,
+): Promise<FileMeta> {
+  return saveFile(projectId, file, kind);
 }
 
-/** 删除默认项目中的视频文件（忽略不存在的情况） */
-export async function deleteVideoFile(filename: string): Promise<void> {
-  return deleteFile(DEFAULT_PROJECT_ID, filename);
+/** 删除指定项目中的内容文件（忽略不存在的情况；缺省为默认项目） */
+export async function deleteVideoFile(filename: string, projectId: string = DEFAULT_PROJECT_ID): Promise<void> {
+  return deleteFile(projectId, filename);
 }

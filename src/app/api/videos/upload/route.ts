@@ -1,6 +1,6 @@
 /**
- * 内容上传 API（视频或单文件 HTML）
- * POST /api/videos/upload  multipart: file=内容文件, slot=位置序号
+ * 内容上传 API（视频或单文件 HTML；Step 8 起支持 ?project= 多项目）
+ * POST /api/videos/upload[?project=id]  multipart: file=内容文件, slot=位置序号
  * kind 由服务端按 MIME + 扩展名双判（video / html，HTML 限 ≤10MB）；成功后返回最新清单
  */
 import { NextRequest, NextResponse } from 'next/server';
@@ -11,6 +11,7 @@ import {
   validateUploadFile,
   withManifestLock,
 } from '@/lib/video-store';
+import { resolveProjectParam } from '@/lib/v1-project-param';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -47,13 +48,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: checked.error }, { status: 400, headers: noStore });
   }
 
-  return withManifestLock(async () => {
-    const manifest = await readManifest();
+  const p = await resolveProjectParam(req);
+  if (p.error) return p.error;
+
+  return withManifestLock(p.id, async () => {
+    const manifest = await readManifest(p.id);
     if (!Number.isInteger(slot) || slot < 0 || slot >= manifest.count) {
       return NextResponse.json({ error: '无效的内容位置' }, { status: 400, headers: noStore });
     }
 
-    const meta = await saveContentFile(file, checked.kind);
+    const meta = await saveContentFile(file, checked.kind, p.id);
     const target = manifest.slots[slot];
     if (checked.kind === 'html') {
       target.kind = 'html';
@@ -65,9 +69,9 @@ export async function POST(req: NextRequest) {
       target.html = null;
     }
     // 被替换条目的旧文件（视频或 HTML）由 writeManifest 集中清理，无需在此处理
-    await writeManifest(manifest);
+    await writeManifest(manifest, p.id);
 
     // 重读返回：写入层会做紧凑序重排（v2 不变量），保证客户端视图与存储一致
-    return NextResponse.json(await readManifest(), { headers: noStore });
+    return NextResponse.json(await readManifest(p.id), { headers: noStore });
   });
 }

@@ -16,6 +16,7 @@ import {
   writeManifest,
 } from '@/lib/video-store';
 import { SLOT_MAX, SLOT_MIN, autoLayoutFor } from '@/lib/types';
+import { resolveProjectParam } from '@/lib/v1-project-param';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,16 +53,19 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  return withManifestLock(async () => {
-    const current = await readManifest();
+  const p = await resolveProjectParam(req);
+  if (p.error) return p.error;
+
+  return withManifestLock(p.id, async () => {
+    const current = await readManifest(p.id);
     const { manifest: next, removedFilenames } = applyCountAndLayout(current, count, layout);
     next.layoutMode = wantAuto ? 'auto' : 'manual';
-    await writeManifest(next);
+    await writeManifest(next, p.id);
 
     if (removedFilenames.length > 0) {
-      await Promise.all(removedFilenames.map((f) => deleteVideoFile(f)));
+      await Promise.all(removedFilenames.map((f) => deleteVideoFile(f, p.id)));
     }
     // 重读返回：写入层会做紧凑序重排（v2 不变量），保证客户端视图与存储一致
-    return NextResponse.json(await readManifest(), { headers: noStore });
+    return NextResponse.json(await readManifest(p.id), { headers: noStore });
   });
 }

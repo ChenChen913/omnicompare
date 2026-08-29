@@ -269,6 +269,16 @@ export async function listProjectIds(): Promise<string[]> {
   }
 }
 
+/** 项目是否存在（以 manifest.json 是否可读为判据，不触发默认项目迁移） */
+export async function projectExists(id: string): Promise<boolean> {
+  try {
+    await fsp.access(projectManifestPath(id));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /* ============================== 条目操作（纯函数） ============================== */
 
 /** 增删后重排 order 为 0..n-1 紧凑序 */

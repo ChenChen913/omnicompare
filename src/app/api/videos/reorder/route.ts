@@ -1,6 +1,6 @@
 /**
- * 内容排序 API（拖拽排序，蓝图 §14）
- * PATCH /api/videos/reorder  { order: number[] }
+ * 内容排序 API（拖拽排序，蓝图 §14；Step 8 起支持 ?project= 多项目）
+ * PATCH /api/videos/reorder[?project=id]  { order: number[] }
  * - order 为「新位置 → 旧位置」的映射数组，长度必须等于当前内容条目数，
  *   且为 0..n-1 的一个排列（服务端严格校验）
  * - 服务端按 id 锚点重排 items.order（不重建条目），文件与标题跟随内容移动
@@ -8,8 +8,8 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { applyReorder, readProject, withProjectLock, writeProject } from '@/lib/project-store';
-import { DEFAULT_PROJECT_ID } from '@/lib/types';
 import { readManifest } from '@/lib/video-store';
+import { resolveProjectParam } from '@/lib/v1-project-param';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,8 +26,11 @@ export async function PATCH(req: NextRequest) {
   }
   const order = body.order;
 
-  return withProjectLock(DEFAULT_PROJECT_ID, async () => {
-    const project = await readProject(DEFAULT_PROJECT_ID);
+  const p = await resolveProjectParam(req);
+  if (p.error) return p.error;
+
+  return withProjectLock(p.id, async () => {
+    const project = await readProject(p.id);
     const items = project.items;
 
     // 严格排列校验：长度一致 + 元素为 0..n-1 的整数且互不重复
@@ -49,7 +52,7 @@ export async function PATCH(req: NextRequest) {
     }
     if (items.length === 0) {
       // 空项目 + 空数组：无变化，直接返回当前视图
-      return NextResponse.json(await readManifest(), { headers: noStore });
+      return NextResponse.json(await readManifest(p.id), { headers: noStore });
     }
 
     // 按 id 锚点重排：id 全生命周期不变，order 决定矩阵位置（蓝图 §6）
@@ -59,6 +62,6 @@ export async function PATCH(req: NextRequest) {
     await writeProject(project);
 
     // 重读返回：保证客户端视图与存储一致
-    return NextResponse.json(await readManifest(), { headers: noStore });
+    return NextResponse.json(await readManifest(p.id), { headers: noStore });
   });
 }

@@ -249,6 +249,40 @@ curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
 R=$(curl -s -X PATCH "$BASE/api/videos/settings" -H 'Content-Type: application/json' -d '{"aspectRatio":"original","showTitles":true,"showInfo":true,"loop":true,"muted":true,"playbackRate":1}')
 check "测试后设置复位（original/1×/显示标题与属性）" "$(expect_json_field "$R" '.settings.aspectRatio=="original" and .settings.playbackRate==1 and .settings.showTitles==true and .settings.showInfo==true'; echo $?)"
 
+echo "== 17. 多项目 v1 隔离（Step 8，蓝图 §8）=="
+# 新建项目
+R=$(curl -s -X POST "$BASE/api/projects" -H 'Content-Type: application/json' -d '{"name":"对抗测试项目"}')
+PID=$(echo "$R" | jq -r '.id // empty')
+[ -n "$PID" ]; check "新建项目 -> 返回 id" $?
+# v1 视图读取新项目：空清单 + 默认设置
+R=$(curl -s "$BASE/api/videos?project=$PID")
+check "v1 视图读取新项目（count=6 空槽位 默认设置）" "$(expect_json_field "$R" '.count==6 and .slots[0].video==null and .settings.showInfo==true'; echo $?)"
+# 上传到指定项目：默认项目不受影响
+CODE=$(curl -s -o /tmp/pp.json -w "%{http_code}" -X POST "$BASE/api/videos/upload?project=$PID" -F "file=@/home/z/my-project/scripts/test-videos/v01-landscape.mp4" -F "slot=0")
+[ "$CODE" = "200" ]; check "v1 上传到指定项目 -> 200" $?
+check "新项目 slot0 有内容" "$(jq -e '.slots[0].video != null' /tmp/pp.json >/dev/null 2>&1; echo $?)"
+check "默认项目不受影响（slot0 无内容）" "$(curl -s "$BASE/api/videos" | jq -e '.slots[0].video == null' >/dev/null 2>&1; echo $?)"
+# v2 一致性：上传条目落在该项目的 items[0]
+check "指定项目内容与 v2 items 一致" "$(curl -s "$BASE/api/projects/$PID/items" | jq -e 'length==1 and .[0].kind=="video"' >/dev/null 2>&1; echo $?)"
+# 设置隔离：新项目 1:1，默认项目保持 original
+curl -s -X PATCH "$BASE/api/videos/settings?project=$PID" -H 'Content-Type: application/json' -d '{"aspectRatio":"1:1"}' >/dev/null
+check "项目设置隔离（新项目 1:1，默认 original）" "$(curl -s "$BASE/api/videos?project=$PID" | jq -e '.settings.aspectRatio=="1:1"' >/dev/null 2>&1 && curl -s "$BASE/api/videos" | jq -e '.settings.aspectRatio=="original"' >/dev/null 2>&1; echo $?)"
+# 标题写入指定项目
+curl -s -X PATCH "$BASE/api/videos?project=$PID" -H 'Content-Type: application/json' -d '{"slot":0,"title":"隔离测试"}' >/dev/null
+check "标题写入指定项目" "$(curl -s "$BASE/api/videos?project=$PID" | jq -e '.slots[0].title=="隔离测试"' >/dev/null 2>&1; echo $?)"
+# 非法与不存在的项目
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/videos?project=no-such-project")
+[ "$CODE" = "404" ]; check "v1 读取不存在项目 -> 404" $?
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/videos?project=..%2Fevil")
+[ "$CODE" = "400" ]; check "v1 非法项目 id -> 400" $?
+# 清理：删除项目后 v1 视图 404；默认项目删除受保护
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$BASE/api/projects/$PID")
+[ "$CODE" = "200" ]; check "删除测试项目 -> 200" $?
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/videos?project=$PID")
+[ "$CODE" = "404" ]; check "删除后 v1 视图 -> 404" $?
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$BASE/api/projects/default")
+[ "$CODE" = "403" ]; check "默认项目删除受保护 -> 403" $?
+
 echo ""
 echo "========== 汇总 =========="
 echo "通过: $PASS  失败: $FAIL"
