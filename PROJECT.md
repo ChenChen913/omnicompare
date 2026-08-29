@@ -1,6 +1,6 @@
 # 视频墙（Video Wall）项目详解
 
-> 本文档面向**后续接手开发的工程师与 AI 编码助手**，目标是让任何人和任何 AI 在 10 分钟内完整理解本项目的结构、运行方式与全部约束。快速上手请看 [README.md](./README.md)。
+> 本文档面向**后续接手开发的工程师与 AI 编码助手**，目标是让任何人和任何 AI 在 10 分钟内完整理解本项目的结构、运行方式与全部约束。快速上手请看 [README.md](./README.md)（中文）或 [README_EN.md](./README_EN.md)（English）。
 
 ---
 
@@ -203,3 +203,7 @@ bash scripts/api-adversarial-test.sh
 - toast 一律按通道带固定 `id`（layout/import/slot/clear/play），防止快速操作时叠加
 - 视频元素永远 `object-contain`，不要改成 cover（会裁切，违背项目初衷）
 - 样式：不要移除 `globals.css` 里 `html` 的滚动条常驻规则和导航栏定宽规则（防抖动）
+
+## 12. 许可证
+
+本项目以 [MIT License](./LICENSE) 开源发布。在不违反许可条款的前提下，任何人可自由使用、修改与分发本项目的代码；项目本身不提供任何担保，部署后的内容管理与访问控制由使用者自行承担。第三方依赖（Next.js、React、Tailwind CSS 等）各自遵循其原始许可证，本项目的 MIT 许可证不改变它们的授权条款。
