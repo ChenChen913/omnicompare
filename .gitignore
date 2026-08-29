@@ -75,4 +75,5 @@ server.log
 # 二进制测试资产（体积大；可用 ffmpeg 重新生成）
 /scripts/test-videos/
 /scripts/shots/
-upload/*.zip
+# 用户上传素材（原型/需求文档/临时页面）一律不入库，防止自动提交误收
+/upload/
