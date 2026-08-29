@@ -767,7 +767,9 @@ export function VideoWall() {
               type="button"
               onClick={toggleTheme}
               className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
-              title={resolvedTheme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+              /* title 与图标一样受 themeMounted 门控：服务端与水合首帧统一渲染暗色文案，
+                 避免 next-themes 客户端同步读主题导致的水合属性不一致（控制台警告） */
+              title={themeMounted && resolvedTheme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
               aria-label="切换明暗主题"
             >
               {themeMounted && resolvedTheme === 'dark' ? (
