@@ -1,6 +1,6 @@
 {
-  "name": "video-wall",
-  "version": "0.2.1",
+  "name": "omnicompare",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",

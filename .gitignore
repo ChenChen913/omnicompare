@@ -75,3 +75,4 @@ server.log
 # 二进制测试资产（体积大；可用 ffmpeg 重新生成）
 /scripts/test-videos/
 /scripts/shots/
+upload/*.zip
