@@ -3,18 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clapperboard,
   Expand,
   Eye,
-  EyeOff,
   FolderPlus,
   Gauge,
-  Info,
   LayoutGrid,
   Library,
   Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pause,
   Play,
   Repeat,
@@ -23,8 +21,6 @@ import {
   Sun,
   Trash2,
   UploadCloud,
-  Volume2,
-  VolumeX,
   Wand2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -79,8 +75,13 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { VideoCard, VideoCardProps } from './video-card';
@@ -149,6 +150,11 @@ function SortableCard({
 const ctlBtn =
   'inline-flex h-10 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3';
 
+/** 顶部按钮组之间的竖向分隔线：把「播放 / 管理与显示 / 模式」分成视觉上独立的组 */
+function Divider() {
+  return <span aria-hidden className="mx-0.5 hidden h-6 w-px shrink-0 bg-border sm:block" />;
+}
+
 /** 矩阵选项：迷你预览图 + 行×列标签 */
 function MatrixOption({
   layout,
@@ -205,6 +211,8 @@ export function VideoWall() {
   /** 布局模式：auto = 按数量自动近方形（默认）；manual = 用户显式选矩阵（蓝图 §12） */
   const [layoutMode, setLayoutMode] = useState<'auto' | 'manual'>('auto');
   const [loading, setLoading] = useState(true);
+  /** 项目切换过渡态：保留旧内容渐隐、新数据到达后渐显，避免骨架屏高度突变引起跳动 */
+  const [switching, setSwitching] = useState(false);
   const [uploading, setUploading] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
   /* 播放与展示设置（Step 7：服务端 Project.settings 为唯一事实源，蓝图 §7/§15） */
@@ -244,6 +252,8 @@ export function VideoWall() {
 
   const busy = importing || Object.values(uploading).some(Boolean);
   const filledCount = slots.filter((s) => s.video || s.html).length;
+  /** 当前项目是否含视频：纯 HTML 项目没有「播放」语义，播放类控件随之隐藏/禁用 */
+  const hasVideo = slots.some((s) => !!s.video);
   const currentProject = projects.find((p) => p.id === projectId) ?? null;
   const projectName =
     currentProject?.name ?? (projectId === DEFAULT_PROJECT_ID ? '默认项目' : '加载中…');
@@ -310,7 +320,10 @@ export function VideoWall() {
       } catch {
         if (!cancelled) toast.error('加载内容列表失败，请刷新重试');
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setSwitching(false);
+        }
       }
     })();
     return () => {
@@ -389,7 +402,8 @@ export function VideoWall() {
       try {
         localStorage.setItem(PREF_PROJECT, id);
       } catch {}
-      setLoading(true);
+      // 不替换骨架屏：保留旧内容进入过渡态，新数据到达后一次性淡入，避免高度突变跳动
+      setSwitching(true);
       setProjectId(id);
     },
     [projectId, busy],
@@ -418,7 +432,7 @@ export function VideoWall() {
       try {
         localStorage.setItem(PREF_PROJECT, p.id);
       } catch {}
-      setLoading(true);
+      setSwitching(true);
       setProjectId(p.id);
       toast.success(`已创建「${p.name}」并切换`, { id: 'project' });
     } catch {
@@ -464,7 +478,7 @@ export function VideoWall() {
           try {
             localStorage.removeItem(PREF_PROJECT);
           } catch {}
-          setLoading(true);
+          setSwitching(true);
           setProjectId(DEFAULT_PROJECT_ID);
         }
         toast.success('项目已删除', { id: 'project' });
@@ -999,54 +1013,41 @@ export function VideoWall() {
             </DropdownMenu>
           )}
 
+          {/* 顶部控制区：播放 → 管理/显示 → 模式 → 主题，分组排列（D9/D10 布局打磨） */}
           <div className="ml-auto flex flex-wrap items-center gap-1.5 sm:gap-2">
-            {mode === 'studio' ? (
-              <>
-                {/* 侧栏开关（侧栏仅桌面端展示） */}
-                <button
-                  type="button"
-                  onClick={() => setSidebarOpen((v) => !v)}
-                  aria-pressed={sidebarOpen}
-                  className={cn(
-                    ctlBtn,
-                    'hidden border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground lg:inline-flex',
-                  )}
-                  title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
-                  aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
-                >
-                  {sidebarOpen ? (
-                    <PanelLeftClose className="h-4 w-4" aria-hidden />
-                  ) : (
-                    <PanelLeftOpen className="h-4 w-4" aria-hidden />
-                  )}
-                </button>
-              </>
-            ) : (
+            {mode !== 'studio' && (
               <span className="mr-1 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
                 专注模式
               </span>
             )}
 
-            <button
-              type="button"
-              onClick={handlePlayAll}
-              className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 sm:px-4"
-            >
-              <Play className="h-4 w-4 fill-current" aria-hidden />
-              同时播放
-            </button>
+            {/* 播放控制组：纯 HTML 项目没有播放语义，整组隐藏 */}
+            {hasVideo && (
+              <>
+                <button
+                  type="button"
+                  onClick={handlePlayAll}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 sm:px-4"
+                >
+                  <Play className="h-4 w-4 fill-current" aria-hidden />
+                  同时播放
+                </button>
 
-            <button
-              type="button"
-              onClick={handlePauseAll}
-              className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
-              title="全部暂停"
-              aria-label="全部暂停"
-            >
-              <Pause className="h-4 w-4" aria-hidden />
-              <span className="hidden sm:inline">暂停</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={handlePauseAll}
+                  className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
+                  title="全部暂停"
+                  aria-label="全部暂停"
+                >
+                  <Pause className="h-4 w-4" aria-hidden />
+                  <span className="hidden sm:inline">暂停</span>
+                </button>
+
+                <Divider />
+              </>
+            )}
 
             {/* 数量与布局（管理控件，Focus 模式隐藏） */}
             {mode === 'studio' && (
@@ -1615,7 +1616,12 @@ export function VideoWall() {
           </aside>
         )}
 
-        <main className="min-w-0 flex-1 py-4 sm:py-7">
+        <main
+          className={cn(
+            'min-w-0 flex-1 py-4 transition-opacity duration-300 sm:py-7',
+            switching && 'pointer-events-none opacity-45',
+          )}
+        >
         {loading ? (
           <div className="grid gap-3 sm:gap-5" style={gridStyle}>
             {slots.map((s) => (
