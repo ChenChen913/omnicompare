@@ -129,13 +129,13 @@ export function VideoCard({
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
             className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2 px-3 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed"
-            aria-label={`位置 ${index + 1}：上传视频`}
+            aria-label={`位置 ${index + 1}：暂无视频，点击上传`}
           >
             <span className="flex h-11 w-11 items-center justify-center rounded-full border border-dashed border-muted-foreground/40">
               <UploadCloud className="h-5 w-5" aria-hidden />
             </span>
-            <span className="text-sm font-medium">上传视频</span>
-            <span className="text-[11px] text-muted-foreground/60">点击选择，或拖拽视频到此处</span>
+            <span className="text-sm font-medium">暂无视频</span>
+            <span className="text-[11px] text-muted-foreground/60">点击选择或拖拽视频到此处</span>
           </button>
         )}
 
