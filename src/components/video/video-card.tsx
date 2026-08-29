@@ -10,6 +10,8 @@ interface VideoCardProps {
   uploading: boolean;
   loop: boolean;
   muted: boolean;
+  /** 侧栏「当前窗格列表」点击定位时的高亮态 */
+  highlighted?: boolean;
   /** 处理文件（可多个）：第一个放入本位置，其余按顺序分配到其它位置 */
   onFiles: (files: File[], primarySlot: number) => void;
   onTitleChange: (slotIndex: number, title: string) => void;
@@ -22,6 +24,7 @@ export function VideoCard({
   uploading,
   loop,
   muted,
+  highlighted,
   onFiles,
   onTitleChange,
   onClear,
@@ -68,11 +71,13 @@ export function VideoCard({
 
   return (
     <article
+      id={`slot-card-${index}`}
       className={cn(
-        'group relative flex flex-col overflow-hidden rounded-2xl border bg-zinc-900/70 shadow-lg shadow-black/20 transition-all duration-200',
+        'group relative flex flex-col overflow-hidden rounded-2xl border bg-card shadow-lg shadow-black/10 transition-all duration-200',
         dragOver
-          ? 'scale-[1.015] border-violet-400/80 bg-violet-500/5 ring-2 ring-violet-500/40'
-          : 'border-zinc-800 hover:border-zinc-700',
+          ? 'scale-[1.015] border-primary/80 bg-primary/5 ring-2 ring-primary/40'
+          : 'border-border hover:border-muted-foreground/40',
+        highlighted && 'border-primary/60 ring-2 ring-primary/70',
       )}
     >
       {/* 位置角标 */}
@@ -111,8 +116,8 @@ export function VideoCard({
             />
             {videoError && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-black/85 px-4 text-center">
-                <p className="text-sm font-medium text-red-400">视频加载失败</p>
-                <p className="text-[11px] leading-relaxed text-zinc-500">
+                <p className="text-sm font-medium text-destructive">视频加载失败</p>
+                <p className="text-[11px] leading-relaxed text-zinc-400">
                   文件可能已损坏或格式不受支持，可尝试替换或移除
                 </p>
               </div>
@@ -123,22 +128,22 @@ export function VideoCard({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2 px-3 text-zinc-600 transition-colors hover:bg-zinc-900/60 hover:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 disabled:cursor-not-allowed"
+            className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2 px-3 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed"
             aria-label={`位置 ${index + 1}：上传视频`}
           >
-            <span className="flex h-11 w-11 items-center justify-center rounded-full border border-dashed border-zinc-700">
+            <span className="flex h-11 w-11 items-center justify-center rounded-full border border-dashed border-muted-foreground/40">
               <UploadCloud className="h-5 w-5" aria-hidden />
             </span>
             <span className="text-sm font-medium">上传视频</span>
-            <span className="text-[11px] text-zinc-700">点击选择，或拖拽视频到此处</span>
+            <span className="text-[11px] text-muted-foreground/60">点击选择，或拖拽视频到此处</span>
           </button>
         )}
 
         {/* 上传中遮罩 */}
         {uploading && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2.5 bg-black/70 backdrop-blur-sm">
-            <Loader2 className="h-7 w-7 animate-spin text-violet-400" aria-hidden />
-            <p className="text-xs text-zinc-300">正在上传…</p>
+            <Loader2 className="h-7 w-7 animate-spin text-primary" aria-hidden />
+            <p className="text-xs text-zinc-100">正在上传…</p>
           </div>
         )}
       </div>
@@ -155,10 +160,10 @@ export function VideoCard({
           onBlur={() => recalcHeight(false)}
           placeholder="给视频起个标题，或写点介绍…"
           aria-label={`位置 ${index + 1} 的标题与介绍`}
-          className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-zinc-800/40 px-2.5 py-1.5 text-[13px] leading-snug text-zinc-100 placeholder:text-zinc-600 transition-colors focus:border-violet-500/50 focus:bg-zinc-800/70 focus:outline-none"
+          className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 text-[13px] leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
         />
         {video && (
-          <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-500">
+          <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
             <span className="min-w-0 truncate" title={video.originalName}>
               {video.originalName} · {formatBytes(video.size)}
             </span>
@@ -169,7 +174,7 @@ export function VideoCard({
                 disabled={uploading}
                 title="替换视频"
                 aria-label={`替换位置 ${index + 1} 的视频`}
-                className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 disabled:opacity-40"
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40"
               >
                 <RefreshCw className="h-3.5 w-3.5" aria-hidden />
               </button>
@@ -179,7 +184,7 @@ export function VideoCard({
                 disabled={uploading}
                 title="移除视频"
                 aria-label={`移除位置 ${index + 1} 的视频`}
-                className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50 disabled:opacity-40"
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/50 disabled:opacity-40"
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden />
               </button>

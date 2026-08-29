@@ -187,10 +187,10 @@ MVP 阶段默认单项目 + 草稿/归档状态；多项目列表页第二阶段
 
 | Step | 内容 | 状态 |
 |---|---|---|
-| 1 | 蓝图本文 + 产品更名 OmniCompare + 仓库更名 | 本轮完成 |
-| 2 | 双主题落地：DESIGN token → globals.css、next-themes、顶栏切换按钮、现有页面全面主题化（去硬编码 zinc/violet） | 本轮完成 |
+| 1 | 蓝图本文 + 产品更名 OmniCompare + 仓库更名 | 完成（仓库已更名 omnicompare） |
+| 2 | 双主题落地：DESIGN token → globals.css、next-themes、顶栏切换按钮、现有页面全面主题化（去硬编码 zinc/violet） | 完成（Token 基建先行，硬编码清扫与 Tailwind 扫描排除随 Step 4 补完） |
 | 3 | schema v2 + v1→v2 迁移脚本 + items API 重构（id 锚点、order） | 待做 |
-| 4 | Studio/Focus 双模式壳（左侧栏 + 顶栏改造 + 模式切换不丢状态） | 待做 |
+| 4 | Studio/Focus 双模式壳（左侧栏 + 顶栏改造 + 模式切换不丢状态） | 完成（含精简侧栏：项目卡/视图导航/窗格列表定位高亮；项目卡动态化随 Step 8 接活） |
 | 5 | HTML 类型：上传校验、sandbox iframe 渲染、状态机、安全响应头 | 待做 |
 | 6 | 布局升级：Auto Layout + 拖拽排序（dnd-kit） | 待做 |
 | 7 | 比例系统 + 标题显隐 + 播放速度 | 待做 |
@@ -213,3 +213,4 @@ MVP 阶段默认单项目 + 草稿/归档状态；多项目列表页第二阶段
 4. **拖拽排序与矩阵容量交互**（中）：order 连续性（0..n-1 无空洞）由服务端保证，reorder 后重算
 5. **双主题回归量**（低但琐碎）：本项目曾以硬编码 zinc/violet 实现，主题化要逐类清扫，测试双主题 × 双模式四种组合
 6. **多标签页并发**（低）：延续进程内锁 + 响应回填；出现真实冲突场景时再引入 version 字段乐观锁
+7. **Tailwind 自动扫描污染**（已修复，记入历史教训）：`upload/` 下的 Stitch 原型 HTML 含 `bg-[url('placeholder')]` 等非法任意值类，会被 Tailwind v4 自动源码扫描生成进 CSS 导致构建 500；已在 globals.css 用 `@source not "../../upload"` 排除。后续引入含类名的静态资产（原型/设计稿导出）时，必须同样排除或放入已忽略目录

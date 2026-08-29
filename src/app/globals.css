@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* 排除 upload/ 下的 UI 原型（Stitch 导出 HTML 含 bg-[url('placeholder')] 等
+   非法任意值类，会被自动源码扫描生成进 CSS 导致构建失败） */
+@source not "../../upload";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

@@ -3,11 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Clapperboard,
+  Expand,
   LayoutGrid,
+  Library,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pause,
   Play,
   Repeat,
+  Settings,
+  Shrink,
   Sun,
   Trash2,
   UploadCloud,
@@ -43,6 +49,9 @@ import { VideoCard } from './video-card';
 
 const PREF_LOOP = 'videowall:loop';
 const PREF_MUTE = 'videowall:mute';
+/** 工作模式与侧栏开关（仅 UI 偏好，业务数据永远以服务端为准） */
+const PREF_MODE = 'omnicompare:mode';
+const PREF_SIDEBAR = 'omnicompare:sidebar';
 
 function defaultSlots(): Slot[] {
   return Array.from({ length: 6 }, (_, i) => ({ index: i, title: '', video: null }));
@@ -95,7 +104,7 @@ function MatrixOption({
       </span>
       <span className={cn('text-[11px] font-semibold', active ? 'text-primary' : 'text-muted-foreground')}>
         {layout.rows}×{layout.cols}
-        {pad > 0 && <span className="ml-0.5 text-[9px] font-normal text-amber-400/90">补</span>}
+        {pad > 0 && <span className="ml-0.5 text-[9px] font-normal text-amber-600 dark:text-amber-400/90">补</span>}
       </span>
     </button>
   );
@@ -112,11 +121,18 @@ export function VideoWall() {
   const [mutedAll, setMutedAll] = useState(false);
   const [gridDrag, setGridDrag] = useState(false);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+  /** studio = 管理（全部控件 + 侧栏）；focus = 观看（极简顶栏 + 满幅网格） */
+  const [mode, setMode] = useState<'studio' | 'focus'>('studio');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  /** 侧栏窗格列表点击定位时的高亮位 */
+  const [highlight, setHighlight] = useState<number | null>(null);
+  const [themeMounted, setThemeMounted] = useState(false);
   const { resolvedTheme, setTheme } = useTheme();
 
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const importInputRef = useRef<HTMLInputElement>(null);
   const titleTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setVideoRef = useCallback((index: number, el: HTMLVideoElement | null) => {
     videoRefs.current[index] = el;
@@ -162,6 +178,10 @@ export function VideoWall() {
       if (savedLoop !== null) setLoop(savedLoop === '1');
       const savedMute = localStorage.getItem(PREF_MUTE);
       if (savedMute !== null) setMutedAll(savedMute === '1');
+      const savedMode = localStorage.getItem(PREF_MODE);
+      if (savedMode === 'studio' || savedMode === 'focus') setMode(savedMode);
+      const savedSidebar = localStorage.getItem(PREF_SIDEBAR);
+      if (savedSidebar !== null) setSidebarOpen(savedSidebar === '1');
     } catch {
       /* 忽略隐私模式下的存储错误 */
     }
@@ -179,6 +199,42 @@ export function VideoWall() {
     } catch {}
   }, [mutedAll]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(PREF_MODE, mode);
+    } catch {}
+  }, [mode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PREF_SIDEBAR, sidebarOpen ? '1' : '0');
+    } catch {}
+  }, [sidebarOpen]);
+
+  /* next-themes 首帧渲染后才确定主题，先挂载再渲染图标避免水合不一致 */
+  useEffect(() => setThemeMounted(true), []);
+
+  /** 切换明暗主题 */
+  const toggleTheme = useCallback(() => {
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+  }, [resolvedTheme, setTheme]);
+
+  /** Studio ↔ Focus 双向切换：只改壳层，不动内容与播放状态 */
+  const toggleMode = useCallback(() => {
+    setMode((m) => (m === 'studio' ? 'focus' : 'studio'));
+  }, []);
+
+  /**
+   * 侧栏窗格点击：滚动到对应卡片并短暂高亮。
+   * 只滚动视口、不改任何状态，网格与视频元素不受影响。
+   */
+  const focusSlot = useCallback((index: number) => {
+    document.getElementById(`slot-card-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    setHighlight(index);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlight(null), 1600);
+  }, []);
+
   /* React 对 video 的 muted/loop 属性更新不可靠，直接同步到 DOM 元素 */
   useEffect(() => {
     videoRefs.current.forEach((v) => {
@@ -190,8 +246,10 @@ export function VideoWall() {
 
   useEffect(() => {
     const timers = titleTimers.current;
+    const hlTimer = highlightTimer.current;
     return () => {
       timers.forEach((t) => clearTimeout(t));
+      if (hlTimer) clearTimeout(hlTimer);
     };
   }, []);
 
@@ -467,29 +525,64 @@ export function VideoWall() {
   /* ---------- 渲染 ---------- */
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      {/* 顶部：标题 + 全局控制 */}
+      {/* 顶部：品牌 + 全局控制（Studio 全量管理控件 / Focus 极简观看控件） */}
       <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-3 sm:px-6">
+        <div
+          className={cn(
+            'mx-auto flex w-full flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-3 sm:px-6',
+            mode === 'focus' || !sidebarOpen ? 'max-w-[1800px]' : 'max-w-[1400px]',
+          )}
+        >
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
               <Clapperboard className="h-5 w-5" aria-hidden />
             </div>
             <div className="min-w-0">
               <h1 className="text-base font-bold leading-tight tracking-wide sm:text-lg">OmniCompare</h1>
-              <p className="text-[11px] leading-tight text-muted-foreground sm:text-xs">
-                灵动对比 · 多内容并行对比工作台
-              </p>
+              {mode === 'studio' && (
+                <p className="text-[11px] leading-tight text-muted-foreground sm:text-xs">
+                  灵动对比 · 多内容并行对比工作台
+                </p>
+              )}
             </div>
           </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-1.5 sm:gap-2">
-            <span className="mr-1 hidden items-center rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground md:inline-flex">
-              已放置
-              {/* 定宽 + 等宽数字：数字位数变化（如 7/7 → 10/10）不会挤动旁边按钮 */}
-              <span className="ml-1 inline-block min-w-[5ch] text-center tabular-nums">
-                {filledCount}/{count}
+            {mode === 'studio' ? (
+              <>
+                {/* 侧栏开关（侧栏仅桌面端展示） */}
+                <button
+                  type="button"
+                  onClick={() => setSidebarOpen((v) => !v)}
+                  aria-pressed={sidebarOpen}
+                  className={cn(
+                    ctlBtn,
+                    'hidden border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground lg:inline-flex',
+                  )}
+                  title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+                  aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+                >
+                  {sidebarOpen ? (
+                    <PanelLeftClose className="h-4 w-4" aria-hidden />
+                  ) : (
+                    <PanelLeftOpen className="h-4 w-4" aria-hidden />
+                  )}
+                </button>
+
+                <span className="mr-1 hidden items-center rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground md:inline-flex">
+                  已放置
+                  {/* 定宽 + 等宽数字：数字位数变化（如 7/7 → 10/10）不会挤动旁边按钮 */}
+                  <span className="ml-1 inline-block min-w-[5ch] text-center tabular-nums">
+                    {filledCount}/{count}
+                  </span>
+                </span>
+              </>
+            ) : (
+              <span className="mr-1 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
+                专注模式
               </span>
-            </span>
+            )}
 
             <button
               type="button"
@@ -511,73 +604,75 @@ export function VideoWall() {
               <span className="hidden sm:inline">暂停</span>
             </button>
 
-            {/* 数量与布局 */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  disabled={busy}
-                  className={cn(
-                    ctlBtn,
-                    'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
-                  )}
-                  title="设置视频数量与排列矩阵"
-                  aria-label="设置视频数量与排列矩阵"
+            {/* 数量与布局（管理控件，Focus 模式隐藏） */}
+            {mode === 'studio' && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className={cn(
+                      ctlBtn,
+                      'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
+                    )}
+                    title="设置视频数量与排列矩阵"
+                    aria-label="设置视频数量与排列矩阵"
+                  >
+                    <LayoutGrid className="h-4 w-4" aria-hidden />
+                    <span className="hidden sm:inline">布局</span>
+                    <span className="inline-block min-w-[4ch] text-center text-[11px] font-semibold tabular-nums text-primary">
+                      {layout.rows}×{layout.cols}
+                    </span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="end"
+                  className="w-80 border-border bg-card p-4 text-card-foreground"
                 >
-                  <LayoutGrid className="h-4 w-4" aria-hidden />
-                  <span className="hidden sm:inline">布局</span>
-                  <span className="inline-block min-w-[4ch] text-center text-[11px] font-semibold tabular-nums text-primary">
-                    {layout.rows}×{layout.cols}
-                  </span>
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="end"
-                className="w-80 border-border bg-card p-4 text-card-foreground"
-              >
-                <p className="text-xs font-semibold tracking-wide text-muted-foreground">视频数量</p>
-                <div className="mt-2 grid grid-cols-6 gap-1.5">
-                  {Array.from({ length: SLOT_MAX }, (_, i) => i + 1).map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => handleCountSelect(n)}
-                      disabled={busy}
-                      aria-pressed={n === count}
-                      className={cn(
-                        'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 disabled:cursor-not-allowed disabled:opacity-50',
-                        n === count
-                          ? 'border-primary bg-primary/20 text-primary'
-                          : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
-                      )}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
+                  <p className="text-xs font-semibold tracking-wide text-muted-foreground">视频数量</p>
+                  <div className="mt-2 grid grid-cols-6 gap-1.5">
+                    {Array.from({ length: SLOT_MAX }, (_, i) => i + 1).map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => handleCountSelect(n)}
+                        disabled={busy}
+                        aria-pressed={n === count}
+                        className={cn(
+                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50',
+                          n === count
+                            ? 'border-primary bg-primary/20 text-primary'
+                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
+                        )}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
 
-                <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
-                  排列矩阵
-                  <span className="ml-1 font-normal text-muted-foreground/70">（行 × 列）</span>
-                </p>
-                <div className="mt-2 grid grid-cols-3 gap-2">
-                  {layoutOptionsFor(count).map((l) => (
-                    <MatrixOption
-                      key={`${l.rows}x${l.cols}`}
-                      layout={l}
-                      count={count}
-                      active={l.rows === layout.rows && l.cols === layout.cols}
-                      onSelect={() => handleLayoutSelect(l)}
-                    />
-                  ))}
-                </div>
-                {layout.rows * layout.cols > count && (
-                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
-                    标注「补」的矩阵无法整除，会在末尾留出空格子。
+                  <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
+                    排列矩阵
+                    <span className="ml-1 font-normal text-muted-foreground/70">（行 × 列）</span>
                   </p>
-                )}
-              </PopoverContent>
-            </Popover>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {layoutOptionsFor(count).map((l) => (
+                      <MatrixOption
+                        key={`${l.rows}x${l.cols}`}
+                        layout={l}
+                        count={count}
+                        active={l.rows === layout.rows && l.cols === layout.cols}
+                        onSelect={() => handleLayoutSelect(l)}
+                      />
+                    ))}
+                  </div>
+                  {layout.rows * layout.cols > count && (
+                    <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
+                      标注「补」的矩阵无法整除，会在末尾留出空格子。
+                    </p>
+                  )}
+                </PopoverContent>
+              </Popover>
+            )}
 
             <button
               type="button"
@@ -586,7 +681,7 @@ export function VideoWall() {
               className={cn(
                 ctlBtn,
                 loop
-                  ? 'border-violet-500/50 bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 hover:text-violet-200'
+                  ? 'border-primary/50 bg-primary/15 text-primary hover:bg-primary/25'
                   : 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
               )}
               title={loop ? '循环播放：开' : '循环播放：关'}
@@ -603,7 +698,7 @@ export function VideoWall() {
               className={cn(
                 ctlBtn,
                 mutedAll
-                  ? 'border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 hover:text-amber-200'
+                  ? 'border-amber-500/50 bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 dark:text-amber-300'
                   : 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
               )}
               title={mutedAll ? '取消全部静音' : '全部静音'}
@@ -617,53 +712,95 @@ export function VideoWall() {
               <span className="hidden lg:inline">{mutedAll ? '取消静音' : '静音'}</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => importInputRef.current?.click()}
-              disabled={busy}
-              className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
-              title="选择多个视频，按顺序填入各位置"
-              aria-label="一键导入多个视频"
-            >
-              <UploadCloud className="h-4 w-4" aria-hidden />
-              <span className="hidden lg:inline">一键导入</span>
-            </button>
-
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
+            {mode === 'studio' && (
+              <>
                 <button
                   type="button"
+                  onClick={() => importInputRef.current?.click()}
                   disabled={busy}
-                  className={cn(
-                    ctlBtn,
-                    'border-transparent bg-transparent px-2 text-zinc-500 hover:bg-red-500/10 hover:text-red-400 sm:px-2.5',
-                  )}
-                  title="清空全部视频"
-                  aria-label="清空全部视频"
+                  className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
+                  title="选择多个视频，按顺序填入各位置"
+                  aria-label="一键导入多个视频"
                 >
-                  <Trash2 className="h-4 w-4" aria-hidden />
+                  <UploadCloud className="h-4 w-4" aria-hidden />
+                  <span className="hidden lg:inline">一键导入</span>
                 </button>
-              </AlertDialogTrigger>
-              <AlertDialogContent className="border-zinc-800 bg-zinc-900 text-zinc-100">
-                <AlertDialogHeader>
-                  <AlertDialogTitle>清空全部视频？</AlertDialogTitle>
-                  <AlertDialogDescription className="text-zinc-400">
-                    将移除全部 {filledCount} 个视频及其标题，此操作无法恢复。
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel className="border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700 hover:text-white">
-                    取消
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleClearAll}
-                    className="bg-red-600 text-white hover:bg-red-500 focus-visible:ring-red-500"
-                  >
-                    确认清空
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      className={cn(
+                        ctlBtn,
+                        'border-transparent bg-transparent px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:px-2.5',
+                      )}
+                      title="清空全部视频"
+                      aria-label="清空全部视频"
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden />
+                    </button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>清空全部视频？</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        将移除全部 {filledCount} 个视频及其标题，此操作无法恢复。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleClearAll}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive"
+                      >
+                        确认清空
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </>
+            )}
+
+            {/* 明暗主题切换 */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
+              title={resolvedTheme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+              aria-label="切换明暗主题"
+            >
+              {themeMounted && resolvedTheme === 'dark' ? (
+                <Sun className="h-4 w-4" aria-hidden />
+              ) : (
+                <Moon className="h-4 w-4" aria-hidden />
+              )}
+            </button>
+
+            {/* Studio ↔ Focus 模式切换 */}
+            {mode === 'studio' ? (
+              <button
+                type="button"
+                onClick={() => setMode('focus')}
+                className={cn(ctlBtn, 'border-primary/50 bg-primary/10 text-primary hover:bg-primary/20')}
+                title="进入专注模式：隐藏管理控件，专心观看对比"
+                aria-label="进入专注模式"
+              >
+                <Expand className="h-4 w-4" aria-hidden />
+                <span className="hidden sm:inline">专注</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMode('studio')}
+                className={cn(ctlBtn, 'border-primary/50 bg-primary/10 text-primary hover:bg-primary/20')}
+                title="退出专注模式，返回工作台"
+                aria-label="退出专注模式"
+              >
+                <Shrink className="h-4 w-4" aria-hidden />
+                <span className="hidden sm:inline">退出专注</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -671,16 +808,19 @@ export function VideoWall() {
       {/* 拖拽导入的浮动提示 */}
       {gridDrag && (
         <div className="pointer-events-none fixed inset-x-0 top-16 z-50 flex justify-center">
-          <div className="flex items-center gap-2 rounded-full border border-violet-400/60 bg-violet-500/15 px-4 py-2 text-sm font-medium text-violet-200 shadow-xl shadow-violet-500/10 backdrop-blur">
+          <div className="flex items-center gap-2 rounded-full border border-primary/60 bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-xl shadow-primary/10 backdrop-blur">
             <UploadCloud className="h-4 w-4" aria-hidden />
             松开鼠标导入视频 · 文件较多时会自动扩展位数
           </div>
         </div>
       )}
 
-      {/* 视频网格：按所选矩阵排列 */}
-      <main
-        className="mx-auto w-full max-w-6xl flex-1 px-3 py-4 sm:px-6 sm:py-7"
+      {/* 主区：Studio 含左侧栏，Focus 满幅；两模式复用同一网格，切换不重建视频元素 */}
+      <div
+        className={cn(
+          'mx-auto flex w-full flex-1 gap-5 px-3 sm:px-6',
+          mode === 'focus' || !sidebarOpen ? 'max-w-[1800px]' : 'max-w-[1400px]',
+        )}
         onDragOver={(e) => {
           e.preventDefault();
           if (!gridDrag) setGridDrag(true);
@@ -695,16 +835,126 @@ export function VideoWall() {
           if (files.length > 0) void distributeFiles(files);
         }}
       >
+        {/* 左侧栏：仅 Studio + 桌面端（项目卡/视图导航为静态展示，随项目化步骤接活） */}
+        {mode === 'studio' && sidebarOpen && (
+          <aside
+            className="sticky top-[74px] hidden h-fit w-60 shrink-0 flex-col gap-4 pb-6 lg:flex"
+            aria-label="工作台侧栏"
+          >
+            {/* 项目卡 */}
+            <div className="rounded-xl border border-border bg-card p-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                  <Clapperboard className="h-[18px] w-[18px]" aria-hidden />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">默认项目</p>
+                  <p className="text-[11px] leading-tight text-muted-foreground">多内容对比工作台</p>
+                </div>
+              </div>
+              <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+                进行中
+              </span>
+            </div>
+
+            {/* 添加内容：与顶栏「一键导入」同源，多选后按顺序填充空位 */}
+            <button
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+              disabled={busy}
+              className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <UploadCloud className="h-4 w-4" aria-hidden />
+              添加内容
+            </button>
+
+            {/* 视图导航（库/设置为占位，随后续阶段开放） */}
+            <nav className="flex flex-col gap-1" aria-label="视图切换">
+              <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">视图</p>
+              <button
+                type="button"
+                aria-current="page"
+                className="flex items-center gap-2.5 rounded-lg bg-primary/15 px-3 py-2 text-[13px] font-medium text-primary"
+              >
+                <LayoutGrid className="h-4 w-4" aria-hidden />
+                工作空间
+              </button>
+              <button
+                type="button"
+                disabled
+                title="第二阶段上线"
+                className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground/50"
+              >
+                <Library className="h-4 w-4" aria-hidden />
+                库
+                <span className="ml-auto text-[10px] font-normal text-muted-foreground/40">即将上线</span>
+              </button>
+              <button
+                type="button"
+                disabled
+                title="第二阶段上线"
+                className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground/50"
+              >
+                <Settings className="h-4 w-4" aria-hidden />
+                设置
+                <span className="ml-auto text-[10px] font-normal text-muted-foreground/40">即将上线</span>
+              </button>
+            </nav>
+
+            {/* 当前活动窗格：点击滚动定位并短暂高亮对应卡片 */}
+            <div className="min-h-0">
+              <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                当前活动窗格（{count}）
+              </p>
+              <div className="mt-1.5 max-h-[320px] space-y-0.5 overflow-y-auto pr-1">
+                {slots.map((s) => (
+                  <button
+                    key={s.index}
+                    type="button"
+                    onClick={() => focusSlot(s.index)}
+                    aria-label={`定位到窗格 ${s.index + 1}`}
+                    className={cn(
+                      'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent',
+                      highlight === s.index && 'bg-primary/10',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'h-1.5 w-1.5 shrink-0 rounded-full',
+                        s.video ? 'bg-emerald-500' : 'bg-muted-foreground/30',
+                      )}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">
+                      {s.title || (s.video ? s.video.originalName : `空位 ${s.index + 1}`)}
+                    </span>
+                    <span
+                      className={cn(
+                        'shrink-0 text-[10px] tabular-nums',
+                        s.video ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground/40',
+                      )}
+                    >
+                      {s.index + 1}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </aside>
+        )}
+
+        <main className="min-w-0 flex-1 py-4 sm:py-7">
         {loading ? (
           <div className="grid gap-3 sm:gap-5" style={gridStyle}>
             {slots.map((s) => (
               <div
                 key={s.index}
-                className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/70"
+                className="overflow-hidden rounded-2xl border border-border bg-card"
               >
-                <div className="aspect-video w-full animate-pulse bg-zinc-800/60" />
+                <div className="aspect-video w-full animate-pulse bg-muted" />
                 <div className="p-3">
-                  <div className="h-6 w-full animate-pulse rounded-lg bg-zinc-800/60" />
+                  <div className="h-6 w-full animate-pulse rounded-lg bg-muted" />
                 </div>
               </div>
             ))}
@@ -718,6 +968,7 @@ export function VideoWall() {
                 uploading={!!uploading[slot.index]}
                 loop={loop}
                 muted={mutedAll}
+                highlighted={highlight === slot.index}
                 onFiles={(files, primary) => void distributeFiles(files, primary)}
                 onTitleChange={handleTitleChange}
                 onClear={handleClearSlot}
@@ -729,35 +980,38 @@ export function VideoWall() {
               <div
                 key={`pad-${i}`}
                 aria-hidden
-                className="aspect-video rounded-2xl border border-dashed border-zinc-800/60 bg-zinc-900/20"
+                className="aspect-video rounded-2xl border border-dashed border-border/60 bg-muted/20"
               />
             ))}
           </div>
         )}
       </main>
+      </div>
 
-      {/* 底部：使用说明 */}
-      <footer className="mt-auto border-t border-zinc-800/70 bg-zinc-950">
-        <div className="mx-auto w-full max-w-6xl px-3 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
-          <ol className="flex flex-col gap-1.5 text-xs text-zinc-500 sm:flex-row sm:flex-wrap sm:gap-x-6">
-            <li>
-              <span className="mr-1 font-semibold text-zinc-400">1.</span>
-              点右上「布局」选择视频个数与几行几列，单视频会自动满幅展示
-            </li>
-            <li>
-              <span className="mr-1 font-semibold text-zinc-400">2.</span>
-              点击空位上传，或把文件直接拖进页面（一次拖多个会自动扩展位数）
-            </li>
-            <li>
-              <span className="mr-1 font-semibold text-zinc-400">3.</span>
-              在视频下方填写标题或介绍，点「同时播放」一起观看
-            </li>
-          </ol>
-          <p className="mt-2.5 text-[11px] text-zinc-700">
-            视频与设置保存在服务器上，刷新页面或换台设备打开都不会丢失。
-          </p>
-        </div>
-      </footer>
+      {/* 底部：使用说明（Focus 模式隐藏，专注观看） */}
+      {mode === 'studio' && (
+        <footer className="mt-auto border-t border-border/70 bg-muted/30">
+          <div className="mx-auto w-full max-w-[1400px] px-3 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
+            <ol className="flex flex-col gap-1.5 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-x-6">
+              <li>
+                <span className="mr-1 font-semibold text-foreground/80">1.</span>
+                点右上「布局」选择视频个数与几行几列，单视频会自动满幅展示
+              </li>
+              <li>
+                <span className="mr-1 font-semibold text-foreground/80">2.</span>
+                点击空位上传，或把文件直接拖进页面（一次拖多个会自动扩展位数）
+              </li>
+              <li>
+                <span className="mr-1 font-semibold text-foreground/80">3.</span>
+                在视频下方填写标题或介绍，点「同时播放」一起观看；右上角可切换明暗与专注模式
+              </li>
+            </ol>
+            <p className="mt-2.5 text-[11px] text-muted-foreground/60">
+              视频与设置保存在服务器上，刷新页面或换台设备打开都不会丢失。
+            </p>
+          </div>
+        </footer>
+      )}
 
       {/* 缩减数量确认框 */}
       <AlertDialog
@@ -766,21 +1020,19 @@ export function VideoWall() {
           if (!open) setPendingCount(null);
         }}
       >
-        <AlertDialogContent className="border-zinc-800 bg-zinc-900 text-zinc-100">
+        <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>缩减视频数量？</AlertDialogTitle>
-            <AlertDialogDescription className="text-zinc-400">
+            <AlertDialogDescription>
               缩减到 {pendingCount} 个将移除末尾多余的{' '}
               {removedVideoCount(pendingCount ?? 0)} 个视频及其标题，且无法恢复。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700 hover:text-white">
-              取消
-            </AlertDialogCancel>
+            <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmShrink}
-              className="bg-red-600 text-white hover:bg-red-500 focus-visible:ring-red-500"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive"
             >
               确认缩减
             </AlertDialogAction>
