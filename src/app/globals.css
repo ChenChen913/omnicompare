@@ -153,3 +153,20 @@
   width: 0;
   height: 0;
 }
+
+/* Radix modal 弹层（DropdownMenu / Dialog / AlertDialog / Select）打开时，
+   react-remove-scroll-bar 会给 body[data-scroll-locked] 注入
+   「margin-right: 滚动条宽度」的间隙补偿（!important）。
+   该补偿的设计前提是「锁定时滚动条会消失、需要填补空位」；
+   而本项目 html 强制常驻滚动条（overflow-y: scroll + scrollbar-gutter: stable，见上），
+   滚动条从不消失，补偿反而使整个 body 在每次弹层开/关时被压窄/弹回 15~17px——
+   即用户看到的「主体内容与右上角主题按钮一缩一缩」（左侧导航贴左不受影响，
+   居中容器被 body 变窄后重新居中，右缘元素位移最明显）。
+   无头测试环境为 overlay 滚动条（gap 恒 0），此问题无法在自动化测试中自然复现，
+   验证脚本用 defineProperty 桩化 window.innerWidth 模拟经典滚动条（scripts/test-shrink.sh）。
+   此处用更高优先级选择器（html body[data-scroll-locked]，特异性 0-1-2 高于注入样式的 0-1-1）
+   将补偿归零；弹层本身的滚动锁定（防背景滚动）不受影响。 */
+html body[data-scroll-locked] {
+  margin-right: 0 !important;
+  padding-right: 0 !important;
+}

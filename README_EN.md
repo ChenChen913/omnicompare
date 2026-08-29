@@ -17,7 +17,7 @@ A multi-content parallel comparison workspace (AI output comparison tool) built 
 - **Dark / light themes**: dark by default, toggled via a frameless sun / moon icon at the top-right corner of the top bar, fully tokenized colors that work in both themes.
 - **Titles**: each item has its own title box (typically the model name, e.g. GPT / Claude / Gemini) that auto-grows, saves with a debounce, and survives refreshes.
 - **Server-side multi-project persistence**: content files and manifests are stored per project on the server; streaming supports HTTP Range requests for seekable video playback.
-- **Refined interactions**: confirmation before shrinking slots, automatic cleanup of replaced files, non-stacking toasts, zero layout jitter when switching layouts, and smooth project switching with zero displacement — the top bar has a fixed two-row structure whose height never changes with button visibility; the sidebar collapse control is a slim handle attached to the sidebar's right edge; the usage guide lives in a book-icon dialog in the top bar instead of a permanent footer.
+- **Refined interactions**: confirmation before shrinking slots, automatic cleanup of replaced files, non-stacking toasts, zero layout jitter when switching layouts, and smooth project switching with zero displacement — the top bar has a fixed two-row structure whose height never changes with button visibility; popovers and dialogs open without squeezing the page; the sidebar collapse control is a slim handle attached to the sidebar's right edge, vertically centered; the usage guide lives in a book-icon dialog in the top bar instead of a permanent footer.
 
 ## Getting started
 

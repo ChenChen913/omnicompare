@@ -1433,10 +1433,11 @@ export function VideoWall() {
         }}
       >
         {/* 左侧栏：仅 Studio + 桌面端（项目卡已随 Step 8 接活；库/设置视图仍为占位）。
-            侧栏开关不占顶栏——做成贴在侧栏右缘的长条把手，收起后仍可见，随时可展开。
-            top 值 = 顶栏两行总高（品牌行 + 功能行恒定）+ 视觉留白 */}
+            侧栏开关不占顶栏——做成贴在侧栏右缘的长条把手，垂直居中于视口可区。
+            容器定高（视口高 - 顶栏下沿 130px - 底部留白 16px）保证把手位置不随侧栏内容/收起状态变化；
+            sticky 使把手在页面滚动时始终钉在视口垂直中部。 */}
         {mode === 'studio' && (
-          <div className="sticky top-[130px] hidden h-fit shrink-0 items-start lg:flex" data-sidebar-root>
+          <div className="sticky top-[130px] hidden h-[calc(100dvh-146px)] shrink-0 items-start lg:flex" data-sidebar-root>
             {sidebarOpen && (
               <aside className="flex w-60 flex-col gap-4 pb-6" aria-label="工作台侧栏">
             {/* 项目卡（Step 8 动态化：当前项目 + 状态 + 管理入口） */}
@@ -1663,14 +1664,14 @@ export function VideoWall() {
             </div>
               </aside>
             )}
-            {/* 侧栏开关：长条把手贴在侧栏右缘（不占顶栏），收起后仍在原位，点击随时展开 */}
+            {/* 侧栏开关：长条把手贴在侧栏右缘、垂直居中（不占顶栏），收起后仍在原位，点击随时展开 */}
             <button
               type="button"
               onClick={() => setSidebarOpen((v) => !v)}
               aria-pressed={sidebarOpen}
               title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
               aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
-              className="mt-20 flex h-16 w-5 shrink-0 items-center justify-center rounded-r-lg border border-l-0 border-border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              className="flex h-16 w-5 shrink-0 self-center items-center justify-center rounded-r-lg border border-l-0 border-border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             >
               {sidebarOpen ? (
                 <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
