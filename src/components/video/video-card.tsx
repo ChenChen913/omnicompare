@@ -24,6 +24,8 @@ export interface VideoCardProps {
   showTitles?: boolean;
   /** 全局属性信息显隐：false 时隐藏标题下方信息行（文件名/大小/比例/操作） */
   showInfo?: boolean;
+  /** 「刷新全部页面」信号（纯 HTML 项目顶栏主动作）：数值变化时重载本卡 iframe；0 = 从未触发 */
+  refreshSignal?: number;
   /** 单卡比例覆盖变更（null = 恢复跟随全局）；未传则不显示覆盖控件 */
   onAspectOverride?: (index: number, ar: AspectRatio | null) => void;
   /** 页面级拖拽导入进行中（用于在 iframe 上方临时铺一层可落放的护盾） */
@@ -57,6 +59,7 @@ export function VideoCard({
   globalAspect = 'original',
   showTitles = true,
   showInfo = true,
+  refreshSignal = 0,
   onAspectOverride,
   onFiles,
   onTitleChange,
@@ -95,6 +98,17 @@ export function VideoCard({
     setHtmlStatus('loading');
     setIframeNonce((n) => n + 1);
   }, []);
+
+  /** 顶栏「刷新全部」信号：渲染期检测变化并重置状态（React 推荐模式，避免 effect 级联渲染）。
+   *  signal=0 为初始值不触发；isHtml/文件名变化有各自的重置逻辑，不在此叠加 */
+  const [prevRefreshSignal, setPrevRefreshSignal] = useState(refreshSignal);
+  if (prevRefreshSignal !== refreshSignal) {
+    setPrevRefreshSignal(refreshSignal);
+    if (isHtml && refreshSignal !== 0) {
+      setHtmlStatus('loading');
+      setIframeNonce((n) => n + 1);
+    }
+  }
 
   /* ---------- 视频错误状态：切换视频时重置 ---------- */
   if (prevFilename !== video?.filename) {

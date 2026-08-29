@@ -2,12 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BookOpen,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
+  Code2,
   Expand,
   Eye,
+  Film,
   FolderPlus,
   Gauge,
   LayoutGrid,
@@ -15,6 +18,7 @@ import {
   Moon,
   Pause,
   Play,
+  RefreshCw,
   Settings,
   Shrink,
   Sun,
@@ -238,6 +242,10 @@ export function VideoWall() {
   const [newName, setNewName] = useState('');
   const [projectBusy, setProjectBusy] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
+  /** 使用须知弹窗（原底部注意事项，改为按需弹出不常驻占位） */
+  const [notesOpen, setNotesOpen] = useState(false);
+  /** 「刷新全部页面」信号：自增触发所有 HTML 卡片重载 iframe（纯 HTML 项目的等价播放操作） */
+  const [htmlRefreshTick, setHtmlRefreshTick] = useState(0);
   const { resolvedTheme, setTheme } = useTheme();
 
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
@@ -253,6 +261,8 @@ export function VideoWall() {
   const filledCount = slots.filter((s) => s.video || s.html).length;
   /** 当前项目是否含视频：纯 HTML 项目没有「播放」语义，播放类控件随之隐藏/禁用 */
   const hasVideo = slots.some((s) => !!s.video);
+  /** 当前项目是否含 HTML 页面：纯 HTML 项目用「刷新全部页面」替代播放组（内容打开即自动运行） */
+  const hasHtml = slots.some((s) => s.kind === 'html' && !!s.html);
   const currentProject = projects.find((p) => p.id === projectId) ?? null;
   const projectName =
     currentProject?.name ?? (projectId === DEFAULT_PROJECT_ID ? '默认项目' : '加载中…');
@@ -931,15 +941,18 @@ export function VideoWall() {
   /* ---------- 渲染 ---------- */
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      {/* 顶部：品牌 + 全局控制（Studio 全量管理控件 / Focus 极简观看控件） */}
+      {/* 顶部：品牌 + 全局控制。固定两行结构（震动根治）：无论项目内容是视频还是网页、
+          播放/刷新按钮组如何显隐，顶栏恒为「品牌行 + 功能行」两行、高度不变，
+          主体内容不再被顶栏行数变化推动上下跳动 */}
       <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
         <div
           className={cn(
-            'mx-auto flex w-full flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-3 sm:px-6',
+            'mx-auto flex w-full flex-col gap-2 px-3 py-3 sm:px-6',
             mode === 'focus' || !sidebarOpen ? 'max-w-[1800px]' : 'max-w-[1400px]',
           )}
         >
-          <div className="flex items-center gap-3">
+          {/* 第一行：品牌 + 项目切换 + 使用须知 + 主题（高度恒定） */}
+          <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
               <Clapperboard className="h-5 w-5" aria-hidden />
             </div>
@@ -951,7 +964,6 @@ export function VideoWall() {
                 </p>
               )}
             </div>
-          </div>
 
           {/* 项目切换器（Step 8 多项目；Studio 模式显示，Focus 保持极简顶栏） */}
           {mode === 'studio' && (
@@ -977,22 +989,36 @@ export function VideoWall() {
                       <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
                         {STATUS_META[st].label}
                       </p>
-                      {group.map((p) => (
-                        <DropdownMenuItem
-                          key={p.id}
-                          onClick={() => switchProject(p.id)}
-                          className={cn('gap-2 text-[13px]', p.id === projectId && 'font-semibold text-primary')}
-                        >
-                          <span
-                            className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATUS_META[st].dot)}
-                            aria-hidden
-                          />
-                          <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                            {p.items.length}
-                          </span>
-                        </DropdownMenuItem>
-                      ))}
+                      {group.map((p) => {
+                        const vc = p.items.filter((it) => it.kind === 'video').length;
+                        const hc = p.items.filter((it) => it.kind === 'html').length;
+                        return (
+                          <DropdownMenuItem
+                            key={p.id}
+                            onClick={() => switchProject(p.id)}
+                            className={cn('gap-2 text-[13px]', p.id === projectId && 'font-semibold text-primary')}
+                          >
+                            <span
+                              className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATUS_META[st].dot)}
+                              aria-hidden
+                            />
+                            <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                            {/* 内容类型徽标：切换前即可预知顶栏形态（有视频→播放组；纯网页→刷新组） */}
+                            {vc > 0 && (
+                              <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border px-1 text-[10px] tabular-nums text-muted-foreground" title={`${vc} 个视频`}>
+                                <Film className="h-2.5 w-2.5" aria-hidden />
+                                {vc}
+                              </span>
+                            )}
+                            {hc > 0 && (
+                              <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border px-1 text-[10px] tabular-nums text-muted-foreground" title={`${hc} 个网页`}>
+                                <Code2 className="h-2.5 w-2.5" aria-hidden />
+                                {hc}
+                              </span>
+                            )}
+                          </DropdownMenuItem>
+                        );
+                      })}
                     </div>
                   );
                 })}
@@ -1012,14 +1038,47 @@ export function VideoWall() {
             </DropdownMenu>
           )}
 
-          {/* 顶部控制区：播放 → 管理/显示 → 模式 → 主题，分组排列（D9/D10 布局打磨） */}
-          <div className="ml-auto flex flex-wrap items-center gap-1.5 sm:gap-2">
+          {/* 使用须知：紧贴项目切换器右侧，点击弹出（原底部常驻说明改为按需查看，不再占页面高度） */}
+          {mode === 'studio' && (
+            <button
+              type="button"
+              onClick={() => setNotesOpen(true)}
+              title="使用须知"
+              aria-label="查看使用须知"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <BookOpen className="h-[18px] w-[18px]" aria-hidden />
+            </button>
+          )}
+
+          {/* 第一行右上角：专注徽章 + 明暗主题（无框只有太阳/月亮，固定在此不再随功能行增减） */}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
             {mode !== 'studio' && (
               <span className="mr-1 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
                 专注模式
               </span>
             )}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              /* title 与图标一样受 themeMounted 门控：服务端与水合首帧统一渲染暗色文案，
+                 避免 next-themes 客户端同步读主题导致的水合属性不一致（控制台警告） */
+              title={themeMounted && resolvedTheme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+              aria-label="切换明暗主题"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              {themeMounted && resolvedTheme === 'dark' ? (
+                <Sun className="h-[18px] w-[18px]" aria-hidden />
+              ) : (
+                <Moon className="h-[18px] w-[18px]" aria-hidden />
+              )}
+            </button>
+          </div>
+          </div>
+
+          {/* 第二行：功能按钮行——不换行、窄屏横向滑动，任何项目切换/按钮显隐下高度恒定（震动根治） */}
+          <div className="no-scrollbar -mx-1 flex min-w-0 items-center gap-1.5 overflow-x-auto px-1 [&>*]:shrink-0 sm:gap-2">
 
             {/* 播放控制组：纯 HTML 项目没有播放语义，整组隐藏 */}
             {hasVideo && (
@@ -1048,7 +1107,24 @@ export function VideoWall() {
               </>
             )}
 
-            {/* 数量与布局（管理控件，Focus 模式隐藏） */}
+            {/* 纯 HTML 项目：页面打开即自动运行，等价的主动作是「刷新全部页面」，
+                与视频项目的播放组占用同一槽位——顶栏逻辑随内容自动适配（D11） */}
+            {hasHtml && !hasVideo && filledCount > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setHtmlRefreshTick((t) => t + 1)}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 sm:px-4"
+                  title="重新加载全部 HTML 页面，回到各自初始状态"
+                  aria-label="刷新全部页面"
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden />
+                  刷新全部
+                </button>
+
+                <Divider />
+              </>
+            )}
             {mode === 'studio' && (
               <Popover>
                 <PopoverTrigger asChild>
@@ -1320,23 +1396,6 @@ export function VideoWall() {
                 <span className="hidden sm:inline">退出专注</span>
               </button>
             )}
-
-            {/* 明暗主题切换：顶栏最右上角，无边框方框，只有太阳/月亮图标，与功能按钮视觉区隔 */}
-            <button
-              type="button"
-              onClick={toggleTheme}
-              /* title 与图标一样受 themeMounted 门控：服务端与水合首帧统一渲染暗色文案，
-                 避免 next-themes 客户端同步读主题导致的水合属性不一致（控制台警告） */
-              title={themeMounted && resolvedTheme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-              aria-label="切换明暗主题"
-              className="ml-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-            >
-              {themeMounted && resolvedTheme === 'dark' ? (
-                <Sun className="h-[18px] w-[18px]" aria-hidden />
-              ) : (
-                <Moon className="h-[18px] w-[18px]" aria-hidden />
-              )}
-            </button>
           </div>
         </div>
       </header>
@@ -1374,9 +1433,10 @@ export function VideoWall() {
         }}
       >
         {/* 左侧栏：仅 Studio + 桌面端（项目卡已随 Step 8 接活；库/设置视图仍为占位）。
-            侧栏开关不占顶栏——做成贴在侧栏右缘的长条把手，收起后仍可见，随时可展开 */}
+            侧栏开关不占顶栏——做成贴在侧栏右缘的长条把手，收起后仍可见，随时可展开。
+            top 值 = 顶栏两行总高（品牌行 + 功能行恒定）+ 视觉留白 */}
         {mode === 'studio' && (
-          <div className="sticky top-[74px] hidden h-fit shrink-0 items-start lg:flex" data-sidebar-root>
+          <div className="sticky top-[130px] hidden h-fit shrink-0 items-start lg:flex" data-sidebar-root>
             {sidebarOpen && (
               <aside className="flex w-60 flex-col gap-4 pb-6" aria-label="工作台侧栏">
             {/* 项目卡（Step 8 动态化：当前项目 + 状态 + 管理入口） */}
@@ -1394,6 +1454,22 @@ export function VideoWall() {
                   </p>
                 </div>
               </div>
+              {/* 内容构成小结：视频 x · 网页 y——与顶栏自动适配逻辑呼应（有视频出播放组，纯网页出刷新组） */}
+              {filledCount > 0 && (
+                <p className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    <Film className="h-3 w-3" aria-hidden />
+                    {slots.filter((s) => s.video).length} 视频
+                  </span>
+                  <span className="text-border" aria-hidden>
+                    |
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <Code2 className="h-3 w-3" aria-hidden />
+                    {slots.filter((s) => s.kind === 'html' && s.html).length} 网页
+                  </span>
+                </p>
+              )}
               <div className="mt-3 flex items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
                   <span
@@ -1669,6 +1745,7 @@ export function VideoWall() {
                     globalAspect: aspect,
                     showTitles,
                     showInfo,
+                    refreshSignal: htmlRefreshTick,
                     onAspectOverride: handleSlotAspect,
                     onFiles: (files: File[], primary: number) => void distributeFiles(files, primary),
                     onTitleChange: handleTitleChange,
@@ -1699,43 +1776,7 @@ export function VideoWall() {
       </main>
       </div>
 
-      {/* 底部：使用说明（Focus 模式隐藏，专注观看）。分行展示，关键信息加粗 */}
-      {mode === 'studio' && (
-        <footer className="mt-auto border-t border-border/70 bg-muted/30">
-          <div className="mx-auto w-full max-w-[1400px] px-3 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
-            <ul className="flex flex-col gap-2 text-xs leading-relaxed text-muted-foreground">
-              <li>
-                <strong className="font-semibold text-foreground/85">布局与排序：</strong>
-                矩阵默认自动排列，可在顶栏「布局」中固定行列与内容比例；抓住卡片左上角序号即可
-                <strong className="font-semibold text-foreground/85">拖动排序</strong>
-              </li>
-              <li>
-                <strong className="font-semibold text-foreground/85">导入内容：</strong>
-                点击空位或把文件拖进页面即可上传，支持
-                <strong className="font-semibold text-foreground/85">视频（MP4 / MOV / WebM 等）与单文件 HTML</strong>
-                ，HTML 页面导入后自动运行
-              </li>
-              <li>
-                <strong className="font-semibold text-foreground/85">播放与展示：</strong>
-                内容下方可填写标题与介绍；顶栏「显示」菜单统一控制
-                <strong className="font-semibold text-foreground/85">循环、静音、播放速度、标题与属性显隐</strong>
-              </li>
-              <li>
-                <strong className="font-semibold text-foreground/85">多项目管理：</strong>
-                顶栏左上角可切换项目，支持新建、重命名、归档与删除，各项目的
-                <strong className="font-semibold text-foreground/85">内容、布局与设置互相隔离</strong>
-              </li>
-              <li>
-                <strong className="font-semibold text-foreground/85">数据安全：</strong>
-                内容与设置均<strong className="font-semibold text-foreground/85">保存在服务器</strong>
-                ，刷新页面或换设备打开都不会丢失；HTML 页面在
-                <strong className="font-semibold text-foreground/85">独立沙箱</strong>
-                中运行，无法访问本站数据
-              </li>
-            </ul>
-          </div>
-        </footer>
-      )}
+      {/* 注意事项已移至顶栏书本按钮的「使用须知」弹窗（原常驻 footer 占位过高，按需查看） */}
 
       {/* 缩减数量确认框 */}
       <AlertDialog
@@ -1802,6 +1843,66 @@ export function VideoWall() {
               className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
             >
               {projectBusy ? '创建中…' : '创建并切换'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 使用须知弹窗（原底部注意事项）：点空白处、Esc 或右上角/底部关闭按钮均可关闭 */}
+      <Dialog open={notesOpen} onOpenChange={setNotesOpen}>
+        <DialogContent className="border-border bg-card text-card-foreground sm:max-w-[30rem]">
+          <DialogHeader>
+            <DialogTitle>使用须知</DialogTitle>
+            <DialogDescription>
+              关于布局、导入、播放与多项目的几个要点。
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="flex max-h-[60vh] flex-col gap-2.5 overflow-y-auto pr-1 text-[13px] leading-relaxed text-muted-foreground">
+            <li>
+              <strong className="font-semibold text-foreground/90">布局与排序：</strong>
+              矩阵默认自动排列，可在顶栏「布局」中固定行列与内容比例；抓住卡片左上角序号即可
+              <strong className="font-semibold text-foreground/90">拖动排序</strong>
+            </li>
+            <li>
+              <strong className="font-semibold text-foreground/90">导入内容：</strong>
+              点击空位或把文件拖进页面即可上传，支持
+              <strong className="font-semibold text-foreground/90">视频（MP4 / MOV / WebM 等）与单文件 HTML</strong>
+              ，HTML 页面导入后自动运行
+            </li>
+            <li>
+              <strong className="font-semibold text-foreground/90">播放与展示：</strong>
+              内容下方可填写标题与介绍；顶栏「显示」菜单统一控制
+              <strong className="font-semibold text-foreground/90">循环、静音、播放速度、标题与属性显隐</strong>
+            </li>
+            <li>
+              <strong className="font-semibold text-foreground/90">顶栏随内容自动适配：</strong>
+              <strong className="font-semibold text-foreground/90">含视频的项目</strong>
+              显示「同时播放 / 暂停」；
+              <strong className="font-semibold text-foreground/90">纯网页项目</strong>
+              没有播放概念，主动作变为「刷新全部」；混合项目两者并存（播放仅对视频生效）。无需手动选择模式
+            </li>
+            <li>
+              <strong className="font-semibold text-foreground/90">多项目管理：</strong>
+              顶栏左上角可切换项目（项目名右侧的
+              <strong className="font-semibold text-foreground/90">角标</strong>
+              标明内容构成），支持新建、重命名、归档与删除，各项目的
+              <strong className="font-semibold text-foreground/90">内容、布局与设置互相隔离</strong>
+            </li>
+            <li>
+              <strong className="font-semibold text-foreground/90">数据安全：</strong>
+              内容与设置均<strong className="font-semibold text-foreground/90">保存在服务器</strong>
+              ，刷新页面或换设备打开都不会丢失；HTML 页面在
+              <strong className="font-semibold text-foreground/90">独立沙箱</strong>
+              中运行，无法访问本站数据
+            </li>
+          </ul>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setNotesOpen(false)}
+              className="inline-flex h-9 items-center rounded-lg bg-primary px-5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              知道了
             </button>
           </DialogFooter>
         </DialogContent>
