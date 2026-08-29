@@ -1,9 +1,11 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 @import "tw-animate-css";
 
-/* 排除 upload/ 下的 UI 原型（Stitch 导出 HTML 含 bg-[url('placeholder')] 等
-   非法任意值类，会被自动源码扫描生成进 CSS 导致构建失败） */
-@source not "../../upload";
+/* 显式注册扫描源：只扫 src/。
+   背景：upload/ 下的 Stitch 原型 HTML 含 bg-[url('placeholder')] 等非法任意值类，
+   自动源码扫描会把它们生成进 CSS 导致构建 500（@source not 在 dev 重启后未稳定生效，
+   故改为白名单式显式注册，见 BLUEPRINT 风险 §7） */
+@source "../../src";
 
 @custom-variant dark (&:is(.dark *));
 
