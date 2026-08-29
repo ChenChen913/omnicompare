@@ -15,7 +15,6 @@ import {
   Moon,
   Pause,
   Play,
-  Repeat,
   Settings,
   Shrink,
   Sun,
@@ -1169,110 +1168,81 @@ export function VideoWall() {
               </Popover>
             )}
 
-            <button
-              type="button"
-              aria-pressed={loop}
-              onClick={() => setLoop((v) => !v)}
-              className={cn(
-                ctlBtn,
-                loop
-                  ? 'border-primary/50 bg-primary/15 text-primary hover:bg-primary/25'
-                  : 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
-              )}
-              title={loop ? '循环播放：开' : '循环播放：关'}
-              aria-label={loop ? '关闭循环播放' : '开启循环播放'}
-            >
-              <Repeat className="h-4 w-4" aria-hidden />
-              <span className="hidden sm:inline">循环</span>
-            </button>
-
-            <button
-              type="button"
-              aria-pressed={mutedAll}
-              onClick={() => setMutedAll((v) => !v)}
-              className={cn(
-                ctlBtn,
-                mutedAll
-                  ? 'border-amber-500/50 bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 dark:text-amber-300'
-                  : 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
-              )}
-              title={mutedAll ? '取消全部静音' : '全部静音'}
-              aria-label={mutedAll ? '取消全部静音' : '全部静音'}
-            >
-              {mutedAll ? (
-                <VolumeX className="h-4 w-4" aria-hidden />
-              ) : (
-                <Volume2 className="h-4 w-4" aria-hidden />
-              )}
-              <span className="hidden lg:inline">{mutedAll ? '取消静音' : '静音'}</span>
-            </button>
-
-            {/* 播放速度（仅作用视频，蓝图 §9；非 1× 时高亮提示） */}
+            {/* 显示设置下拉：循环/静音/速度（仅对视频生效）+ 标题/属性显隐（全局生效） */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
                   className={cn(
                     ctlBtn,
-                    rate !== 1
-                      ? 'border-primary/50 bg-primary/15 text-primary hover:bg-primary/25'
-                      : 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
+                    'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
                   )}
-                  title="播放速度"
-                  aria-label={`播放速度：${rate} 倍`}
+                  title="循环、静音、播放速度与标题/属性显隐"
+                  aria-label="显示设置"
                 >
-                  <Gauge className="h-4 w-4" aria-hidden />
-                  <span className="hidden sm:inline tabular-nums">{rate}×</span>
+                  <Eye className="h-4 w-4" aria-hidden />
+                  <span className="hidden sm:inline">显示</span>
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[9rem] border-border bg-card">
-                {[0.5, 1, 1.25, 1.5, 2].map((r) => (
-                  <DropdownMenuItem
-                    key={r}
-                    onClick={() => void updateSettings({ playbackRate: r })}
-                    className={cn('text-[13px]', r === rate && 'font-semibold text-primary')}
-                  >
-                    {r === 1 ? '常速（1×）' : `${r}×`}
-                  </DropdownMenuItem>
-                ))}
+              <DropdownMenuContent align="end" className="min-w-[12rem] border-border bg-card">
+                <DropdownMenuCheckboxItem
+                  checked={loop}
+                  onCheckedChange={(v) => void updateSettings({ loop: v === true })}
+                  disabled={!hasVideo}
+                  className="text-[13px]"
+                >
+                  循环播放
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={mutedAll}
+                  onCheckedChange={(v) => void updateSettings({ muted: v === true })}
+                  disabled={!hasVideo}
+                  className="text-[13px]"
+                >
+                  全部静音
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger disabled={!hasVideo} className="text-[13px]">
+                    <Gauge className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    播放速度
+                    <span className="ml-auto pl-2 text-[11px] tabular-nums text-muted-foreground">
+                      {rate}×
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="min-w-[8rem] border-border bg-card">
+                    {[0.5, 1, 1.25, 1.5, 2].map((r) => (
+                      <DropdownMenuItem
+                        key={r}
+                        onClick={() => void updateSettings({ playbackRate: r })}
+                        className={cn('text-[13px]', r === rate && 'font-semibold text-primary')}
+                      >
+                        {r === 1 ? '常速（1×）' : `${r}×`}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={showTitles}
+                  onCheckedChange={(v) => void updateSettings({ showTitles: v === true })}
+                  className="text-[13px]"
+                >
+                  显示标题
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={showInfo}
+                  onCheckedChange={(v) => void updateSettings({ showInfo: v === true })}
+                  className="text-[13px]"
+                >
+                  显示属性信息
+                </DropdownMenuCheckboxItem>
+                {!hasVideo && (
+                  <p className="px-2 pb-1.5 pt-1.5 text-[10px] leading-relaxed text-muted-foreground/60">
+                    循环、静音与播放速度仅对视频生效；当前项目没有视频，HTML 页面打开即自动运行。
+                  </p>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
-
-            {/* 标题显隐（全局，蓝图 §13）：只控制内容下方的标题输入框 */}
-            <button
-              type="button"
-              aria-pressed={showTitles}
-              onClick={() => void updateSettings({ showTitles: !showTitles })}
-              className={cn(
-                ctlBtn,
-                showTitles
-                  ? 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground'
-                  : 'border-primary/50 bg-primary/15 text-primary hover:bg-primary/25',
-              )}
-              title={showTitles ? '隐藏标题' : '显示标题'}
-              aria-label={showTitles ? '隐藏标题' : '显示标题'}
-            >
-              {showTitles ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
-              <span className="hidden lg:inline">标题</span>
-            </button>
-
-            {/* 属性信息显隐（全局）：控制标题下方信息行（文件名/大小/比例/操作） */}
-            <button
-              type="button"
-              aria-pressed={showInfo}
-              onClick={() => void updateSettings({ showInfo: !showInfo })}
-              className={cn(
-                ctlBtn,
-                showInfo
-                  ? 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground'
-                  : 'border-primary/50 bg-primary/15 text-primary hover:bg-primary/25',
-              )}
-              title={showInfo ? '隐藏属性信息' : '显示属性信息'}
-              aria-label={showInfo ? '隐藏属性信息' : '显示属性信息'}
-            >
-              {showInfo ? <Info className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
-              <span className="hidden lg:inline">属性</span>
-            </button>
 
             {mode === 'studio' && (
               <>
@@ -1281,8 +1251,8 @@ export function VideoWall() {
                   onClick={() => importInputRef.current?.click()}
                   disabled={busy}
                   className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
-                  title="选择多个视频，按顺序填入各位置"
-                  aria-label="一键导入多个视频"
+                  title="选择多个视频或 HTML 文件，按顺序填入各位置"
+                  aria-label="一键导入多个内容文件"
                 >
                   <UploadCloud className="h-4 w-4" aria-hidden />
                   <span className="hidden lg:inline">一键导入</span>
@@ -1324,22 +1294,7 @@ export function VideoWall() {
               </>
             )}
 
-            {/* 明暗主题切换 */}
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
-              /* title 与图标一样受 themeMounted 门控：服务端与水合首帧统一渲染暗色文案，
-                 避免 next-themes 客户端同步读主题导致的水合属性不一致（控制台警告） */
-              title={themeMounted && resolvedTheme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-              aria-label="切换明暗主题"
-            >
-              {themeMounted && resolvedTheme === 'dark' ? (
-                <Sun className="h-4 w-4" aria-hidden />
-              ) : (
-                <Moon className="h-4 w-4" aria-hidden />
-              )}
-            </button>
+            <Divider />
 
             {/* Studio ↔ Focus 模式切换 */}
             {mode === 'studio' ? (
@@ -1365,6 +1320,23 @@ export function VideoWall() {
                 <span className="hidden sm:inline">退出专注</span>
               </button>
             )}
+
+            {/* 明暗主题切换：顶栏最右上角，无边框方框，只有太阳/月亮图标，与功能按钮视觉区隔 */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              /* title 与图标一样受 themeMounted 门控：服务端与水合首帧统一渲染暗色文案，
+                 避免 next-themes 客户端同步读主题导致的水合属性不一致（控制台警告） */
+              title={themeMounted && resolvedTheme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+              aria-label="切换明暗主题"
+              className="ml-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              {themeMounted && resolvedTheme === 'dark' ? (
+                <Sun className="h-[18px] w-[18px]" aria-hidden />
+              ) : (
+                <Moon className="h-[18px] w-[18px]" aria-hidden />
+              )}
+            </button>
           </div>
         </div>
       </header>
@@ -1401,12 +1373,12 @@ export function VideoWall() {
           if (files.length > 0) void distributeFiles(files);
         }}
       >
-        {/* 左侧栏：仅 Studio + 桌面端（项目卡已随 Step 8 接活；库/设置视图仍为占位） */}
-        {mode === 'studio' && sidebarOpen && (
-          <aside
-            className="sticky top-[74px] hidden h-fit w-60 shrink-0 flex-col gap-4 pb-6 lg:flex"
-            aria-label="工作台侧栏"
-          >
+        {/* 左侧栏：仅 Studio + 桌面端（项目卡已随 Step 8 接活；库/设置视图仍为占位）。
+            侧栏开关不占顶栏——做成贴在侧栏右缘的长条把手，收起后仍可见，随时可展开 */}
+        {mode === 'studio' && (
+          <div className="sticky top-[74px] hidden h-fit shrink-0 items-start lg:flex" data-sidebar-root>
+            {sidebarOpen && (
+              <aside className="flex w-60 flex-col gap-4 pb-6" aria-label="工作台侧栏">
             {/* 项目卡（Step 8 动态化：当前项目 + 状态 + 管理入口） */}
             <div className="rounded-xl border border-border bg-card p-3.5">
               <div className="flex items-center gap-2.5">
@@ -1613,7 +1585,24 @@ export function VideoWall() {
                 ))}
               </div>
             </div>
-          </aside>
+              </aside>
+            )}
+            {/* 侧栏开关：长条把手贴在侧栏右缘（不占顶栏），收起后仍在原位，点击随时展开 */}
+            <button
+              type="button"
+              onClick={() => setSidebarOpen((v) => !v)}
+              aria-pressed={sidebarOpen}
+              title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+              aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+              className="mt-20 flex h-16 w-5 shrink-0 items-center justify-center rounded-r-lg border border-l-0 border-border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              {sidebarOpen ? (
+                <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+              )}
+            </button>
+          </div>
         )}
 
         <main
@@ -1710,27 +1699,40 @@ export function VideoWall() {
       </main>
       </div>
 
-      {/* 底部：使用说明（Focus 模式隐藏，专注观看） */}
+      {/* 底部：使用说明（Focus 模式隐藏，专注观看）。分行展示，关键信息加粗 */}
       {mode === 'studio' && (
         <footer className="mt-auto border-t border-border/70 bg-muted/30">
           <div className="mx-auto w-full max-w-[1400px] px-3 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
-            <ol className="flex flex-col gap-1.5 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-x-6">
+            <ul className="flex flex-col gap-2 text-xs leading-relaxed text-muted-foreground">
               <li>
-                <span className="mr-1 font-semibold text-foreground/80">1.</span>
-                矩阵默认自动排列，也可在右上「布局」里固定行列；抓住卡片左上角序号可拖动排序
+                <strong className="font-semibold text-foreground/85">布局与排序：</strong>
+                矩阵默认自动排列，可在顶栏「布局」中固定行列与内容比例；抓住卡片左上角序号即可
+                <strong className="font-semibold text-foreground/85">拖动排序</strong>
               </li>
               <li>
-                <span className="mr-1 font-semibold text-foreground/80">2.</span>
-                点击空位上传视频或单文件 HTML（页面自动运行），或把文件直接拖进页面
+                <strong className="font-semibold text-foreground/85">导入内容：</strong>
+                点击空位或把文件拖进页面即可上传，支持
+                <strong className="font-semibold text-foreground/85">视频（MP4 / MOV / WebM 等）与单文件 HTML</strong>
+                ，HTML 页面导入后自动运行
               </li>
               <li>
-                <span className="mr-1 font-semibold text-foreground/80">3.</span>
-                在内容下方填写标题或介绍，点「同时播放」一起观看视频；「布局」里可调内容比例，顶栏可调速与显隐标题/属性
+                <strong className="font-semibold text-foreground/85">播放与展示：</strong>
+                内容下方可填写标题与介绍；顶栏「显示」菜单统一控制
+                <strong className="font-semibold text-foreground/85">循环、静音、播放速度、标题与属性显隐</strong>
               </li>
-            </ol>
-            <p className="mt-2.5 text-[11px] text-muted-foreground/60">
-              内容与设置保存在服务器上，刷新页面或换台设备打开都不会丢失；HTML 页面在独立沙箱中运行，无法访问本站数据。
-            </p>
+              <li>
+                <strong className="font-semibold text-foreground/85">多项目管理：</strong>
+                顶栏左上角可切换项目，支持新建、重命名、归档与删除，各项目的
+                <strong className="font-semibold text-foreground/85">内容、布局与设置互相隔离</strong>
+              </li>
+              <li>
+                <strong className="font-semibold text-foreground/85">数据安全：</strong>
+                内容与设置均<strong className="font-semibold text-foreground/85">保存在服务器</strong>
+                ，刷新页面或换设备打开都不会丢失；HTML 页面在
+                <strong className="font-semibold text-foreground/85">独立沙箱</strong>
+                中运行，无法访问本站数据
+              </li>
+            </ul>
           </div>
         </footer>
       )}
