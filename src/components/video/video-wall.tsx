@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   Gauge,
+  Info,
   LayoutGrid,
   Library,
   Moon,
@@ -190,6 +191,7 @@ export function VideoWall() {
   const [mutedAll, setMutedAll] = useState(false);
   const [aspect, setAspect] = useState<AspectRatio>('original');
   const [showTitles, setShowTitles] = useState(true);
+  const [showInfo, setShowInfo] = useState(true);
   const [rate, setRate] = useState(1);
   const [gridDrag, setGridDrag] = useState(false);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
@@ -235,6 +237,7 @@ export function VideoWall() {
     const d = defaultSettings();
     setAspect(s?.aspectRatio ?? d.aspectRatio);
     setShowTitles(s?.showTitles ?? d.showTitles);
+    setShowInfo(s?.showInfo ?? d.showInfo);
     setLoop(s?.loop ?? d.loop);
     setMutedAll(s?.muted ?? d.muted);
     setRate(s?.playbackRate ?? d.playbackRate);
@@ -323,14 +326,15 @@ export function VideoWall() {
 
   /**
    * 全局设置更新：乐观更新 + PATCH 响应回填；失败提示不叠加（固定通道 id）。
-   * loop/muted/比例/标题显隐/播放速度全部走服务端 Project.settings（蓝图 §7/§15）。
+   * loop/muted/比例/标题与属性显隐/播放速度全部走服务端 Project.settings（蓝图 §7/§15）。
    */
   const updateSettings = useCallback(
     async (partial: Partial<ManifestSettings>) => {
-      const prev = { aspect, showTitles, loop, muted: mutedAll, playbackRate: rate };
+      const prev = { aspect, showTitles, showInfo, loop, muted: mutedAll, playbackRate: rate };
       // 乐观回填
       if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
       if (partial.showTitles !== undefined) setShowTitles(partial.showTitles);
+      if (partial.showInfo !== undefined) setShowInfo(partial.showInfo);
       if (partial.loop !== undefined) setLoop(partial.loop);
       if (partial.muted !== undefined) setMutedAll(partial.muted);
       if (partial.playbackRate !== undefined) setRate(partial.playbackRate);
@@ -347,13 +351,14 @@ export function VideoWall() {
         // 回滚乐观更新
         setAspect(prev.aspect);
         setShowTitles(prev.showTitles);
+        setShowInfo(prev.showInfo);
         setLoop(prev.loop);
         setMutedAll(prev.muted);
         setRate(prev.playbackRate);
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, showTitles, loop, mutedAll, rate, applySettings],
+    [aspect, showTitles, showInfo, loop, mutedAll, rate, applySettings],
   );
 
   /** 单卡比例覆盖：null = 恢复跟随全局（蓝图 §13）；乐观更新 + 失败回滚 */
@@ -781,14 +786,6 @@ export function VideoWall() {
                     <PanelLeftOpen className="h-4 w-4" aria-hidden />
                   )}
                 </button>
-
-                <span className="mr-1 hidden items-center rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground md:inline-flex">
-                  已放置
-                  {/* 定宽 + 等宽数字：数字位数变化（如 7/7 → 10/10）不会挤动旁边按钮 */}
-                  <span className="ml-1 inline-block min-w-[5ch] text-center tabular-nums">
-                    {filledCount}/{count}
-                  </span>
-                </span>
               </>
             ) : (
               <span className="mr-1 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
@@ -1006,7 +1003,7 @@ export function VideoWall() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* 标题显隐（全局，蓝图 §13；观看/录屏时可隐藏全部文字信息） */}
+            {/* 标题显隐（全局，蓝图 §13）：只控制内容下方的标题输入框 */}
             <button
               type="button"
               aria-pressed={showTitles}
@@ -1017,11 +1014,29 @@ export function VideoWall() {
                   ? 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground'
                   : 'border-primary/50 bg-primary/15 text-primary hover:bg-primary/25',
               )}
-              title={showTitles ? '隐藏标题与信息行' : '显示标题与信息行'}
-              aria-label={showTitles ? '隐藏标题与信息行' : '显示标题与信息行'}
+              title={showTitles ? '隐藏标题' : '显示标题'}
+              aria-label={showTitles ? '隐藏标题' : '显示标题'}
             >
               {showTitles ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
               <span className="hidden lg:inline">标题</span>
+            </button>
+
+            {/* 属性信息显隐（全局）：控制标题下方信息行（文件名/大小/比例/操作） */}
+            <button
+              type="button"
+              aria-pressed={showInfo}
+              onClick={() => void updateSettings({ showInfo: !showInfo })}
+              className={cn(
+                ctlBtn,
+                showInfo
+                  ? 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground'
+                  : 'border-primary/50 bg-primary/15 text-primary hover:bg-primary/25',
+              )}
+              title={showInfo ? '隐藏属性信息' : '显示属性信息'}
+              aria-label={showInfo ? '隐藏属性信息' : '显示属性信息'}
+            >
+              {showInfo ? <Info className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
+              <span className="hidden lg:inline">属性</span>
             </button>
 
             {mode === 'studio' && (
@@ -1298,6 +1313,7 @@ export function VideoWall() {
                     dragActive: gridDrag,
                     globalAspect: aspect,
                     showTitles,
+                    showInfo,
                     onAspectOverride: handleSlotAspect,
                     onFiles: (files: File[], primary: number) => void distributeFiles(files, primary),
                     onTitleChange: handleTitleChange,
@@ -1343,7 +1359,7 @@ export function VideoWall() {
               </li>
               <li>
                 <span className="mr-1 font-semibold text-foreground/80">3.</span>
-                在内容下方填写标题或介绍，点「同时播放」一起观看视频；「布局」里可调内容比例，顶栏可调速与显隐标题
+                在内容下方填写标题或介绍，点「同时播放」一起观看视频；「布局」里可调内容比例，顶栏可调速与显隐标题/属性
               </li>
             </ol>
             <p className="mt-2.5 text-[11px] text-muted-foreground/60">

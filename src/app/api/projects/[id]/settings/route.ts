@@ -1,8 +1,8 @@
 /**
  * 项目设置 API（schema v2）
  * PATCH /api/projects/[id]/settings
- * body: { aspectRatio?, customRatio?, showTitles?, loop?, muted?, playbackRate? }
- * 全局比例 / 标题显隐 / 批量播放设置（只作用于 kind=video 的条目，见 BLUEPRINT §9/§13）
+ * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate? }
+ * 全局比例 / 标题与属性信息显隐 / 批量播放设置（只作用于 kind=video 的条目，见 BLUEPRINT §9/§13）
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { isValidId, readProject, withProjectLock, writeProject } from '@/lib/project-store';
@@ -51,6 +51,12 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         return NextResponse.json({ error: '标题显隐需为布尔值' }, { status: 400, headers: noStore });
       }
       s.showTitles = body.showTitles;
+    }
+    if (body.showInfo !== undefined) {
+      if (typeof body.showInfo !== 'boolean') {
+        return NextResponse.json({ error: '属性信息显隐需为布尔值' }, { status: 400, headers: noStore });
+      }
+      s.showInfo = body.showInfo;
     }
     if (body.loop !== undefined) {
       if (typeof body.loop !== 'boolean') {

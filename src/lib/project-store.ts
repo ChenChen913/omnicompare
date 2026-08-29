@@ -180,6 +180,7 @@ function normalizeSettings(raw: unknown): ProjectSettings {
     aspectRatio,
     customRatio,
     showTitles: typeof r.showTitles === 'boolean' ? r.showTitles : base.showTitles,
+    showInfo: typeof r.showInfo === 'boolean' ? r.showInfo : base.showInfo,
     loop: typeof r.loop === 'boolean' ? r.loop : base.loop,
     muted: typeof r.muted === 'boolean' ? r.muted : base.muted,
     playbackRate: [0.5, 1, 1.25, 1.5, 2].includes(Number(r.playbackRate))

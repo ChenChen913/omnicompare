@@ -60,6 +60,7 @@ export async function readManifest(): Promise<Manifest> {
     settings: {
       aspectRatio: st.aspectRatio,
       showTitles: st.showTitles,
+      showInfo: st.showInfo,
       loop: st.loop,
       muted: st.muted,
       playbackRate: st.playbackRate,
@@ -139,6 +140,7 @@ function normalizeManifestSettings(s: ManifestSettings): ProjectSettings {
   return {
     aspectRatio: aspects.includes(s.aspectRatio) ? s.aspectRatio : base.aspectRatio,
     showTitles: typeof s.showTitles === 'boolean' ? s.showTitles : base.showTitles,
+    showInfo: typeof s.showInfo === 'boolean' ? s.showInfo : base.showInfo,
     loop: typeof s.loop === 'boolean' ? s.loop : base.loop,
     muted: typeof s.muted === 'boolean' ? s.muted : base.muted,
     playbackRate:

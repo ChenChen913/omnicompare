@@ -1,6 +1,6 @@
 /**
  * 项目级播放与展示设置 API（v1 视图，蓝图 §7/§9/§13）
- * PATCH /api/videos/settings  { aspectRatio?, showTitles?, loop?, muted?, playbackRate? }
+ * PATCH /api/videos/settings  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate? }
  * - 全部字段可选，仅更新提供的字段；播放设置只作用于 kind=video 的内容
  * - 与其它 v1 写路径共用清单互斥锁，杜绝并发丢更新
  * - 成功返回更新后的完整 v1 清单视图（响应即回填）
@@ -23,7 +23,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; showTitles?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown }
+    | { aspectRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -37,6 +37,10 @@ export async function PATCH(req: NextRequest) {
   if (body.showTitles !== undefined) {
     if (typeof body.showTitles !== 'boolean') return badRequest('showTitles 需为布尔值');
     patch.showTitles = body.showTitles;
+  }
+  if (body.showInfo !== undefined) {
+    if (typeof body.showInfo !== 'boolean') return badRequest('showInfo 需为布尔值');
+    patch.showInfo = body.showInfo;
   }
   if (body.loop !== undefined) {
     if (typeof body.loop !== 'boolean') return badRequest('loop 需为布尔值');

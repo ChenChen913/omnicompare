@@ -80,6 +80,7 @@ export interface Manifest {
 export interface ManifestSettings {
   aspectRatio: AspectRatio;
   showTitles: boolean;
+  showInfo: boolean;
   loop: boolean;
   muted: boolean;
   playbackRate: number;
@@ -151,7 +152,10 @@ export type ContentItem = ContentItemBase & (VideoAsset | HtmlAsset);
 export interface ProjectSettings {
   aspectRatio: AspectRatio;
   customRatio?: { w: number; h: number };
+  /** 标题显隐：控制内容下方标题输入框 */
   showTitles: boolean;
+  /** 属性信息显隐：控制标题下方信息行（文件名/大小/比例/操作） */
+  showInfo: boolean;
   loop: boolean;
   muted: boolean;
   playbackRate: number;
@@ -178,6 +182,7 @@ export function defaultSettings(): ProjectSettings {
   return {
     aspectRatio: 'original',
     showTitles: true,
+    showInfo: true,
     loop: false,
     muted: true,
     playbackRate: 1,

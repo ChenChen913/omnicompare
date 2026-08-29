@@ -20,8 +20,10 @@ export interface VideoCardProps {
   highlighted?: boolean;
   /** 全局内容比例（蓝图 §13）；单卡覆盖由 slot.aspectRatio 表达，null = 跟随全局 */
   globalAspect?: AspectRatio;
-  /** 全局标题显隐：false 时隐藏标题与信息行，纯内容观看（蓝图 §13） */
+  /** 全局标题显隐：false 时隐藏标题输入框（蓝图 §13） */
   showTitles?: boolean;
+  /** 全局属性信息显隐：false 时隐藏标题下方信息行（文件名/大小/比例/操作） */
+  showInfo?: boolean;
   /** 单卡比例覆盖变更（null = 恢复跟随全局）；未传则不显示覆盖控件 */
   onAspectOverride?: (index: number, ar: AspectRatio | null) => void;
   /** 页面级拖拽导入进行中（用于在 iframe 上方临时铺一层可落放的护盾） */
@@ -54,6 +56,7 @@ export function VideoCard({
   isDragging,
   globalAspect = 'original',
   showTitles = true,
+  showInfo = true,
   onAspectOverride,
   onFiles,
   onTitleChange,
@@ -286,9 +289,10 @@ export function VideoCard({
         )}
       </div>
 
-      {/* 标题 / 介绍输入区（showTitles=false 时整体隐藏，纯内容观看/录屏） */}
-      {showTitles && (
+      {/* 标题 / 属性信息区（两者可独立显隐，纯内容观看/录屏时可全部隐藏） */}
+      {(showTitles || showInfo) && (
       <div className="flex flex-1 flex-col gap-1.5 p-2.5 sm:p-3">
+        {showTitles && (
         <textarea
           ref={textareaRef}
           rows={1}
@@ -301,7 +305,8 @@ export function VideoCard({
           aria-label={`位置 ${index + 1} 的标题与介绍`}
           className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 text-[13px] leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
         />
-        {(video || htmlFile) && (
+        )}
+        {showInfo && (video || htmlFile) && (
           <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
             {/* 状态点：HTML 显示加载状态（绿=就绪 / 琥珀=加载中 / 红=失败）；视频默认就绪 */}
             <span className="flex min-w-0 items-center gap-1.5">

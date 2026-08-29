@@ -90,7 +90,7 @@ data/                             # 运行时数据（gitignore，不入库）
   ],
   "layout": { "rows": 2, "cols": 3 },
   "slotCount": 6,
-  "settings": { "aspectRatio": "original", "showTitles": true, "loop": false, "muted": true, "playbackRate": 1 }
+  "settings": { "aspectRatio": "original", "showTitles": true, "showInfo": true, "loop": false, "muted": true, "playbackRate": 1 }
 }
 ```
 
@@ -176,7 +176,7 @@ bun run start        # NODE_ENV=production bun .next/standalone/server.js
 | `DELETE /api/videos?slot=i` | 删除位置 i 的视频 | 更新后的 Manifest | 400/404 |
 | `DELETE /api/videos?all=1` | 清空全部视频与标题，**保留**当前数量与矩阵 | 更新后的 Manifest | 400 |
 | `PATCH /api/videos/layout` | JSON：`{ count(1-12), rows, cols }`，须满足 `rows*cols >= count`；缩减时删除被移除区间的文件 | 更新后的 Manifest | 400 非法参数/矩阵放不下 |
-| `PATCH /api/videos/settings` | JSON：`{ aspectRatio?, showTitles?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2) }` 全部可选，仅更新提供的字段（Step 7，全局比例/标题显隐/播放设置） | 更新后的 Manifest（含 settings） | 400 |
+| `PATCH /api/videos/settings` | JSON：`{ aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2) }` 全部可选，仅更新提供的字段（Step 7，全局比例/标题与属性显隐/播放设置） | 更新后的 Manifest（含 settings） | 400 |
 | `GET /api/files/[name]` | `name` 为 uuid 文件名（跨项目解析）；支持 `Range` 请求头；`.html` 强制沙箱安全响应头且禁缓存 | 200 全量 / 206 分片流 | 404（含路径穿越 `..%2F`）；非法 Range 416 |
 
 **schema v2 接口（新 UI 与二次开发使用）：**
@@ -193,7 +193,7 @@ bun run start        # NODE_ENV=production bun .next/standalone/server.js
 | `PATCH /api/projects/[id]/items/[itemId]` | JSON：`{ title?, aspectRatio?(枚举或 null), order? }` | `{ item, items }` | 400/404 |
 | `DELETE /api/projects/[id]/items/[itemId]` | — | `{ items }`（其余条目紧凑重排，文件同步删除） | 404 |
 | `PATCH /api/projects/[id]/layout` | JSON：`{ mode: 'auto' }` 或 `{ rows, cols }`（容量 ≥ max(slotCount, 条目数)） | 更新后的项目 | 400 |
-| `PATCH /api/projects/[id]/settings` | JSON：`{ aspectRatio?, customRatio?, showTitles?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2) }` | 更新后的项目 | 400 |
+| `PATCH /api/projects/[id]/settings` | JSON：`{ aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2) }` | 更新后的项目 | 400 |
 
 ## 8. 数据持久化与备份
 
