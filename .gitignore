@@ -52,3 +52,26 @@ prompt
 server.log
 # Skills directory
 /skills/
+# ---- 以下为项目推送 GitHub 前补充的排除项 ----
+# 用户数据（上传的视频与清单），隐私不入库
+/data/
+# 本地环境变量
+.env
+.env.*
+# 会话/沙箱产物
+/tool-results/
+/agent-ctx/
+/worklog.md
+/dev.log
+/server.log
+# 沙箱运行脚本与模板（非本项目代码）
+/.zscripts/
+/tests/
+/examples/
+/mini-services/
+/db/
+/download/
+/Caddyfile
+# 二进制测试资产（体积大；可用 ffmpeg 重新生成）
+/scripts/test-videos/
+/scripts/shots/
