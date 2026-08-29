@@ -31,6 +31,16 @@ bun run start
 
 关闭方式：前台运行的进程在终端按 Ctrl + C；后台进程执行 `lsof -ti:3000 | xargs kill` 释放 3000 端口。
 
+## 单页精简版（免部署）
+
+如果只想快速播放几个视频、不想安装任何环境，可以直接使用仓库根目录的 [`standalone.html`](./standalone.html)。这是一个零依赖的单文件页面，下载后用浏览器打开即可使用：
+
+- 将 `standalone.html` 与 6 个视频放在同一目录，视频按 `video1.mp4` 至 `video6.mp4` 命名；
+- 双击用浏览器打开，即可获得 3 × 2 视频矩阵、同步起播、从头重播、全局循环开关与标题编辑（标题保存在浏览器本地，需浏览器允许 localStorage）；
+- 无需安装依赖、无需启动服务，适合临时演示与快速查看。
+
+需要自定义视频数量与矩阵、服务端持久化、跨设备访问时，请使用上方的完整版本。
+
 ## 技术栈
 
 Next.js 16（App Router）· React 19 · TypeScript · Tailwind CSS v4 · shadcn/ui · sonner · 文件系统存储（无需数据库）

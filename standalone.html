@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Matrix Studio</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top center, rgba(70, 130, 255, .18), transparent 32%),
+        linear-gradient(180deg, #05080f, #0a1222 45%, #05080f);
+      color: #fff;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    .page {
+      width: min(1440px, calc(100vw - 24px));
+      margin: 0 auto;
+      padding: 24px 0 32px;
+    }
+
+    header {
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(26px, 3vw, 38px);
+      letter-spacing: .04em;
+    }
+
+    .subtitle {
+      margin: 8px 0 0;
+      color: rgba(255, 255, 255, .72);
+      font-size: 15px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 0 18px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: linear-gradient(180deg, rgba(5, 8, 15, .96), rgba(5, 8, 15, .75));
+      backdrop-filter: blur(8px);
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, .12);
+      background: rgba(255, 255, 255, .08);
+      color: #fff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: .18s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    button:hover {
+      background: rgba(255, 255, 255, .14);
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    #editTitlesBtn.active {
+      border-color: #67c7ff;
+      color: #8fd6ff;
+      background: rgba(103, 199, 255, .16);
+    }
+
+    #loopToggleBtn.active {
+      border-color: #7ce4a9;
+      color: #a9f5ce;
+      background: rgba(94, 234, 160, .14);
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    @media (max-width: 1100px) {
+      .matrix {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 700px) {
+      .matrix {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .cell {
+      background: rgba(255, 255, 255, .05);
+      border: 1px solid rgba(255, 255, 255, .09);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, .24);
+    }
+
+    .cell-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 12px 0;
+    }
+
+    .badge {
+      font-weight: 700;
+      letter-spacing: .04em;
+      color: #8fd6ff;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      border-radius: 6px;
+      padding: 2px 4px;
+      min-width: 0;
+    }
+
+    .badge[contenteditable="true"] {
+      outline: 1px dashed rgba(103, 199, 255, .8);
+      background: rgba(103, 199, 255, .12);
+      cursor: text;
+      user-select: text;
+      min-width: 90px;
+      padding: 2px 6px;
+      overflow: visible;
+      text-overflow: clip;
+    }
+
+    .badge[contenteditable="true"]:focus {
+      outline: 2px solid #67c7ff;
+    }
+
+    .badge:empty::before {
+      content: attr(data-placeholder);
+      color: rgba(255, 255, 255, .38);
+    }
+
+    .status {
+      flex: 0 0 auto;
+      font-size: 12px;
+      color: rgba(255, 255, 255, .62);
+    }
+
+    .video-wrap {
+      margin: 10px 12px 12px;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border: 1px solid rgba(255, 255, 255, .08);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #000;
+    }
+
+    .notice {
+      margin-top: 20px;
+      padding: 14px 16px;
+      background: rgba(103, 199, 255, .08);
+      border: 1px solid rgba(103, 199, 255, .18);
+      border-radius: 14px;
+      line-height: 1.8;
+      color: rgba(255, 255, 255, .88);
+    }
+
+    .notice code {
+      background: rgba(255, 255, 255, .1);
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-family: Consolas, Monaco, monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1>Video Matrix Studio</h1>
+      <p class="subtitle">多屏视频同步视界 / Multi-Stream Synchronized Playback</p>
+    </header>
+
+    <div class="toolbar">
+      <button id="playAllBtn" type="button">同时播放</button>
+      <button id="restartAllBtn" type="button">从头同步</button>
+      <button id="editTitlesBtn" type="button">标题编辑</button>
+      <button id="loopToggleBtn" type="button">循环播放：关</button>
+    </div>
+
+    <main id="matrix" class="matrix"></main>
+
+    <div class="notice">
+      使用说明：请把 6 个视频与当前 HTML 放在同一个目录中，并命名为
+      <code>video1.mp4</code> 到 <code>video6.mp4</code>。
+      点击 <code>标题编辑</code> 后，可直接修改每个视频顶部的标题；
+      修改完成后点击 <code>完成</code>，标题会固定并自动保存。
+      点击 <code>循环播放</code> 可开启或关闭全部视频的循环播放。
+    </div>
+  </div>
+
+  <script>
+    const sources = [
+      { src: './video1.mp4', defaultTitle: 'video1' },
+      { src: './video2.mp4', defaultTitle: 'video2' },
+      { src: './video3.mp4', defaultTitle: 'video3' },
+      { src: './video4.mp4', defaultTitle: 'video4' },
+      { src: './video5.mp4', defaultTitle: 'video5' },
+      { src: './video6.mp4', defaultTitle: 'video6' }
+    ];
+
+    const matrix = document.getElementById('matrix');
+    const badges = [];
+    let editingTitles = false;
+    let loopEnabled = false;
+
+    function getSavedTitle(key) {
+      try {
+        return localStorage.getItem(key);
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function saveTitle(key, value) {
+      try {
+        localStorage.setItem(key, value);
+      } catch (err) {
+        // 忽略本地存储异常
+      }
+    }
+
+    sources.forEach((item) => {
+      const storageKey = `video-title-${item.defaultTitle}`;
+      const savedTitle = getSavedTitle(storageKey);
+
+      const cell = document.createElement('section');
+      cell.className = 'cell';
+      cell.innerHTML = `
+        <div class="cell-top">
+          <span
+            class="badge"
+            contenteditable="false"
+            spellcheck="false"
+            data-default="${item.defaultTitle}"
+            data-placeholder="${item.defaultTitle}"
+            data-storage-key="${storageKey}"
+          ></span>
+          <span class="status">未加载</span>
+        </div>
+        <div class="video-wrap">
+          <video controls preload="metadata" playsinline loop="${loopEnabled}"></video>
+        </div>
+      `;
+
+      const badge = cell.querySelector('.badge');
+      const status = cell.querySelector('.status');
+      const video = cell.querySelector('video');
+
+      badge.textContent = savedTitle && savedTitle.trim() ? savedTitle : item.defaultTitle;
+      badge.title = badge.textContent.trim();
+
+      video.src = item.src;
+      video.loop = loopEnabled;
+
+      badge.addEventListener('input', () => {
+        const text = badge.textContent.trim();
+        saveTitle(badge.dataset.storageKey, text);
+        badge.title = text || badge.dataset.default;
+      });
+
+      badge.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          badge.blur();
+        }
+      });
+
+      badge.addEventListener('paste', (event) => {
+        event.preventDefault();
+        const text = (event.clipboardData || window.clipboardData).getData('text/plain');
+        document.execCommand('insertText', false, text);
+      });
+
+      const updateStatus = () => {
+        if (video.error) {
+          status.textContent = '加载失败';
+          return;
+        }
+
+        if (video.readyState === 0) {
+          status.textContent = '未加载';
+        } else if (video.paused) {
+          status.textContent = '已暂停';
+        } else {
+          status.textContent = '播放中';
+        }
+      };
+
+      ['play', 'pause', 'playing', 'waiting', 'loadedmetadata', 'error'].forEach(eventName => {
+        video.addEventListener(eventName, updateStatus);
+      });
+
+      video.addEventListener('error', () => {
+        console.error(`视频 ${item.defaultTitle} 加载失败：`, video.error, 'src=', video.currentSrc);
+      });
+
+      badges.push(badge);
+      matrix.appendChild(cell);
+    });
+
+    const getVideos = () => Array.from(document.querySelectorAll('video'));
+
+    async function playAll() {
+      const results = await Promise.allSettled(
+        getVideos().map(video => video.play())
+      );
+
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          console.warn(`第 ${index + 1} 个视频播放失败：`, result.reason);
+        }
+      });
+    }
+
+    function restartAll() {
+      getVideos().forEach(video => {
+        video.currentTime = 0;
+      });
+      playAll();
+    }
+
+    function setLoopState(state) {
+      loopEnabled = state;
+
+      getVideos().forEach(video => {
+        video.loop = state;
+      });
+
+      const loopToggleBtn = document.getElementById('loopToggleBtn');
+      loopToggleBtn.textContent = state ? '循环播放：开' : '循环播放：关';
+      loopToggleBtn.classList.toggle('active', state);
+    }
+
+    document.getElementById('playAllBtn').addEventListener('click', playAll);
+    document.getElementById('restartAllBtn').addEventListener('click', restartAll);
+
+    document.getElementById('loopToggleBtn').addEventListener('click', () => {
+      setLoopState(!loopEnabled);
+    });
+
+    const editTitlesBtn = document.getElementById('editTitlesBtn');
+
+    function setTitleEditMode(state) {
+      editingTitles = state;
+
+      editTitlesBtn.textContent = state ? '完成' : '标题编辑';
+      editTitlesBtn.classList.toggle('active', state);
+
+      badges.forEach(badge => {
+        badge.contentEditable = state ? 'true' : 'false';
+
+        if (!state) {
+          const text = badge.textContent.trim();
+          badge.textContent = text || badge.dataset.default;
+          saveTitle(badge.dataset.storageKey, badge.textContent.trim());
+          badge.title = badge.textContent.trim();
+        }
+      });
+
+      if (state && badges.length > 0) {
+        badges[0].focus();
+      }
+    }
+
+    editTitlesBtn.addEventListener('click', () => {
+      setTitleEditMode(!editingTitles);
+    });
+  </script>
+</body>
+</html>

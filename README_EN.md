@@ -31,6 +31,16 @@ bun run start
 
 To stop the server: press Ctrl + C for foreground processes, or run `lsof -ti:3000 | xargs kill` to free port 3000.
 
+## Standalone single-file version (no setup)
+
+If you just want to play a few videos without installing anything, use [`standalone.html`](./standalone.html) at the repository root. It is a zero-dependency, single-file page that runs in any browser after download:
+
+- Put `standalone.html` in the same folder as 6 videos named `video1.mp4` through `video6.mp4`;
+- Open it in a browser to get a 3 × 2 video matrix with synchronized start, restart-all, a global loop toggle, and editable titles (stored in the browser's local storage, which must be allowed);
+- No dependencies, no server process — handy for temporary demos and quick previews.
+
+For custom video counts and matrices, server-side persistence, and cross-device access, use the full version above.
+
 ## Tech stack
 
 Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · shadcn/ui · sonner · filesystem storage (no database)
