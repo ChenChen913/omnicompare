@@ -4,15 +4,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Clapperboard,
   LayoutGrid,
+  Moon,
   Pause,
   Play,
   Repeat,
+  Sun,
   Trash2,
   UploadCloud,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useTheme } from 'next-themes';
 import { cn } from '@/lib/utils';
 import {
   Layout,
@@ -47,7 +50,7 @@ function defaultSlots(): Slot[] {
 
 /** 顶部控制按钮的基础样式 */
 const ctlBtn =
-  'inline-flex h-10 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3';
+  'inline-flex h-10 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3';
 
 /** 矩阵选项：迷你预览图 + 行×列标签 */
 function MatrixOption({
@@ -71,10 +74,10 @@ function MatrixOption({
       title={`${layout.rows} 行 × ${layout.cols} 列${pad > 0 ? `，末尾留 ${pad} 个空格` : ''}`}
       aria-pressed={active}
       className={cn(
-        'flex flex-col items-center justify-start gap-1.5 rounded-lg border px-1.5 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60',
+        'flex flex-col items-center justify-start gap-1.5 rounded-lg border px-1.5 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
         active
-          ? 'border-violet-500 bg-violet-500/15'
-          : 'border-zinc-700/80 bg-zinc-800/40 hover:border-zinc-600 hover:bg-zinc-800',
+          ? 'border-primary bg-primary/15'
+          : 'border-border/80 bg-muted/40 hover:border-muted-foreground/40 hover:bg-accent',
       )}
     >
       <span
@@ -85,12 +88,12 @@ function MatrixOption({
         {Array.from({ length: layout.rows * layout.cols }).map((_, i) => (
           <span
             key={i}
-            className={cn('rounded-[1px]', i < count ? 'bg-violet-400/80' : 'bg-zinc-600/40')}
+            className={cn('rounded-[1px]', i < count ? 'bg-primary/80' : 'bg-muted-foreground/30')}
             style={{ width: cell, height: cell }}
           />
         ))}
       </span>
-      <span className={cn('text-[11px] font-semibold', active ? 'text-violet-200' : 'text-zinc-400')}>
+      <span className={cn('text-[11px] font-semibold', active ? 'text-primary' : 'text-muted-foreground')}>
         {layout.rows}×{layout.cols}
         {pad > 0 && <span className="ml-0.5 text-[9px] font-normal text-amber-400/90">补</span>}
       </span>
@@ -109,6 +112,7 @@ export function VideoWall() {
   const [mutedAll, setMutedAll] = useState(false);
   const [gridDrag, setGridDrag] = useState(false);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const { resolvedTheme, setTheme } = useTheme();
 
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -462,24 +466,24 @@ export function VideoWall() {
 
   /* ---------- 渲染 ---------- */
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-950 text-zinc-100">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
       {/* 顶部：标题 + 全局控制 */}
-      <header className="sticky top-0 z-40 border-b border-zinc-800/70 bg-zinc-950/85 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-3 sm:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-lg shadow-violet-500/25">
-              <Clapperboard className="h-5 w-5 text-white" aria-hidden />
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
+              <Clapperboard className="h-5 w-5" aria-hidden />
             </div>
             <div className="min-w-0">
-              <h1 className="text-base font-bold leading-tight tracking-wide sm:text-lg">视频墙</h1>
-              <p className="text-[11px] leading-tight text-zinc-500 sm:text-xs">
-                多视频矩阵展示 · 支持同时播放
+              <h1 className="text-base font-bold leading-tight tracking-wide sm:text-lg">OmniCompare</h1>
+              <p className="text-[11px] leading-tight text-muted-foreground sm:text-xs">
+                灵动对比 · 多内容并行对比工作台
               </p>
             </div>
           </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-1.5 sm:gap-2">
-            <span className="mr-1 hidden items-center rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-400 md:inline-flex">
+            <span className="mr-1 hidden items-center rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground md:inline-flex">
               已放置
               {/* 定宽 + 等宽数字：数字位数变化（如 7/7 → 10/10）不会挤动旁边按钮 */}
               <span className="ml-1 inline-block min-w-[5ch] text-center tabular-nums">
@@ -490,7 +494,7 @@ export function VideoWall() {
             <button
               type="button"
               onClick={handlePlayAll}
-              className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-gradient-to-r from-violet-500 to-fuchsia-500 px-3.5 text-[13px] font-semibold text-white shadow-lg shadow-violet-500/30 transition-all hover:from-violet-400 hover:to-fuchsia-400 hover:shadow-violet-500/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 active:scale-95 sm:px-4"
+              className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 sm:px-4"
             >
               <Play className="h-4 w-4 fill-current" aria-hidden />
               同时播放
@@ -499,7 +503,7 @@ export function VideoWall() {
             <button
               type="button"
               onClick={handlePauseAll}
-              className={cn(ctlBtn, 'border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 hover:text-white')}
+              className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
               title="全部暂停"
               aria-label="全部暂停"
             >
@@ -515,23 +519,23 @@ export function VideoWall() {
                   disabled={busy}
                   className={cn(
                     ctlBtn,
-                    'border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 hover:text-white',
+                    'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
                   )}
                   title="设置视频数量与排列矩阵"
                   aria-label="设置视频数量与排列矩阵"
                 >
                   <LayoutGrid className="h-4 w-4" aria-hidden />
                   <span className="hidden sm:inline">布局</span>
-                  <span className="inline-block min-w-[4ch] text-center text-[11px] font-semibold tabular-nums text-violet-300">
+                  <span className="inline-block min-w-[4ch] text-center text-[11px] font-semibold tabular-nums text-primary">
                     {layout.rows}×{layout.cols}
                   </span>
                 </button>
               </PopoverTrigger>
               <PopoverContent
                 align="end"
-                className="w-80 border-zinc-800 bg-zinc-900 p-4 text-zinc-100"
+                className="w-80 border-border bg-card p-4 text-card-foreground"
               >
-                <p className="text-xs font-semibold tracking-wide text-zinc-400">视频数量</p>
+                <p className="text-xs font-semibold tracking-wide text-muted-foreground">视频数量</p>
                 <div className="mt-2 grid grid-cols-6 gap-1.5">
                   {Array.from({ length: SLOT_MAX }, (_, i) => i + 1).map((n) => (
                     <button
@@ -543,8 +547,8 @@ export function VideoWall() {
                       className={cn(
                         'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 disabled:cursor-not-allowed disabled:opacity-50',
                         n === count
-                          ? 'border-violet-500 bg-violet-500/20 text-violet-200'
-                          : 'border-zinc-700 bg-zinc-800/60 text-zinc-300 hover:border-zinc-600 hover:text-white',
+                          ? 'border-primary bg-primary/20 text-primary'
+                          : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
                       )}
                     >
                       {n}
@@ -552,9 +556,9 @@ export function VideoWall() {
                   ))}
                 </div>
 
-                <p className="mt-4 text-xs font-semibold tracking-wide text-zinc-400">
+                <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
                   排列矩阵
-                  <span className="ml-1 font-normal text-zinc-600">（行 × 列）</span>
+                  <span className="ml-1 font-normal text-muted-foreground/70">（行 × 列）</span>
                 </p>
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {layoutOptionsFor(count).map((l) => (
@@ -568,7 +572,7 @@ export function VideoWall() {
                   ))}
                 </div>
                 {layout.rows * layout.cols > count && (
-                  <p className="mt-2.5 text-[11px] leading-relaxed text-zinc-600">
+                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
                     标注「补」的矩阵无法整除，会在末尾留出空格子。
                   </p>
                 )}
@@ -583,7 +587,7 @@ export function VideoWall() {
                 ctlBtn,
                 loop
                   ? 'border-violet-500/50 bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 hover:text-violet-200'
-                  : 'border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:text-white',
+                  : 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
               )}
               title={loop ? '循环播放：开' : '循环播放：关'}
               aria-label={loop ? '关闭循环播放' : '开启循环播放'}
@@ -600,7 +604,7 @@ export function VideoWall() {
                 ctlBtn,
                 mutedAll
                   ? 'border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 hover:text-amber-200'
-                  : 'border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:text-white',
+                  : 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
               )}
               title={mutedAll ? '取消全部静音' : '全部静音'}
               aria-label={mutedAll ? '取消全部静音' : '全部静音'}
@@ -617,7 +621,7 @@ export function VideoWall() {
               type="button"
               onClick={() => importInputRef.current?.click()}
               disabled={busy}
-              className={cn(ctlBtn, 'border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 hover:text-white')}
+              className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
               title="选择多个视频，按顺序填入各位置"
               aria-label="一键导入多个视频"
             >
