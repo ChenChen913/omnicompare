@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>StudioCompare - 工作空间</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "background": "#131313",
+                        "surface-container-high": "#2a2a2a",
+                        "on-primary": "#002e69",
+                        "on-primary-fixed": "#001a41",
+                        "error-container": "#93000a",
+                        "surface-container-highest": "#353534",
+                        "tertiary-container": "#ef6719",
+                        "surface-dim": "#131313",
+                        "tertiary-fixed": "#ffdbcc",
+                        "surface": "#131313",
+                        "tertiary-fixed-dim": "#ffb595",
+                        "inverse-on-surface": "#313030",
+                        "outline-variant": "#414755",
+                        "on-secondary-container": "#b5b4ba",
+                        "on-surface-variant": "#c1c6d7",
+                        "secondary-fixed-dim": "#c6c6cb",
+                        "surface-variant": "#353534",
+                        "inverse-surface": "#e5e2e1",
+                        "on-tertiary-fixed-variant": "#7c2e00",
+                        "on-tertiary": "#571e00",
+                        "surface-container-low": "#1c1b1b",
+                        "on-error-container": "#ffdad6",
+                        "on-background": "#e5e2e1",
+                        "error": "#ffb4ab",
+                        "on-tertiary-fixed": "#351000",
+                        "on-primary-container": "#00285c",
+                        "secondary-container": "#46464b",
+                        "primary-fixed-dim": "#adc6ff",
+                        "on-primary-fixed-variant": "#004493",
+                        "on-tertiary-container": "#4c1a00",
+                        "surface-container-lowest": "#0e0e0e",
+                        "primary-container": "#4b8eff",
+                        "on-surface": "#e5e2e1",
+                        "surface-container": "#201f1f",
+                        "on-secondary-fixed": "#1a1b1f",
+                        "on-secondary": "#2f3034",
+                        "on-error": "#690005",
+                        "surface-tint": "#adc6ff",
+                        "on-secondary-fixed-variant": "#46464b",
+                        "tertiary": "#ffb595",
+                        "primary": "#adc6ff",
+                        "primary-fixed": "#d8e2ff",
+                        "secondary": "#c6c6cb",
+                        "outline": "#8b90a0",
+                        "secondary-fixed": "#e3e2e7",
+                        "surface-bright": "#393939",
+                        "inverse-primary": "#005bc1"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "unit": "8px",
+                        "gutter": "24px",
+                        "stack-sm": "12px",
+                        "stack-lg": "48px",
+                        "stack-md": "24px",
+                        "container-padding": "40px"
+                    },
+                    fontFamily: {
+                        "title-md": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "label-caps": ["Inter"],
+                        "mono-label": ["jetbrainsMono"]
+                    },
+                    fontSize: {
+                        "title-md": ["20px", { lineHeight: "1.4", fontWeight: "500" }],
+                        "display-lg": ["48px", { lineHeight: "1.1", letterSpacing: "-0.02em", fontWeight: "600" }],
+                        "headline-lg-mobile": ["24px", { lineHeight: "1.2", fontWeight: "600" }],
+                        "body-lg": ["17px", { lineHeight: "1.5", fontWeight: "400" }],
+                        "headline-lg": ["32px", { lineHeight: "1.2", letterSpacing: "-0.01em", fontWeight: "600" }],
+                        "body-sm": ["14px", { lineHeight: "1.4", fontWeight: "400" }],
+                        "label-caps": ["12px", { lineHeight: "1.2", letterSpacing: "0.05em", fontWeight: "600" }],
+                        "mono-label": ["13px", { lineHeight: "1.2", fontWeight: "400" }]
+                    }
+                }
+            }
+        };
+    </script>
+<style>
+        body {
+            background-color: theme('colors.background');
+            color: theme('colors.on-background');
+        }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .drop-zone {
+            background: linear-gradient(135deg, rgba(255,255,255,0.01) 0%, rgba(255,255,255,0.04) 100%);
+            border: 2px dashed rgba(255, 255, 255, 0.2);
+            transition: all 0.3s ease;
+        }
+
+        .drop-zone:hover {
+            border-color: theme('colors.primary');
+            background: linear-gradient(135deg, rgba(75, 142, 255, 0.05) 0%, rgba(75, 142, 255, 0.1) 100%);
+            box-shadow: 0 0 40px rgba(75, 142, 255, 0.1);
+        }
+    </style>
+</head>
+<body class="antialiased min-h-screen overflow-hidden">
+<!-- TopNavBar -->
+<nav class="fixed top-0 w-full z-50 flex justify-between items-center px-gutter h-16 bg-surface/80 backdrop-blur-xl border-b border-white/10 shadow-sm">
+<div class="flex items-center gap-8">
+<span class="font-display-lg text-title-md font-bold text-on-surface">StudioCompare</span>
+<div class="hidden md:flex gap-6">
+<a class="text-primary font-medium border-b-2 border-primary pb-1 hover:text-primary transition-colors duration-200" href="#">
+<span class="font-title-md text-title-md">项目 A</span>
+</a>
+<a class="text-on-surface-variant font-medium hover:text-primary transition-colors duration-200" href="#">
+<span class="font-title-md text-title-md">草稿</span>
+</a>
+<a class="text-on-surface-variant font-medium hover:text-primary transition-colors duration-200" href="#">
+<span class="font-title-md text-title-md">归档</span>
+</a>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button aria-label="play_arrow" class="p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 hover:scale-95 transition-transform">
+<span class="material-symbols-outlined">play_arrow</span>
+</button>
+<button aria-label="pause" class="p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 hover:scale-95 transition-transform">
+<span class="material-symbols-outlined">pause</span>
+</button>
+<button aria-label="refresh" class="p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 hover:scale-95 transition-transform">
+<span class="material-symbols-outlined">refresh</span>
+</button>
+<button aria-label="loop" class="p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 hover:scale-95 transition-transform">
+<span class="material-symbols-outlined">loop</span>
+</button>
+<button aria-label="volume_up" class="p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 hover:scale-95 transition-transform">
+<span class="material-symbols-outlined">volume_up</span>
+</button>
+<button aria-label="grid_view" class="p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 hover:scale-95 transition-transform">
+<span class="material-symbols-outlined">grid_view</span>
+</button>
+<button aria-label="dark_mode" class="p-2 text-on-surface-variant hover:text-primary transition-colors duration-200 hover:scale-95 transition-transform">
+<span class="material-symbols-outlined">dark_mode</span>
+</button>
+<div class="h-8 w-8 rounded-full bg-surface-container-high overflow-hidden ml-4">
+<img alt="User profile" class="w-full h-full object-cover" data-alt="A macro shot of a sleek, abstract metallic orb with shifting iridescent blue and silver hues, resembling a futuristic profile avatar in a dark mode setting. The lighting is dramatic and directional, creating deep shadows and bright specular highlights on the polished surface." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCprt85vy4F4TqouCue1UX4auhIE5BlCqXv8qwGZUBLUx_ra9WZcHbfd6suU_HZp_phBD8iECUYelp-ymBkqwoJHE_Okhwk_4xYuXo_JJq5I2ZqKw-FzTPUtsre57iZEwvjUhAtdiMMWJjUY0WO1HsKu2cmdCvGNqbQFpkHIvajeUh91HVyQIWoKPGNfJMefk228H3rXtr6IMF20L-ddV6LguCxLOudR2dW0IrZagye3oVjloeWEDY2"/>
+</div>
+</div>
+</nav>
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-16 h-[calc(100vh-64px)] z-40 flex flex-col p-4 gap-4 bg-surface-container-low/60 backdrop-blur-2xl w-64 border-r border-white/10 shadow-lg">
+<div class="flex items-center gap-3 p-2 mb-4">
+<div class="h-10 w-10 rounded-lg bg-surface-container-high overflow-hidden shrink-0">
+<img alt="Project Workspace" class="w-full h-full object-cover" data-alt="A stylized, glowing geometric icon representing a project workspace, featuring interlocking minimalist shapes in shades of deep blue and vibrant cyan against a stark black background. The lighting is internal and emissive, giving the icon a holographic, high-tech appearance." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDUC0G2R4b06g2xC64Wnfu_N8cM_TC6zJbD6AKcS8RxVA2Shp-RURKYP7IsVpQ3CoMcyfbkgjmbwH7D2aCCG4mfCRKtZXcFenSFzY29OPKoP01OjDVO3YhLHoY0huAz0Z551THPSRL46txKQAkf_yiYicKso7RfMs2YjirEX-TepNI3Q6G9gx68NwqQOizF99pupAsgyqMoSwn0OmBoTNhJw7M7viZ2FFJbjVOtN459koCWD9zP69vo"/>
+</div>
+<div>
+<div class="font-label-caps text-label-caps text-on-surface">项目 Alpha</div>
+<div class="font-body-sm text-body-sm text-on-surface-variant">对比套件</div>
+</div>
+</div>
+<button class="w-full py-2 px-4 bg-primary text-on-primary rounded-lg font-bold hover:bg-primary/90 transition-colors mb-4 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[18px]">add</span>
+<span class="font-label-caps text-label-caps">添加内容</span>
+</button>
+<nav class="flex-1 flex flex-col gap-2">
+<a class="flex items-center gap-3 p-3 bg-primary-container text-on-primary-container rounded-lg font-bold hover:bg-surface-container-highest transition-all duration-300 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined" data-weight="fill" style="font-variation-settings: 'FILL' 1;">space_dashboard</span>
+<span class="font-label-caps text-label-caps">工作空间</span>
+</a>
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-highest transition-all duration-300 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined">video_library</span>
+<span class="font-label-caps text-label-caps">库</span>
+</a>
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-highest transition-all duration-300 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined">dashboard_customize</span>
+<span class="font-label-caps text-label-caps">布局</span>
+</a>
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-highest transition-all duration-300 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-label-caps text-label-caps">设置</span>
+</a>
+</nav>
+<div class="mt-auto flex flex-col gap-2 border-t border-white/10 pt-4">
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-highest transition-all duration-300 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined">help_outline</span>
+<span class="font-label-caps text-label-caps">帮助</span>
+</a>
+<a class="flex items-center gap-3 p-3 text-on-surface-variant hover:bg-surface-container-high rounded-lg hover:bg-surface-container-highest transition-all duration-300 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined">chat_bubble_outline</span>
+<span class="font-label-caps text-label-caps">反馈</span>
+</a>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 mt-16 p-container-padding h-[calc(100vh-64px)] flex items-center justify-center">
+<div class="w-full max-w-4xl h-full max-h-[800px] glass-panel rounded-[24px] drop-zone flex flex-col items-center justify-center p-12 text-center group cursor-pointer relative overflow-hidden">
+<div class="absolute inset-0 bg-[url('placeholder')] opacity-[0.02] mix-blend-overlay pointer-events-none" data-alt="A subtle, dark, generative art background pattern consisting of fine, intersecting grid lines and subtle topographic contours in charcoal grey, creating a sense of deep dimensional space and precision without distracting from the main UI. The pattern should look like a highly technical architectural blueprint or data visualization grid."></div>
+<div class="w-24 h-24 rounded-full glass-panel flex items-center justify-center mb-8 group-hover:scale-110 transition-transform duration-500 shadow-[0_0_40px_rgba(255,255,255,0.05)] group-hover:shadow-[0_0_60px_rgba(75,142,255,0.2)]">
+<span class="material-symbols-outlined text-[48px] text-on-surface-variant group-hover:text-primary transition-colors duration-500">
+                    cloud_upload
+                </span>
+</div>
+<h2 class="font-headline-lg text-headline-lg text-on-surface mb-4">
+                拖放
+            </h2>
+<p class="font-body-lg text-body-lg text-on-surface-variant mb-12 max-w-md">
+                导入视频或 HTML 文件开始您的对比工作空间。将文件拖放到任何地方即可开始。
+            </p>
+<button class="px-8 py-4 bg-surface text-on-surface border border-white/20 rounded-full font-label-caps text-label-caps hover:bg-white/5 hover:border-white/40 transition-all duration-300 flex items-center gap-3 backdrop-blur-md relative z-10">
+<span class="material-symbols-outlined text-[20px]">add_circle</span>
+                选择文件
+            </button>
+<div class="mt-12 flex gap-8 opacity-50">
+<div class="flex items-center gap-2 font-mono-label text-mono-label text-on-surface-variant">
+<span class="material-symbols-outlined text-[16px]">videocam</span> MP4, MOV, WEBM
+                </div>
+<div class="flex items-center gap-2 font-mono-label text-mono-label text-on-surface-variant">
+<span class="material-symbols-outlined text-[16px]">html</span> HTML, CSS, JS
+                </div>
+</div>
+</div>
+</main>
+</body></html>
