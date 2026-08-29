@@ -5,7 +5,7 @@ import { Code2, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Slot, formatBytes } from '@/lib/types';
 
-interface VideoCardProps {
+export interface VideoCardProps {
   slot: Slot;
   uploading: boolean;
   loop: boolean;
@@ -14,6 +14,11 @@ interface VideoCardProps {
   highlighted?: boolean;
   /** 页面级拖拽导入进行中（用于在 iframe 上方临时铺一层可落放的护盾） */
   dragActive?: boolean;
+  /** 拖拽排序手柄属性（dnd-kit attributes+listeners 合并后传入；
+   * 不传 = 不参与排序（空位卡片），角标保持纯展示） */
+  dragHandle?: React.HTMLAttributes<HTMLSpanElement> | null;
+  /** 本卡片正在被拖拽（蓝图 §14：scale 1.02 + 阴影） */
+  isDragging?: boolean;
   /** 处理文件（可多个）：第一个放入本位置，其余按顺序分配到其它位置 */
   onFiles: (files: File[], primarySlot: number) => void;
   onTitleChange: (slotIndex: number, title: string) => void;
@@ -33,6 +38,8 @@ export function VideoCard({
   muted,
   highlighted,
   dragActive,
+  dragHandle,
+  isDragging,
   onFiles,
   onTitleChange,
   onClear,
@@ -120,17 +127,24 @@ export function VideoCard({
     <article
       id={`slot-card-${index}`}
       className={cn(
-        'group relative flex flex-col overflow-hidden rounded-2xl border bg-card shadow-lg shadow-black/10 transition-all duration-200',
+        'group relative flex h-full w-full flex-col overflow-hidden rounded-2xl border bg-card shadow-lg shadow-black/10 transition-all duration-200',
         dragOver
           ? 'scale-[1.015] border-primary/80 bg-primary/5 ring-2 ring-primary/40'
           : 'border-border hover:border-muted-foreground/40',
         highlighted && 'border-primary/60 ring-2 ring-primary/70',
+        isDragging && 'scale-[1.02] border-primary/70 shadow-2xl shadow-primary/25 ring-2 ring-primary/50',
       )}
     >
-      {/* 位置角标 */}
+      {/* 位置角标：兼作拖拽排序手柄（有 dragHandle 时可抓取，蓝图 §14） */}
       <span
-        aria-hidden
-        className="absolute left-2.5 top-2.5 z-20 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm"
+        {...(dragHandle ?? {})}
+        aria-hidden={dragHandle ? undefined : true}
+        title={dragHandle ? '拖动调整顺序' : undefined}
+        className={cn(
+          'absolute left-2.5 top-2.5 z-20 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm',
+          dragHandle &&
+            'cursor-grab touch-none select-none hover:border-primary/60 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing',
+        )}
       >
         {index + 1}
       </span>

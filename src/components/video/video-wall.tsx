@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clapperboard,
   Expand,
@@ -19,9 +19,28 @@ import {
   UploadCloud,
   Volume2,
   VolumeX,
+  Wand2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
+import {
+  DndContext,
+  DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import {
   Layout,
@@ -45,7 +64,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { VideoCard } from './video-card';
+import { VideoCard, VideoCardProps } from './video-card';
 
 const PREF_LOOP = 'videowall:loop';
 const PREF_MUTE = 'videowall:mute';
@@ -55,6 +74,41 @@ const PREF_SIDEBAR = 'omnicompare:sidebar';
 
 function defaultSlots(): Slot[] {
   return Array.from({ length: 6 }, (_, i) => ({ index: i, title: '', video: null }));
+}
+
+/** 拖拽排序的稳定 id：文件名全局唯一（uuid + 扩展名），与 React key 同源；空位不参与排序 */
+function sortableIdOf(slot: Slot): string {
+  return slot.video?.filename ?? slot.html?.filename ?? `empty-${slot.index}`;
+}
+
+/**
+ * Sortable 包装层：为已放置内容卡片接入 dnd-kit 排序。
+ * 外层 div 承担 transform 与 ref；卡片本身只在拖拽中抬升（蓝图 §14）。
+ * React key 用稳定文件名：排序后 DOM 节点被移动而非复用重建，视频播放不中断。
+ */
+function SortableCard({
+  slot,
+  ...cardProps
+}: { slot: Slot } & Omit<VideoCardProps, 'slot' | 'dragHandle' | 'isDragging'>) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: sortableIdOf(slot),
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn('flex', isDragging && 'relative z-30')}
+    >
+      <VideoCard
+        slot={slot}
+        dragHandle={
+          { ...(attributes as object), ...(listeners as object) } as React.HTMLAttributes<HTMLSpanElement>
+        }
+        isDragging={isDragging}
+        {...cardProps}
+      />
+    </div>
+  );
 }
 
 /** 顶部控制按钮的基础样式 */
@@ -114,6 +168,8 @@ export function VideoWall() {
   const [slots, setSlots] = useState<Slot[]>(defaultSlots);
   const [count, setCount] = useState(6);
   const [layout, setLayout] = useState<Layout>({ rows: 2, cols: 3 });
+  /** 布局模式：auto = 按数量自动近方形（默认）；manual = 用户显式选矩阵（蓝图 §12） */
+  const [layoutMode, setLayoutMode] = useState<'auto' | 'manual'>('auto');
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
@@ -127,6 +183,8 @@ export function VideoWall() {
   /** 侧栏窗格列表点击定位时的高亮位 */
   const [highlight, setHighlight] = useState<number | null>(null);
   const [themeMounted, setThemeMounted] = useState(false);
+  /** 窄屏（<768px）标记：仅 auto 模式渲染列数收窄用 */
+  const [narrow, setNarrow] = useState(false);
   const { resolvedTheme, setTheme } = useTheme();
 
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
@@ -149,6 +207,13 @@ export function VideoWall() {
     [slots],
   );
 
+  /* ---------- 拖拽排序传感器（鼠标距离阈值 / 触摸延迟防滚动误触 / 键盘无障碍） ---------- */
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
   /* ---------- 初始化：拉取清单 + 恢复本地偏好 ---------- */
   useEffect(() => {
     let cancelled = false;
@@ -159,10 +224,11 @@ export function VideoWall() {
         if (!cancelled && Array.isArray(data?.slots)) {
           setCount(data.count);
           setLayout(data.layout);
+          setLayoutMode(data.layoutMode === 'auto' ? 'auto' : 'manual');
           setSlots(data.slots);
         }
       } catch {
-        if (!cancelled) toast.error('加载视频列表失败，请刷新重试');
+        if (!cancelled) toast.error('加载内容列表失败，请刷新重试');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -170,6 +236,15 @@ export function VideoWall() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  /* 窄屏检测：auto 模式下列数收窄到 2 竖向堆叠（蓝图 §12；仅影响渲染，不改存储矩阵） */
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const onChange = () => setNarrow(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
   }, []);
 
   useEffect(() => {
@@ -255,12 +330,15 @@ export function VideoWall() {
 
   /* ---------- 数量与矩阵 ---------- */
   const requestLayout = useCallback(
-    async (nextCount: number, nextLayout: Layout): Promise<Manifest | null> => {
+    async (nextCount: number, nextLayout: Layout | 'auto'): Promise<Manifest | null> => {
       try {
         const res = await fetch('/api/videos/layout', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ count: nextCount, rows: nextLayout.rows, cols: nextLayout.cols }),
+          body:
+            nextLayout === 'auto'
+              ? JSON.stringify({ count: nextCount, layout: 'auto' })
+              : JSON.stringify({ count: nextCount, rows: nextLayout.rows, cols: nextLayout.cols }),
         });
         const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
         if (!res.ok || !data?.slots) {
@@ -269,6 +347,7 @@ export function VideoWall() {
         }
         setCount(data.count);
         setLayout(data.layout);
+        setLayoutMode(data.layoutMode === 'auto' ? 'auto' : 'manual');
         setSlots(data.slots);
         return data;
       } catch {
@@ -285,7 +364,7 @@ export function VideoWall() {
     [slots],
   );
 
-  /** 选择数量：缩减且被移除区间内有内容时弹确认框 */
+  /** 选择数量：缩减且被移除区间内有内容时弹确认框；auto 模式矩阵随数量自动跟随 */
   const handleCountSelect = useCallback(
     (n: number) => {
       if (busy || n === count) return;
@@ -293,12 +372,12 @@ export function VideoWall() {
         setPendingCount(n);
         return;
       }
-      void requestLayout(n, defaultLayoutFor(n)).then((m) => {
+      void requestLayout(n, layoutMode === 'auto' ? 'auto' : defaultLayoutFor(n)).then((m) => {
         // 固定 id：连续快速切换数量时只更新同一条提示，不会叠加成一堆
         if (m) toast.success(`已切换为 ${n} 个内容位`, { id: 'layout', duration: 2000 });
       });
     },
-    [busy, count, removedContentCount, requestLayout],
+    [busy, count, layoutMode, removedContentCount, requestLayout],
   );
 
   const confirmShrink = useCallback(() => {
@@ -306,7 +385,7 @@ export function VideoWall() {
     setPendingCount(null);
     if (n === null) return;
     const removed = removedContentCount(n);
-    void requestLayout(n, defaultLayoutFor(n)).then((m) => {
+    void requestLayout(n, layoutMode === 'auto' ? 'auto' : defaultLayoutFor(n)).then((m) => {
       if (m) {
         toast.success(
           removed > 0 ? `已缩减为 ${n} 个内容位，${removed} 个内容已移除` : `已切换为 ${n} 个内容位`,
@@ -314,14 +393,65 @@ export function VideoWall() {
         );
       }
     });
-  }, [pendingCount, removedContentCount, requestLayout]);
+  }, [pendingCount, layoutMode, removedContentCount, requestLayout]);
 
+  /** 手动选择矩阵：覆盖 auto 并记住（蓝图 §12「用户任何手动选择都会覆盖 auto 并记住」） */
   const handleLayoutSelect = useCallback(
     (l: Layout) => {
       if (busy) return;
       void requestLayout(count, l);
     },
     [busy, count, requestLayout],
+  );
+
+  /** 切回自动排列：矩阵交给系统按数量计算 */
+  const handleAutoSelect = useCallback(() => {
+    if (busy || layoutMode === 'auto') return;
+    void requestLayout(count, 'auto').then((m) => {
+      if (m) toast.success('已切换为自动排列', { id: 'layout', duration: 2000 });
+    });
+  }, [busy, count, layoutMode, requestLayout]);
+
+  /* ---------- 拖拽排序 ---------- */
+  const filledSlots = useMemo(() => slots.filter((s) => s.video || s.html), [slots]);
+  const sortableIds = useMemo(() => filledSlots.map(sortableIdOf), [filledSlots]);
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const oldIdx = sortableIds.indexOf(String(active.id));
+      const newIdx = sortableIds.indexOf(String(over.id));
+      if (oldIdx === -1 || newIdx === -1) return;
+
+      const reordered = arrayMove(filledSlots, oldIdx, newIdx);
+      // 服务端语义：新位置 i 放旧位置 order[i] 的内容；在 index 重编号前捕获旧位置
+      const order = reordered.map((s) => s.index);
+      const empties = slots.filter((s) => !s.video && !s.html);
+      const prevSlots = slots;
+      // 乐观更新：紧凑左填不变量（内容在前、空位在后），index 重编号。
+      // 卡片 key 为稳定文件名：DOM 节点被移动而非重建，视频播放状态不中断
+      setSlots([...reordered, ...empties].map((s, i) => ({ ...s, index: i })));
+      void (async () => {
+        try {
+          const res = await fetch('/api/videos/reorder', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order }),
+          });
+          const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
+          if (!res.ok || !data?.slots) throw new Error(data?.error || '排序保存失败');
+          setCount(data.count);
+          setLayout(data.layout);
+          setLayoutMode(data.layoutMode === 'auto' ? 'auto' : 'manual');
+          setSlots(data.slots);
+        } catch {
+          setSlots(prevSlots);
+          toast.error('排序保存失败，已恢复原顺序', { id: 'reorder' });
+        }
+      })();
+    },
+    [slots, filledSlots, sortableIds],
   );
 
   /* ---------- 上传与分配 ---------- */
@@ -341,6 +471,7 @@ export function VideoWall() {
       }
       setCount(data.count);
       setLayout(data.layout);
+      setLayoutMode(data.layoutMode === 'auto' ? 'auto' : 'manual');
       setSlots(data.slots);
       return null;
     } catch {
@@ -373,7 +504,10 @@ export function VideoWall() {
       let expanded = false;
 
       if (batch.length > slots.length) {
-        const m = await requestLayout(batch.length, defaultLayoutFor(batch.length));
+        const m = await requestLayout(
+          batch.length,
+          layoutMode === 'auto' ? 'auto' : defaultLayoutFor(batch.length),
+        );
         if (!m) return;
         targetSlots = m.slots;
         expanded = true;
@@ -428,7 +562,7 @@ export function VideoWall() {
         setImporting(false);
       }
     },
-    [slots, uploadToSlot, requestLayout],
+    [slots, layoutMode, uploadToSlot, requestLayout],
   );
 
   /* ---------- 标题（防抖保存） ---------- */
@@ -520,7 +654,9 @@ export function VideoWall() {
     });
   }, [getActiveVideos]);
 
-  const gridStyle = { gridTemplateColumns: `repeat(${layout.cols}, minmax(0, 1fr))` } as const;
+  /* 渲染列数：auto 模式窄屏收窄到 2 列竖向堆叠（蓝图 §12）；手动模式保持存储矩阵 */
+  const gridCols = layoutMode === 'auto' && narrow ? Math.min(layout.cols, 2) : layout.cols;
+  const gridStyle = { gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` } as const;
   const padCellCount = Math.max(0, layout.rows * layout.cols - slots.length);
 
   /* ---------- 渲染 ---------- */
@@ -622,7 +758,7 @@ export function VideoWall() {
                     <LayoutGrid className="h-4 w-4" aria-hidden />
                     <span className="hidden sm:inline">布局</span>
                     <span className="inline-block min-w-[4ch] text-center text-[11px] font-semibold tabular-nums text-primary">
-                      {layout.rows}×{layout.cols}
+                      {layoutMode === 'auto' ? '自动' : `${layout.rows}×${layout.cols}`}
                     </span>
                   </button>
                 </PopoverTrigger>
@@ -655,22 +791,46 @@ export function VideoWall() {
                     排列矩阵
                     <span className="ml-1 font-normal text-muted-foreground/70">（行 × 列）</span>
                   </p>
+                  {/* 自动排列：矩阵随数量自动计算（默认），任何手动选择都会覆盖并记住 */}
+                  <button
+                    type="button"
+                    onClick={handleAutoSelect}
+                    disabled={busy}
+                    aria-pressed={layoutMode === 'auto'}
+                    className={cn(
+                      'mt-2 flex h-9 w-full items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50',
+                      layoutMode === 'auto'
+                        ? 'border-primary bg-primary/15 text-primary'
+                        : 'border-border bg-muted/40 text-foreground/80 hover:border-muted-foreground/40 hover:bg-accent',
+                    )}
+                  >
+                    <Wand2 className="h-3.5 w-3.5" aria-hidden />
+                    自动排列
+                    {layoutMode === 'auto' && (
+                      <span className="rounded border border-primary/40 bg-primary/10 px-1 py-px tabular-nums text-primary">
+                        {layout.rows}×{layout.cols}
+                      </span>
+                    )}
+                    <span className="ml-auto text-[10px] font-normal text-muted-foreground">
+                      随数量自动计算
+                    </span>
+                  </button>
                   <div className="mt-2 grid grid-cols-3 gap-2">
                     {layoutOptionsFor(count).map((l) => (
                       <MatrixOption
                         key={`${l.rows}x${l.cols}`}
                         layout={l}
                         count={count}
-                        active={l.rows === layout.rows && l.cols === layout.cols}
+                        active={layoutMode === 'manual' && l.rows === layout.rows && l.cols === layout.cols}
                         onSelect={() => handleLayoutSelect(l)}
                       />
                     ))}
                   </div>
-                  {layout.rows * layout.cols > count && (
-                    <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
-                      标注「补」的矩阵无法整除，会在末尾留出空格子。
-                    </p>
-                  )}
+                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
+                    {layoutMode === 'manual' && layout.rows * layout.cols > count
+                      ? '标注「补」的矩阵无法整除，会在末尾留出空格子。'
+                      : '选择具体行列后即固定为手动模式，可随时切回自动。'}
+                  </p>
                 </PopoverContent>
               </Popover>
             )}
@@ -825,6 +985,8 @@ export function VideoWall() {
           mode === 'focus' || !sidebarOpen ? 'max-w-[1800px]' : 'max-w-[1400px]',
         )}
         onDragOver={(e) => {
+          // 仅外部文件拖入时提示；卡片排序（pointer 模拟）不产生 dataTransfer
+          if (!e.dataTransfer.types.includes('Files')) return;
           e.preventDefault();
           if (!gridDrag) setGridDrag(true);
         }}
@@ -968,31 +1130,45 @@ export function VideoWall() {
             ))}
           </div>
         ) : (
-          <div className="grid gap-3 sm:gap-5" style={gridStyle}>
-            {slots.map((slot) => (
-              <VideoCard
-                key={slot.index}
-                slot={slot}
-                uploading={!!uploading[slot.index]}
-                loop={loop}
-                muted={mutedAll}
-                highlighted={highlight === slot.index}
-                dragActive={gridDrag}
-                onFiles={(files, primary) => void distributeFiles(files, primary)}
-                onTitleChange={handleTitleChange}
-                onClear={handleClearSlot}
-                setVideoRef={setVideoRef}
-              />
-            ))}
-            {/* 矩阵容量大于视频数时，末尾留空的占位格 */}
-            {Array.from({ length: padCellCount }).map((_, i) => (
-              <div
-                key={`pad-${i}`}
-                aria-hidden
-                className="aspect-video rounded-2xl border border-dashed border-border/60 bg-muted/20"
-              />
-            ))}
-          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
+              <div className="grid gap-3 sm:gap-5" style={gridStyle}>
+                {slots.map((slot) => {
+                  const isFilled = !!(slot.video || slot.html);
+                  const cardProps = {
+                    uploading: !!uploading[slot.index],
+                    loop,
+                    muted: mutedAll,
+                    highlighted: highlight === slot.index,
+                    dragActive: gridDrag,
+                    onFiles: (files: File[], primary: number) => void distributeFiles(files, primary),
+                    onTitleChange: handleTitleChange,
+                    onClear: handleClearSlot,
+                    setVideoRef,
+                  } as const;
+                  /* key 用稳定文件名：排序后 DOM 节点被移动而非复用重建，视频播放不中断；
+                     空位卡片不注册 sortable，永远留在末尾 */
+                  return isFilled ? (
+                    <SortableCard key={sortableIdOf(slot)} slot={slot} {...cardProps} />
+                  ) : (
+                    <VideoCard key={`empty-${slot.index}`} slot={slot} {...cardProps} />
+                  );
+                })}
+                {/* 矩阵容量大于内容数时，末尾留空的占位格 */}
+                {Array.from({ length: padCellCount }).map((_, i) => (
+                  <div
+                    key={`pad-${i}`}
+                    aria-hidden
+                    className="aspect-video rounded-2xl border border-dashed border-border/60 bg-muted/20"
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
       </main>
       </div>
@@ -1004,7 +1180,7 @@ export function VideoWall() {
             <ol className="flex flex-col gap-1.5 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-x-6">
               <li>
                 <span className="mr-1 font-semibold text-foreground/80">1.</span>
-                点右上「布局」选择内容位个数与几行几列，单内容会自动满幅展示
+                矩阵默认自动排列，也可在右上「布局」里固定行列；抓住卡片左上角序号可拖动排序
               </li>
               <li>
                 <span className="mr-1 font-semibold text-foreground/80">2.</span>

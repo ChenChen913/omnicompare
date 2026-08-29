@@ -9,7 +9,16 @@
  * - 缩减 count          → order >= count 的条目连同文件删除
  */
 import { randomUUID } from 'crypto';
-import { ContentItem, ContentKind, DEFAULT_PROJECT_ID, FileMeta, Layout, Manifest, Slot } from './types';
+import {
+  ContentItem,
+  ContentKind,
+  DEFAULT_PROJECT_ID,
+  FileMeta,
+  Layout,
+  Manifest,
+  Slot,
+  autoLayoutFor,
+} from './types';
 import {
   deleteFile,
   ensureDefaultProject,
@@ -35,9 +44,13 @@ export function withManifestLock<T>(fn: () => Promise<T>): Promise<T> {
 export async function readManifest(): Promise<Manifest> {
   await ensureDefaultProject();
   const project = await readProject(DEFAULT_PROJECT_ID);
+  // v2 layout='auto' → 视图返回按 slotCount 计算的近方形矩阵 + layoutMode 标记；
+  // 旧客户端忽略 layoutMode 字段，拿到的是仍然有效的显式矩阵（向后兼容）
   return {
     count: project.slotCount,
-    layout: project.layout === 'auto' ? { rows: 1, cols: project.slotCount } : project.layout,
+    layout:
+      project.layout === 'auto' ? autoLayoutFor(project.slotCount) : project.layout,
+    layoutMode: project.layout === 'auto' ? 'auto' : 'manual',
     slots: toSlots(project),
   };
 }
@@ -50,8 +63,9 @@ export async function writeManifest(manifest: Manifest): Promise<void> {
   const previousFiles = new Set(project.items.map((it) => it.file.filename));
 
   project.slotCount = manifest.count;
-  // v1 视图无 auto 概念：矩阵始终为显式行列
-  project.layout = manifest.layout;
+  // Step 6 起 v1 视图支持 auto 模式：layoutMode='auto' 时存 'auto'，
+  // 矩阵由读取方按 slotCount 现算；manual 时存显式行列（原行为）
+  project.layout = manifest.layoutMode === 'auto' ? 'auto' : manifest.layout;
 
   const now = new Date().toISOString();
   const items: ContentItem[] = [];

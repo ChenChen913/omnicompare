@@ -1,8 +1,10 @@
 /**
- * 视频数量与排列矩阵 API
- * PATCH /api/videos/layout  { count, rows, cols }
+ * 内容数量与排列矩阵 API
+ * PATCH /api/videos/layout  { count, rows, cols } 或 { count, layout: 'auto' }
  * - count: 1-12；rows × cols 为矩阵，容量需 >= count（多出的格子留空）
- * - 缩减数量时自动删除被移除位置上的视频文件
+ * - layout='auto'：交给系统按 count 自动排近方形矩阵（蓝图 §12），后续 count
+ *   变化时矩阵自动跟随；显式行列则固定为手动模式
+ * - 缩减数量时自动删除被移除位置上的内容文件
  */
 import { NextRequest, NextResponse } from 'next/server';
 import {
@@ -13,7 +15,7 @@ import {
   withManifestLock,
   writeManifest,
 } from '@/lib/video-store';
-import { SLOT_MAX, SLOT_MIN } from '@/lib/types';
+import { SLOT_MAX, SLOT_MIN, autoLayoutFor } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +23,7 @@ const noStore = { 'Cache-Control': 'no-store' } as const;
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { count?: unknown; rows?: unknown; cols?: unknown }
+    | { count?: unknown; rows?: unknown; cols?: unknown; layout?: unknown }
     | null;
   if (!body) {
     return NextResponse.json({ error: '请求体格式错误' }, { status: 400, headers: noStore });
@@ -35,15 +37,17 @@ export async function PATCH(req: NextRequest) {
     count > SLOT_MAX
   ) {
     return NextResponse.json(
-      { error: `视频数量需为 ${SLOT_MIN}-${SLOT_MAX} 之间的整数` },
+      { error: `内容数量需为 ${SLOT_MIN}-${SLOT_MAX} 之间的整数` },
       { status: 400, headers: noStore },
     );
   }
 
-  const layout = { rows: body.rows as number, cols: body.cols as number };
-  if (!isValidLayout(layout, count)) {
+  // 两种模式二选一：layout='auto'（自动矩阵）或显式 rows+cols（手动矩阵）
+  const wantAuto = body.layout === 'auto';
+  const layout = wantAuto ? autoLayoutFor(count) : { rows: body.rows as number, cols: body.cols as number };
+  if (!wantAuto && !isValidLayout(layout, count)) {
     return NextResponse.json(
-      { error: '排列矩阵不合法：行列需为整数且容量不小于视频数量' },
+      { error: '排列矩阵不合法：行列需为整数且容量不小于内容数量' },
       { status: 400, headers: noStore },
     );
   }
@@ -51,6 +55,7 @@ export async function PATCH(req: NextRequest) {
   return withManifestLock(async () => {
     const current = await readManifest();
     const { manifest: next, removedFilenames } = applyCountAndLayout(current, count, layout);
+    next.layoutMode = wantAuto ? 'auto' : 'manual';
     await writeManifest(next);
 
     if (removedFilenames.length > 0) {

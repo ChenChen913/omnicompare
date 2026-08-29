@@ -64,9 +64,12 @@ export interface Layout {
 export interface Manifest {
   /** 视频位置个数 */
   count: number;
-  /** 当前排列矩阵 */
+  /** 当前排列矩阵（layoutMode='auto' 时为按 count 自动计算的近方形矩阵） */
   layout: Layout;
   slots: Slot[];
+  /** 布局模式（Step 6 扩展字段，向后兼容：缺省视为 manual）。
+   * auto = 用户交给系统按数量自动排矩阵；manual = 用户显式选择了行列 */
+  layoutMode?: 'auto' | 'manual';
 }
 
 /* ============================== schema v2 ============================== */
@@ -195,6 +198,18 @@ export function layoutOptionsFor(count: number): Layout[] {
 /** 给定数量的默认矩阵：第一个（最接近方形、横屏优先）选项 */
 export function defaultLayoutFor(count: number): Layout {
   return layoutOptionsFor(count)[0] ?? { rows: 1, cols: count };
+}
+
+/**
+ * Auto Layout（蓝图 §12）：按 count 自动求近方形矩阵。
+ * cols = ceil(sqrt(count))，rows = ceil(count / cols)，保证 rows*cols >= count。
+ * 窄屏（<768px）下的列数收窄到 2 由渲染层处理，此函数始终返回桌面端矩阵。
+ */
+export function autoLayoutFor(count: number): Layout {
+  const n = Math.max(1, Math.floor(count));
+  const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+  const rows = Math.max(1, Math.ceil(n / cols));
+  return { rows, cols };
 }
 
 /** 扩展名 -> MIME 类型 */
