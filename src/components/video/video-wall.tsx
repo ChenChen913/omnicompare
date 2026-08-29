@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clapperboard,
   Expand,
+  Eye,
+  EyeOff,
+  Gauge,
   LayoutGrid,
   Library,
   Moon,
@@ -43,11 +46,16 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import {
+  AspectRatio,
   Layout,
   Manifest,
+  ManifestSettings,
   SLOT_MAX,
   Slot,
+  aspectCss,
+  aspectLabel,
   defaultLayoutFor,
+  defaultSettings,
   isContentFile,
   layoutOptionsFor,
   validateClientFile,
@@ -64,10 +72,14 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { VideoCard, VideoCardProps } from './video-card';
 
-const PREF_LOOP = 'videowall:loop';
-const PREF_MUTE = 'videowall:mute';
 /** 工作模式与侧栏开关（仅 UI 偏好，业务数据永远以服务端为准） */
 const PREF_MODE = 'omnicompare:mode';
 const PREF_SIDEBAR = 'omnicompare:sidebar';
@@ -173,8 +185,12 @@ export function VideoWall() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
+  /* 播放与展示设置（Step 7：服务端 Project.settings 为唯一事实源，蓝图 §7/§15） */
   const [loop, setLoop] = useState(true);
   const [mutedAll, setMutedAll] = useState(false);
+  const [aspect, setAspect] = useState<AspectRatio>('original');
+  const [showTitles, setShowTitles] = useState(true);
+  const [rate, setRate] = useState(1);
   const [gridDrag, setGridDrag] = useState(false);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   /** studio = 管理（全部控件 + 侧栏）；focus = 观看（极简顶栏 + 满幅网格） */
@@ -214,6 +230,16 @@ export function VideoWall() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  /** 从任意清单响应中同步播放与展示设置（缺省字段回落默认值） */
+  const applySettings = useCallback((s?: ManifestSettings) => {
+    const d = defaultSettings();
+    setAspect(s?.aspectRatio ?? d.aspectRatio);
+    setShowTitles(s?.showTitles ?? d.showTitles);
+    setLoop(s?.loop ?? d.loop);
+    setMutedAll(s?.muted ?? d.muted);
+    setRate(s?.playbackRate ?? d.playbackRate);
+  }, []);
+
   /* ---------- 初始化：拉取清单 + 恢复本地偏好 ---------- */
   useEffect(() => {
     let cancelled = false;
@@ -226,6 +252,7 @@ export function VideoWall() {
           setLayout(data.layout);
           setLayoutMode(data.layoutMode === 'auto' ? 'auto' : 'manual');
           setSlots(data.slots);
+          applySettings(data.settings);
         }
       } catch {
         if (!cancelled) toast.error('加载内容列表失败，请刷新重试');
@@ -236,7 +263,7 @@ export function VideoWall() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applySettings]);
 
   /* 窄屏检测：auto 模式下列数收窄到 2 竖向堆叠（蓝图 §12；仅影响渲染，不改存储矩阵） */
   useEffect(() => {
@@ -249,10 +276,6 @@ export function VideoWall() {
 
   useEffect(() => {
     try {
-      const savedLoop = localStorage.getItem(PREF_LOOP);
-      if (savedLoop !== null) setLoop(savedLoop === '1');
-      const savedMute = localStorage.getItem(PREF_MUTE);
-      if (savedMute !== null) setMutedAll(savedMute === '1');
       const savedMode = localStorage.getItem(PREF_MODE);
       if (savedMode === 'studio' || savedMode === 'focus') setMode(savedMode);
       const savedSidebar = localStorage.getItem(PREF_SIDEBAR);
@@ -261,18 +284,6 @@ export function VideoWall() {
       /* 忽略隐私模式下的存储错误 */
     }
   }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(PREF_LOOP, loop ? '1' : '0');
-    } catch {}
-  }, [loop]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(PREF_MUTE, mutedAll ? '1' : '0');
-    } catch {}
-  }, [mutedAll]);
 
   useEffect(() => {
     try {
@@ -310,14 +321,78 @@ export function VideoWall() {
     highlightTimer.current = setTimeout(() => setHighlight(null), 1600);
   }, []);
 
-  /* React 对 video 的 muted/loop 属性更新不可靠，直接同步到 DOM 元素 */
+  /**
+   * 全局设置更新：乐观更新 + PATCH 响应回填；失败提示不叠加（固定通道 id）。
+   * loop/muted/比例/标题显隐/播放速度全部走服务端 Project.settings（蓝图 §7/§15）。
+   */
+  const updateSettings = useCallback(
+    async (partial: Partial<ManifestSettings>) => {
+      const prev = { aspect, showTitles, loop, muted: mutedAll, playbackRate: rate };
+      // 乐观回填
+      if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
+      if (partial.showTitles !== undefined) setShowTitles(partial.showTitles);
+      if (partial.loop !== undefined) setLoop(partial.loop);
+      if (partial.muted !== undefined) setMutedAll(partial.muted);
+      if (partial.playbackRate !== undefined) setRate(partial.playbackRate);
+      try {
+        const res = await fetch('/api/videos/settings', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(partial),
+        });
+        const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
+        if (!res.ok || !data?.slots) throw new Error(data?.error || '设置保存失败');
+        applySettings(data.settings);
+      } catch {
+        // 回滚乐观更新
+        setAspect(prev.aspect);
+        setShowTitles(prev.showTitles);
+        setLoop(prev.loop);
+        setMutedAll(prev.muted);
+        setRate(prev.playbackRate);
+        toast.error('设置保存失败，请重试', { id: 'settings' });
+      }
+    },
+    [aspect, showTitles, loop, mutedAll, rate, applySettings],
+  );
+
+  /** 单卡比例覆盖：null = 恢复跟随全局（蓝图 §13）；乐观更新 + 失败回滚 */
+  const handleSlotAspect = useCallback(
+    (index: number, ar: AspectRatio | null) => {
+      const prevSlots = slots;
+      setSlots((s) => s.map((it) => (it.index === index ? { ...it, aspectRatio: ar } : it)));
+      void (async () => {
+        try {
+          const res = await fetch('/api/videos', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slot: index, aspectRatio: ar }),
+          });
+          const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
+          if (!res.ok || !data?.slots) throw new Error(data?.error || '比例保存失败');
+          setSlots(data.slots);
+        } catch {
+          setSlots(prevSlots);
+          toast.error('比例保存失败，已恢复', { id: 'aspect' });
+        }
+      })();
+    },
+    [slots],
+  );
+
+  /* React 对 video 的 muted/loop/playbackRate 属性更新不可靠，直接同步到 DOM 元素 */
   useEffect(() => {
     videoRefs.current.forEach((v) => {
       if (!v) return;
       v.loop = loop;
       v.muted = mutedAll;
+      try {
+        v.playbackRate = rate;
+      } catch {
+        /* 个别浏览器对不支持的速率会抛错，忽略 */
+      }
     });
-  }, [loop, mutedAll, slots]);
+  }, [loop, mutedAll, rate, slots]);
 
   useEffect(() => {
     const timers = titleTimers.current;
@@ -445,6 +520,7 @@ export function VideoWall() {
           setLayout(data.layout);
           setLayoutMode(data.layoutMode === 'auto' ? 'auto' : 'manual');
           setSlots(data.slots);
+          applySettings(data.settings);
         } catch {
           setSlots(prevSlots);
           toast.error('排序保存失败，已恢复原顺序', { id: 'reorder' });
@@ -831,6 +907,32 @@ export function VideoWall() {
                       ? '标注「补」的矩阵无法整除，会在末尾留出空格子。'
                       : '选择具体行列后即固定为手动模式，可随时切回自动。'}
                   </p>
+
+                  <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
+                    内容比例
+                    <span className="ml-1 font-normal text-muted-foreground/70">（卡片框，内容不裁切）</span>
+                  </p>
+                  <div className="mt-2 grid grid-cols-4 gap-1.5">
+                    {(['original', '16:9', '9:16', '1:1'] as AspectRatio[]).map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        onClick={() => void updateSettings({ aspectRatio: a })}
+                        aria-pressed={aspect === a}
+                        className={cn(
+                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                          aspect === a
+                            ? 'border-primary bg-primary/20 text-primary'
+                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
+                        )}
+                      >
+                        {aspectLabel(a)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
+                    「原始」为 16:9 容器等比容纳；竖版内容选 9:16 可减少留白，单卡可在信息行单独覆盖。
+                  </p>
                 </PopoverContent>
               </Popover>
             )}
@@ -871,6 +973,55 @@ export function VideoWall() {
                 <Volume2 className="h-4 w-4" aria-hidden />
               )}
               <span className="hidden lg:inline">{mutedAll ? '取消静音' : '静音'}</span>
+            </button>
+
+            {/* 播放速度（仅作用视频，蓝图 §9；非 1× 时高亮提示） */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    ctlBtn,
+                    rate !== 1
+                      ? 'border-primary/50 bg-primary/15 text-primary hover:bg-primary/25'
+                      : 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
+                  )}
+                  title="播放速度"
+                  aria-label={`播放速度：${rate} 倍`}
+                >
+                  <Gauge className="h-4 w-4" aria-hidden />
+                  <span className="hidden sm:inline tabular-nums">{rate}×</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[9rem] border-border bg-card">
+                {[0.5, 1, 1.25, 1.5, 2].map((r) => (
+                  <DropdownMenuItem
+                    key={r}
+                    onClick={() => void updateSettings({ playbackRate: r })}
+                    className={cn('text-[13px]', r === rate && 'font-semibold text-primary')}
+                  >
+                    {r === 1 ? '常速（1×）' : `${r}×`}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* 标题显隐（全局，蓝图 §13；观看/录屏时可隐藏全部文字信息） */}
+            <button
+              type="button"
+              aria-pressed={showTitles}
+              onClick={() => void updateSettings({ showTitles: !showTitles })}
+              className={cn(
+                ctlBtn,
+                showTitles
+                  ? 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground'
+                  : 'border-primary/50 bg-primary/15 text-primary hover:bg-primary/25',
+              )}
+              title={showTitles ? '隐藏标题与信息行' : '显示标题与信息行'}
+              aria-label={showTitles ? '隐藏标题与信息行' : '显示标题与信息行'}
+            >
+              {showTitles ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
+              <span className="hidden lg:inline">标题</span>
             </button>
 
             {mode === 'studio' && (
@@ -1145,6 +1296,9 @@ export function VideoWall() {
                     muted: mutedAll,
                     highlighted: highlight === slot.index,
                     dragActive: gridDrag,
+                    globalAspect: aspect,
+                    showTitles,
+                    onAspectOverride: handleSlotAspect,
                     onFiles: (files: File[], primary: number) => void distributeFiles(files, primary),
                     onTitleChange: handleTitleChange,
                     onClear: handleClearSlot,
@@ -1163,7 +1317,8 @@ export function VideoWall() {
                   <div
                     key={`pad-${i}`}
                     aria-hidden
-                    className="aspect-video rounded-2xl border border-dashed border-border/60 bg-muted/20"
+                    style={{ aspectRatio: aspectCss(aspect) }}
+                    className="rounded-2xl border border-dashed border-border/60 bg-muted/20"
                   />
                 ))}
               </div>
@@ -1188,7 +1343,7 @@ export function VideoWall() {
               </li>
               <li>
                 <span className="mr-1 font-semibold text-foreground/80">3.</span>
-                在内容下方填写标题或介绍，点「同时播放」一起观看视频；右上角可切换明暗与专注模式
+                在内容下方填写标题或介绍，点「同时播放」一起观看视频；「布局」里可调内容比例，顶栏可调速与显隐标题
               </li>
             </ol>
             <p className="mt-2.5 text-[11px] text-muted-foreground/60">

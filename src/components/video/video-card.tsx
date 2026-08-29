@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Code2, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Slot, formatBytes } from '@/lib/types';
+import { AspectRatio, Slot, aspectCss, aspectLabel, formatBytes } from '@/lib/types';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 export interface VideoCardProps {
   slot: Slot;
@@ -12,6 +18,12 @@ export interface VideoCardProps {
   muted: boolean;
   /** 侧栏「当前窗格列表」点击定位时的高亮态 */
   highlighted?: boolean;
+  /** 全局内容比例（蓝图 §13）；单卡覆盖由 slot.aspectRatio 表达，null = 跟随全局 */
+  globalAspect?: AspectRatio;
+  /** 全局标题显隐：false 时隐藏标题与信息行，纯内容观看（蓝图 §13） */
+  showTitles?: boolean;
+  /** 单卡比例覆盖变更（null = 恢复跟随全局）；未传则不显示覆盖控件 */
+  onAspectOverride?: (index: number, ar: AspectRatio | null) => void;
   /** 页面级拖拽导入进行中（用于在 iframe 上方临时铺一层可落放的护盾） */
   dragActive?: boolean;
   /** 拖拽排序手柄属性（dnd-kit attributes+listeners 合并后传入；
@@ -40,6 +52,9 @@ export function VideoCard({
   dragActive,
   dragHandle,
   isDragging,
+  globalAspect = 'original',
+  showTitles = true,
+  onAspectOverride,
   onFiles,
   onTitleChange,
   onClear,
@@ -108,6 +123,9 @@ export function VideoCard({
     if (files.length > 0) onFiles(files, index);
   };
 
+  // 生效比例：单卡覆盖优先，否则全局；比例只控制卡片框，内容恒 object-contain（蓝图 §13 铁律）
+  const effectiveAspect = slot.aspectRatio ?? globalAspect;
+
   const src = video
     ? `/api/files/${encodeURIComponent(video.filename)}`
     : htmlFile
@@ -149,9 +167,10 @@ export function VideoCard({
         {index + 1}
       </span>
 
-      {/* 内容区域：固定宽高比，视频 object-contain 不裁切；HTML 为沙箱 iframe */}
+      {/* 内容区域：比例只控制卡片框（行内 aspect-ratio），视频 object-contain 不裁切；HTML 为沙箱 iframe */}
       <div
-        className="relative aspect-video w-full overflow-hidden bg-black"
+        style={{ aspectRatio: aspectCss(effectiveAspect) }}
+        className="relative w-full overflow-hidden bg-black"
         onDragOver={(e) => {
           e.preventDefault();
           setDragOver(true);
@@ -267,7 +286,8 @@ export function VideoCard({
         )}
       </div>
 
-      {/* 标题 / 介绍输入区 */}
+      {/* 标题 / 介绍输入区（showTitles=false 时整体隐藏，纯内容观看/录屏） */}
+      {showTitles && (
       <div className="flex flex-1 flex-col gap-1.5 p-2.5 sm:p-3">
         <textarea
           ref={textareaRef}
@@ -304,6 +324,40 @@ export function VideoCard({
               </span>
             </span>
             <span className="flex shrink-0 items-center gap-0.5">
+              {/* 单卡比例覆盖（蓝图 §13）：跟随全局或指定框型；null = 恢复跟随 */}
+              {onAspectOverride && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      title="本卡比例（覆盖全局）"
+                      aria-label={`位置 ${index + 1} 的比例：${slot.aspectRatio ? aspectLabel(slot.aspectRatio) : '跟随全局'}`}
+                      className={cn(
+                        'rounded-md px-1.5 py-1 text-[11px] font-semibold tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                        slot.aspectRatio
+                          ? 'text-primary hover:bg-primary/10'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                      )}
+                    >
+                      {slot.aspectRatio ? aspectLabel(slot.aspectRatio) : '跟随'}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[8.5rem] border-border bg-card">
+                    {([null, '16:9', '9:16', '1:1', 'original'] as const).map((a) => (
+                      <DropdownMenuItem
+                        key={a ?? 'follow'}
+                        onClick={() => onAspectOverride(index, a)}
+                        className={cn(
+                          'text-[13px]',
+                          (slot.aspectRatio ?? null) === a && 'font-semibold text-primary',
+                        )}
+                      >
+                        {a === null ? '跟随全局' : aspectLabel(a)}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -328,6 +382,7 @@ export function VideoCard({
           </div>
         )}
       </div>
+      )}
 
       {/* 隐藏的文件选择框（按当前卡片状态收窄类型） */}
       <input

@@ -10,14 +10,18 @@
  */
 import { randomUUID } from 'crypto';
 import {
+  AspectRatio,
   ContentItem,
   ContentKind,
   DEFAULT_PROJECT_ID,
   FileMeta,
   Layout,
   Manifest,
+  ManifestSettings,
+  ProjectSettings,
   Slot,
   autoLayoutFor,
+  defaultSettings,
 } from './types';
 import {
   deleteFile,
@@ -46,12 +50,20 @@ export async function readManifest(): Promise<Manifest> {
   const project = await readProject(DEFAULT_PROJECT_ID);
   // v2 layout='auto' → 视图返回按 slotCount 计算的近方形矩阵 + layoutMode 标记；
   // 旧客户端忽略 layoutMode 字段，拿到的是仍然有效的显式矩阵（向后兼容）
+  const st = project.settings;
   return {
     count: project.slotCount,
     layout:
       project.layout === 'auto' ? autoLayoutFor(project.slotCount) : project.layout,
     layoutMode: project.layout === 'auto' ? 'auto' : 'manual',
     slots: toSlots(project),
+    settings: {
+      aspectRatio: st.aspectRatio,
+      showTitles: st.showTitles,
+      loop: st.loop,
+      muted: st.muted,
+      playbackRate: st.playbackRate,
+    },
   };
 }
 
@@ -66,6 +78,13 @@ export async function writeManifest(manifest: Manifest): Promise<void> {
   // Step 6 起 v1 视图支持 auto 模式：layoutMode='auto' 时存 'auto'，
   // 矩阵由读取方按 slotCount 现算；manual 时存显式行列（原行为）
   project.layout = manifest.layoutMode === 'auto' ? 'auto' : manifest.layout;
+  // Step 7：视图携带设置时写回（仅接受合法值，防御旧/异常客户端）
+  if (manifest.settings) {
+    project.settings = {
+      ...project.settings,
+      ...normalizeManifestSettings(manifest.settings),
+    };
+  }
 
   const now = new Date().toISOString();
   const items: ContentItem[] = [];
@@ -75,7 +94,7 @@ export async function writeManifest(manifest: Manifest): Promise<void> {
       id: existing?.id ?? randomUUID(),
       title: slot.title,
       order,
-      aspectRatio: existing?.aspectRatio ?? null,
+      aspectRatio: slot.aspectRatio !== undefined ? slot.aspectRatio ?? null : existing?.aspectRatio ?? null,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -108,6 +127,25 @@ export async function writeManifest(manifest: Manifest): Promise<void> {
   if (removed.length > 0) {
     await Promise.all(removed.map((f) => deleteFile(DEFAULT_PROJECT_ID, f)));
   }
+}
+
+/**
+ * v1 视图设置 -> ProjectSettings 字段校验：仅接受合法值，其余回落默认项目当前值。
+ * customRatio 为第二阶段 UI，v1 视图不涉及。
+ */
+function normalizeManifestSettings(s: ManifestSettings): ProjectSettings {
+  const base = defaultSettings();
+  const aspects: AspectRatio[] = ['16:9', '9:16', '1:1', 'original', 'custom'];
+  return {
+    aspectRatio: aspects.includes(s.aspectRatio) ? s.aspectRatio : base.aspectRatio,
+    showTitles: typeof s.showTitles === 'boolean' ? s.showTitles : base.showTitles,
+    loop: typeof s.loop === 'boolean' ? s.loop : base.loop,
+    muted: typeof s.muted === 'boolean' ? s.muted : base.muted,
+    playbackRate:
+      typeof s.playbackRate === 'number' && [0.5, 1, 1.25, 1.5, 2].includes(s.playbackRate)
+        ? s.playbackRate
+        : base.playbackRate,
+  };
 }
 
 /**

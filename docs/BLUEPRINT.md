@@ -195,7 +195,7 @@ MVP 阶段默认单项目 + 草稿/归档状态；多项目列表页第二阶段
 | 4 | Studio/Focus 双模式壳（左侧栏 + 顶栏改造 + 模式切换不丢状态） | 完成（含精简侧栏：项目卡/视图导航/窗格列表定位高亮；项目卡动态化随 Step 8 接活） |
 | 5 | HTML 类型：上传校验、sandbox iframe 渲染、状态机、安全响应头 | 完成（v1 门面扩展 kind/html 视图 + writeManifest 集中式孤儿清理；前端 iframe sandbox=allow-scripts + loading/ready/error 状态机（15s 超时+重试）+拖拽护盾；v1 对抗 47→71 项全绿；锁队列挂 globalThis 防 dev 模式多实例丢失） |
 | 6 | 布局升级：Auto Layout + 拖拽排序（dnd-kit） | 完成（auto/manual 双模式：auto 按数量近方阵、窄屏收窄 2 列，手动选择覆盖并记住；v1 视图透传 layoutMode 向后兼容；dnd-kit rectSortingStrategy 拖拽排序 + 位置角标兼手柄，v1/v2 reorder 端点严格排列校验；v1 对抗 71 项两轮全绿，浏览器端到端拖拽持久化与标题跟随验证通过） |
-| 7 | 比例系统 + 标题显隐 + 播放速度 | 待做 |
+| 7 | 比例系统 + 标题显隐 + 播放速度 | 完成（全局 settings API + 单卡覆盖：卡片框由行内 aspect-ratio 控制、内容恒 contain；original/custom 回落 16:9 容器；标题显隐全局开关隐藏标题与信息行；速度 0.5~2× 直写 DOM；loop/muted/速度/比例/标题显隐全部迁入服务端 Project.settings（localStorage 仅留 UI 偏好）；发现并修复 normalizeItem 读取归一化丢失 aspectRatio 的 bug；对抗 71→95 项全绿，浏览器端到端验证通过） |
 | 8 | 项目状态（草稿/归档）+ 多项目页签 + 空状态引导页（遵循 D7：简单提示，不做花哨插画） | 待做 |
 | 9 | 打磨与文档：README/PROJECT 更新、对抗测试脚本扩展 HTML/排序用例 | 待做 |
 

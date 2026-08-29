@@ -142,7 +142,13 @@ function normalizeItem(raw: unknown, order: number): ContentItem | null {
     kind,
     title: typeof r.title === 'string' ? r.title.slice(0, 100) : '',
     order,
-    aspectRatio: null,
+    // Step 7：归一化保留单卡比例覆盖（null/缺省 = 跟随全局；非法值回落 null）
+    aspectRatio:
+      r.aspectRatio === null || r.aspectRatio === undefined
+        ? null
+        : ['16:9', '9:16', '1:1', 'original', 'custom'].includes(r.aspectRatio as string)
+          ? (r.aspectRatio as ContentItem['aspectRatio'])
+          : null,
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : now,
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : now,
   };
@@ -295,9 +301,11 @@ export function toSlots(project: Project): Slot[] {
   return Array.from({ length: project.slotCount }, (_, i) => {
     const item = project.items[i];
     if (!item) return { index: i, title: '', video: null, html: null };
+    // Step 7：单卡比例覆盖随视图透传（null = 跟随全局，蓝图 §13）
+    const aspect = item.aspectRatio ?? null;
     return item.kind === 'html'
-      ? { index: i, title: item.title, video: null, kind: 'html' as const, html: item.file }
-      : { index: i, title: item.title, video: item.file, kind: 'video' as const, html: null };
+      ? { index: i, title: item.title, video: null, kind: 'html' as const, html: item.file, aspectRatio: aspect }
+      : { index: i, title: item.title, video: item.file, kind: 'video' as const, html: null, aspectRatio: aspect };
   });
 }
 

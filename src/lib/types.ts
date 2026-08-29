@@ -53,6 +53,8 @@ export interface Slot {
   kind?: ContentKind;
   /** 已放置的 HTML 文件；仅 kind='html' 时存在 */
   html?: FileMeta | null;
+  /** 单卡比例覆盖（Step 7 扩展字段，向后兼容）：null/缺省 = 跟随全局（蓝图 §13） */
+  aspectRatio?: AspectRatio | null;
 }
 
 /** 排列矩阵：rows 行 × cols 列（rows*cols >= 视频数量，多出的为留空格） */
@@ -70,6 +72,51 @@ export interface Manifest {
   /** 布局模式（Step 6 扩展字段，向后兼容：缺省视为 manual）。
    * auto = 用户交给系统按数量自动排矩阵；manual = 用户显式选择了行列 */
   layoutMode?: 'auto' | 'manual';
+  /** 项目级播放与展示设置（Step 7 扩展字段，向后兼容：缺省视为 defaultSettings()） */
+  settings?: ManifestSettings;
+}
+
+/** v1 视图的项目级设置（Blueprint §7 ProjectSettings 的 v1 平铺子集，customRatio 为第二阶段 UI） */
+export interface ManifestSettings {
+  aspectRatio: AspectRatio;
+  showTitles: boolean;
+  loop: boolean;
+  muted: boolean;
+  playbackRate: number;
+}
+
+/** 比例选项 -> CSS aspect-ratio 值；original/custom 均回落 16/9 容器 + contain（蓝图 §13） */
+export function aspectCss(a: AspectRatio | null | undefined): string {
+  switch (a) {
+    case '9:16':
+      return '9 / 16';
+    case '1:1':
+      return '1 / 1';
+    case '16:9':
+    case 'original':
+    case 'custom':
+    default:
+      return '16 / 9';
+  }
+}
+
+/** 比例选项的界面标签；null = 跟随全局 */
+export function aspectLabel(a: AspectRatio | null | undefined): string {
+  switch (a) {
+    case '16:9':
+      return '16:9';
+    case '9:16':
+      return '9:16';
+    case '1:1':
+      return '1:1';
+    case 'custom':
+      return '自定义';
+    case null:
+      return '跟随';
+    case 'original':
+    default:
+      return '原始';
+  }
 }
 
 /* ============================== schema v2 ============================== */

@@ -97,7 +97,7 @@ data/                             # 运行时数据（gitignore，不入库）
 - `items[].id`：全生命周期稳定锚点；`order` 决定矩阵位置，**恒为 0..n-1 紧凑无空洞**（任何增删后服务端重排）
 - `items[].kind`：`video | html`（MVP）；html 另有 `status` 加载状态字段；image/svg 等第二阶段预留
 - `slotCount`：可见窗格数（v1 count 的沿用，1–12）；`layout` 可为显式行列或 `"auto"`（近方形）
-- v1 兼容：`/api/videos*` 仍以 slot 位置语义工作（slot i ↔ order i），由 `video-store.ts` 门面适配；Step 5 起 slot 视图携带扩展字段 `kind`（'video' | 'html'）与 `html`（HTML 条目的文件元数据），旧客户端可安全忽略
+- v1 兼容：`/api/videos*` 仍以 slot 位置语义工作（slot i ↔ order i），由 `video-store.ts` 门面适配；Step 5 起 slot 视图携带扩展字段 `kind`（'video' | 'html'）与 `html`（HTML 条目的文件元数据）；Step 6 起清单携带 `layoutMode`（'auto' | 'manual'）；Step 7 起 slot 携带单卡比例覆盖 `aspectRatio`、清单携带 `settings`（播放与展示设置），旧客户端可安全忽略
 - 旧清单/旧文件迁移后改名为 `manifest.v1.bak.json` / `uploads.v1.bak/`，确认无误后可删除
 
 ### 4.2 并发与一致性（重要不变量）
@@ -172,10 +172,11 @@ bun run start        # NODE_ENV=production bun .next/standalone/server.js
 |---|---|---|---|
 | `GET /api/videos` | — | 完整 Manifest | — |
 | `POST /api/videos/upload` | FormData：`file`（视频 ≤200MB 或单文件 HTML ≤10MB，kind 服务端双判）、`slot`（0-based 数字字符串） | 更新后的 Manifest（slots 带扩展字段 kind/html）；被替换条目的旧文件同步删除 | 400 缺参/类型/大小/位置非法 |
-| `PATCH /api/videos` | JSON：`{ slot, title }`，标题 trim 后截断到 100 字 | 更新后的 Manifest | 400 |
+| `PATCH /api/videos` | JSON：`{ slot, title?, aspectRatio? }`（至少一项），标题 trim 后截断到 100 字；aspectRatio 为单卡比例覆盖（'16:9'/'9:16'/'1:1'/'original'/'custom' 或 null=恢复跟随全局，蓝图 §13） | 更新后的 Manifest | 400 |
 | `DELETE /api/videos?slot=i` | 删除位置 i 的视频 | 更新后的 Manifest | 400/404 |
 | `DELETE /api/videos?all=1` | 清空全部视频与标题，**保留**当前数量与矩阵 | 更新后的 Manifest | 400 |
 | `PATCH /api/videos/layout` | JSON：`{ count(1-12), rows, cols }`，须满足 `rows*cols >= count`；缩减时删除被移除区间的文件 | 更新后的 Manifest | 400 非法参数/矩阵放不下 |
+| `PATCH /api/videos/settings` | JSON：`{ aspectRatio?, showTitles?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2) }` 全部可选，仅更新提供的字段（Step 7，全局比例/标题显隐/播放设置） | 更新后的 Manifest（含 settings） | 400 |
 | `GET /api/files/[name]` | `name` 为 uuid 文件名（跨项目解析）；支持 `Range` 请求头；`.html` 强制沙箱安全响应头且禁缓存 | 200 全量 / 206 分片流 | 404（含路径穿越 `..%2F`）；非法 Range 416 |
 
 **schema v2 接口（新 UI 与二次开发使用）：**

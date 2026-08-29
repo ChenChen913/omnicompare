@@ -1,17 +1,20 @@
 /**
  * 视频墙清单 API
- * GET    /api/videos        获取清单（count / layout / slots）
- * PATCH  /api/videos        更新某位置的标题 { slot, title }
- * DELETE /api/videos?slot=n 移除某位置的视频（连同文件）
- * DELETE /api/videos?all=1  清空全部视频（保留数量与矩阵设置）
+ * GET    /api/videos        获取清单（count / layout / slots / settings）
+ * PATCH  /api/videos        更新某位置 { slot, title?, aspectRatio? }（至少一项；
+ *                           aspectRatio 为单卡比例覆盖，null = 恢复跟随全局，蓝图 §13）
+ * DELETE /api/videos?slot=n 移除某位置的内容（连同文件）
+ * DELETE /api/videos?all=1  清空全部内容（保留数量与矩阵设置）
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { readManifest, writeManifest, deleteVideoFile, withManifestLock } from '@/lib/video-store';
-import { TITLE_MAX } from '@/lib/types';
+import { AspectRatio, TITLE_MAX } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
+
+const ASPECTS: AspectRatio[] = ['16:9', '9:16', '1:1', 'original', 'custom'];
 
 function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400, headers: noStore });
@@ -24,11 +27,30 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { slot?: unknown; title?: unknown }
+    | { slot?: unknown; title?: unknown; aspectRatio?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
+  if (body.title === undefined && body.aspectRatio === undefined) {
+    return badRequest('至少提供 title 或 aspectRatio 之一');
+  }
+
+  // 单卡比例覆盖：null = 恢复跟随全局；否则必须为合法比例选项
+  let aspect: AspectRatio | null | undefined;
+  if (body.aspectRatio !== undefined) {
+    if (body.aspectRatio === null) {
+      aspect = null;
+    } else if (
+      typeof body.aspectRatio === 'string' &&
+      ASPECTS.includes(body.aspectRatio as AspectRatio)
+    ) {
+      aspect = body.aspectRatio as AspectRatio;
+    } else {
+      return badRequest('比例取值需为 16:9 / 9:16 / 1:1 / original / custom 或 null');
+    }
+  }
+
   const title = body.title;
-  if (typeof title !== 'string') return badRequest('标题格式错误');
+  if (title !== undefined && typeof title !== 'string') return badRequest('标题格式错误');
 
   return withManifestLock(async () => {
     const manifest = await readManifest();
@@ -42,7 +64,12 @@ export async function PATCH(req: NextRequest) {
       return badRequest('无效的视频位置');
     }
 
-    manifest.slots[slot].title = title.trim().slice(0, TITLE_MAX);
+    if (typeof title === 'string') {
+      manifest.slots[slot].title = title.trim().slice(0, TITLE_MAX);
+    }
+    if (aspect !== undefined) {
+      manifest.slots[slot].aspectRatio = aspect;
+    }
     await writeManifest(manifest);
     // 重读返回：写入层会做紧凑序重排（v2 不变量），保证客户端视图与存储一致
     return NextResponse.json(await readManifest(), { headers: noStore });

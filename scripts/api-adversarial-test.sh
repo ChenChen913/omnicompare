@@ -16,6 +16,10 @@ echo "== 1. 清单读取 =="
 R=$(curl -s "$BASE/api/videos")
 check "GET /api/videos 返回 count/layout/slots" "$(expect_json_field "$R" '.count and .layout and (.slots|type=="array")'; echo $?)"
 
+# 起始清理：保证测试可重复（不依赖运行前状态；缩容删除语义会清掉越位内容）
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+curl -s -X PATCH "$BASE/api/videos/layout" -H 'Content-Type: application/json' -d '{"count":6,"rows":1,"cols":6}' >/dev/null
+
 echo "== 2. 布局 API 非法参数 =="
 for body in '{"count":0,"rows":1,"cols":1}' '{"count":13,"rows":3,"cols":4}' '{"count":6,"rows":0,"cols":3}' '{"count":6,"rows":2,"cols":2}' '{"count":6,"rows":2.5,"cols":3}' '{"count":"6","rows":2,"cols":3}' '{"rows":2,"cols":3}' '{}' 'not-json'; do
   CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/api/videos/layout" -H 'Content-Type: application/json' -d "$body")
@@ -197,6 +201,50 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" 
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/tmp/adv-test-page.html;type=text/html" -F "slot=99")
 [ "$CODE" = "400" ]; check "HTML 上传到越界槽位 -> 400" $?
 
+
+echo "== 15. 全局设置 API（Step 7，蓝图 §7/§9/§13）=="
+# 非法值对抗
+for body in '{"aspectRatio":"4:3"}' '{"playbackRate":1.3}' '{"playbackRate":"2"}' '{"showTitles":"yes"}' '{"loop":1}' '{}' 'not-json' '{"aspectRatio":null}'; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/api/videos/settings" -H 'Content-Type: application/json' -d "$body")
+  [ "$CODE" = "400" ]; check "非法设置参数 -> 400: $body" $?
+done
+# 合法更新：比例 + 速度 + 标题显隐 + loop/muted
+R=$(curl -s -X PATCH "$BASE/api/videos/settings" -H 'Content-Type: application/json' -d '{"aspectRatio":"9:16","playbackRate":1.5,"showTitles":false,"loop":true,"muted":false}')
+check "合法设置更新 -> settings 全字段生效" "$(expect_json_field "$R" '.settings.aspectRatio=="9:16" and .settings.playbackRate==1.5 and .settings.showTitles==false and .settings.loop==true and .settings.muted==false'; echo $?)"
+# 持久化：重读清单仍在
+R=$(curl -s "$BASE/api/videos")
+check "设置已持久化（GET 回读一致）" "$(expect_json_field "$R" '.settings.aspectRatio=="9:16" and .settings.playbackRate==1.5'; echo $?)"
+# 部分更新：仅改一个字段，其余保留
+R=$(curl -s -X PATCH "$BASE/api/videos/settings" -H 'Content-Type: application/json' -d '{"aspectRatio":"1:1"}')
+check "部分更新只改目标字段（9:16→1:1，速度仍 1.5）" "$(expect_json_field "$R" '.settings.aspectRatio=="1:1" and .settings.playbackRate==1.5'; echo $?)"
+# v2 端点一致性：v1 设置写入对 v2 视图可见
+check "v1 设置与 v2 Project.settings 一致" "$(curl -s "$BASE/api/projects/default" | jq -e '.settings.aspectRatio=="1:1" and .settings.playbackRate==1.5' >/dev/null 2>&1; echo $?)"
+
+echo "== 16. 单卡比例覆盖（Step 7，蓝图 §13）=="
+# 先放一个视频
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v01-landscape.mp4" -F "slot=0")
+check "上传视频到槽 0（覆盖前置条件）" "$(expect_json_field "$R" '.slots[0].video != null'; echo $?)"
+# 非法值对抗
+for body in '{"slot":0,"aspectRatio":"4:3"}' '{"slot":0,"aspectRatio":123}' '{"slot":99,"aspectRatio":"1:1"}' '{"slot":0}' '{}'; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/api/videos" -H 'Content-Type: application/json' -d "$body")
+  [ "$CODE" = "400" ]; check "非法单卡比例 -> 400: $body" $?
+done
+# 合法覆盖 + 回读
+R=$(curl -s -X PATCH "$BASE/api/videos" -H 'Content-Type: application/json' -d '{"slot":0,"aspectRatio":"1:1"}')
+check "单卡覆盖 1:1 -> 视图透传" "$(expect_json_field "$R" '.slots[0].aspectRatio=="1:1"'; echo $?)"
+check "单卡覆盖已落库（GET 回读）" "$(curl -s "$BASE/api/videos" | jq -e '.slots[0].aspectRatio=="1:1"' >/dev/null 2>&1; echo $?)"
+# 标题与比例可同请求更新
+R=$(curl -s -X PATCH "$BASE/api/videos" -H 'Content-Type: application/json' -d '{"slot":0,"title":"对比项A","aspectRatio":"9:16"}')
+check "标题+比例同请求更新" "$(expect_json_field "$R" '.slots[0].title=="对比项A" and .slots[0].aspectRatio=="9:16"'; echo $?)"
+# null = 恢复跟随全局
+R=$(curl -s -X PATCH "$BASE/api/videos" -H 'Content-Type: application/json' -d '{"slot":0,"aspectRatio":null}')
+check "覆盖置 null -> 恢复跟随全局" "$(expect_json_field "$R" '.slots[0].aspectRatio==null'; echo $?)"
+# v2 一致性：单卡覆盖落在 items[0].aspectRatio
+check "单卡覆盖与 v2 items.aspectRatio 一致" "$(curl -s "$BASE/api/projects/default/items" | jq -e '.[0].aspectRatio==null' >/dev/null 2>&1; echo $?)"
+# 清理：移除测试视频 + 设置复位
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+R=$(curl -s -X PATCH "$BASE/api/videos/settings" -H 'Content-Type: application/json' -d '{"aspectRatio":"original","showTitles":true,"loop":true,"muted":true,"playbackRate":1}')
+check "测试后设置复位（original/1×/显示标题）" "$(expect_json_field "$R" '.settings.aspectRatio=="original" and .settings.playbackRate==1 and .settings.showTitles==true'; echo $?)"
 
 echo ""
 echo "========== 汇总 =========="
