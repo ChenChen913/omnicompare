@@ -1,6 +1,6 @@
 # OmniCompare（灵动对比）项目详解
 
-> 本文档面向**后续接手开发的工程师与 AI 编码助手**，目标是让任何人和任何 AI 在 10 分钟内完整理解本项目的结构、运行方式与全部约束。快速上手请看 [README.md](./README.md)（中文）或 [README_EN.md](./README_EN.md)（English）。产品演进蓝图与已确认决策见 [docs/BLUEPRINT.md](./docs/BLUEPRINT.md)。
+> 本文档面向**后续接手开发的工程师与 AI 编码助手**，目标是让任何人和任何 AI 在 10 分钟内完整理解本项目的结构、运行方式与全部约束。快速上手请看 [README.md](./README.md)（中文）或 [README_EN.md](./README_EN.md)（English）。产品演进蓝图与已确认决策见 [docs/BLUEPRINT.md](./docs/BLUEPRINT.md)，后期方向与任务规划见 [ROADMAP.md](./ROADMAP.md)。
 
 ---
 

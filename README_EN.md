@@ -4,6 +4,8 @@
 
 A multi-content parallel comparison workspace (AI output comparison tool) built with Next.js: put the outputs of different models / tools for the same task — videos, images, and HTML pages — side by side in one matrix for visual comparison and evaluation. The project evolved from "Video Wall", inheriting its server-side persistence, matrix layout, and batch playback capabilities, and has grown into a multi-content workspace. All data is persisted on the server and survives page refreshes and device changes.
 
+> For future directions and the task plan, see [ROADMAP.md](./ROADMAP.md) (all planned items, priorities, and acceptance criteria); for the product blueprint and confirmed decisions, see [docs/BLUEPRINT.md](./docs/BLUEPRINT.md).
+
 ## Features
 
 - **Multiple content types**: videos (MP4 / MOV / WebM and other common formats), images (PNG / JPG / GIF / WebP / SVG / BMP / AVIF), and HTML pages side by side in one matrix; HTML accepts either a single file (≤10MB) or a zip page bundle (≤50MB, for pages relying on sibling assets), running immediately after upload.
