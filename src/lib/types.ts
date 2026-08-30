@@ -115,6 +115,8 @@ export interface ManifestSettings {
   loop: boolean;
   muted: boolean;
   playbackRate: number;
+  /** 留白填充（第二阶段 Step C）：base = 底色吸收；blur = 模糊背景填充（仅视频/图片，HTML 豁免） */
+  letterboxFill: 'base' | 'blur';
 }
 
 /** 比例选项 -> CSS aspect-ratio 值；original/custom 均回落 16/9 容器 + contain（蓝图 §13） */
@@ -198,6 +200,8 @@ export interface ProjectSettings {
   loop: boolean;
   muted: boolean;
   playbackRate: number;
+  /** 留白填充（第二阶段 Step C）：base = 底色吸收（默认）；blur = 同内容模糊放大铺底 */
+  letterboxFill: 'base' | 'blur';
 }
 
 /** 项目（schema v2 顶层）：items 顺序即矩阵填充顺序 */
@@ -225,6 +229,7 @@ export function defaultSettings(): ProjectSettings {
     loop: false,
     muted: true,
     playbackRate: 1,
+    letterboxFill: 'base',
   };
 }
 

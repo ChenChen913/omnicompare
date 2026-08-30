@@ -64,6 +64,7 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       loop: st.loop,
       muted: st.muted,
       playbackRate: st.playbackRate,
+      letterboxFill: st.letterboxFill,
     },
   };
 }
@@ -153,6 +154,7 @@ function normalizeManifestSettings(s: ManifestSettings): ProjectSettings {
       typeof s.playbackRate === 'number' && [0.5, 1, 1.25, 1.5, 2].includes(s.playbackRate)
         ? s.playbackRate
         : base.playbackRate,
+    letterboxFill: s.letterboxFill === 'blur' ? 'blur' : 'base',
   };
 }
 

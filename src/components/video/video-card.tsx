@@ -24,6 +24,8 @@ export interface VideoCardProps {
   showTitles?: boolean;
   /** 全局属性信息显隐：false 时隐藏标题下方信息行（文件名/大小/比例/操作） */
   showInfo?: boolean;
+  /** 留白填充模式（Step C）：base = 底色吸收；blur = 同内容模糊放大铺底（仅视频/图片，HTML 豁免） */
+  letterboxFill?: 'base' | 'blur';
   /** 「刷新全部页面」信号（纯 HTML 项目顶栏主动作）：数值变化时重载本卡 iframe；0 = 从未触发 */
   refreshSignal?: number;
   /** 单卡比例覆盖变更（null = 恢复跟随全局）；未传则不显示覆盖控件 */
@@ -59,6 +61,7 @@ export function VideoCard({
   globalAspect = 'original',
   showTitles = true,
   showInfo = true,
+  letterboxFill = 'base',
   refreshSignal = 0,
   onAspectOverride,
   onFiles,
@@ -78,6 +81,29 @@ export function VideoCard({
   const [prevImageName, setPrevImageName] = useState(imageFile?.filename);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** 主视频本地引用（父级 setVideoRef 之外的副本，用于同步模糊背景层，Step C） */
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const bgVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  /** 把主视频的播放态镜像到模糊背景层（播放/暂停/拖动/倍速/换源）；失败静默 */
+  const syncBgFromMain = useCallback(() => {
+    const main = localVideoRef.current;
+    const bg = bgVideoRef.current;
+    if (!main || !bg) return;
+    try {
+      bg.playbackRate = main.playbackRate;
+      if (Math.abs(bg.currentTime - main.currentTime) > 0.35) {
+        bg.currentTime = main.currentTime;
+      }
+      if (main.paused) {
+        bg.pause();
+      } else {
+        void bg.play().catch(() => {});
+      }
+    } catch {
+      /* 元数据未就绪时设置 currentTime 会拑错，忽略 */
+    }
+  }, []);
 
   /* ---------- HTML 状态机：loading → ready（onload）/ error（onerror 或 15s 超时） ---------- */
   const [htmlStatus, setHtmlStatus] = useState<HtmlStatus>('loading');
@@ -219,8 +245,27 @@ export function VideoCard({
       >
         {video ? (
           <>
+            {/* 模糊背景填充（Step C，letterboxFill='blur' 时）：同源视频镜像副本，
+                object-cover 放大铺满 + 模糊，播放态由主视频事件驱动同步；
+                静音常开、无控件、pointer-events-none，纯装饰层 */}
+            {letterboxFill === 'blur' && (
+              <video
+                ref={bgVideoRef}
+                src={src}
+                aria-hidden
+                tabIndex={-1}
+                muted
+                loop
+                playsInline
+                preload="auto"
+                className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-125 object-cover blur-2xl"
+              />
+            )}
             <video
-              ref={(el) => setVideoRef(index, el)}
+              ref={(el) => {
+                localVideoRef.current = el;
+                setVideoRef(index, el);
+              }}
               src={src}
               controls
               playsInline
@@ -228,7 +273,12 @@ export function VideoCard({
               loop={loop}
               muted={muted}
               onError={() => setVideoError(true)}
-              className="h-full w-full object-contain"
+              onPlay={syncBgFromMain}
+              onPause={syncBgFromMain}
+              onSeeked={syncBgFromMain}
+              onRateChange={syncBgFromMain}
+              onLoadedMetadata={syncBgFromMain}
+              className="relative z-10 h-full w-full object-contain"
               aria-label={`位置 ${index + 1} 的视频：${title || video.originalName}`}
             />
             {videoError && (
@@ -292,6 +342,15 @@ export function VideoCard({
           </>
         ) : imageFile ? (
           <>
+            {/* 模糊背景填充（Step C）：同图放大铺满 + 模糊，静态零成本 */}
+            {letterboxFill === 'blur' && (
+              <img
+                src={src}
+                alt=""
+                aria-hidden
+                className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-125 object-cover blur-2xl"
+              />
+            )}
             {/* 图片渲染：object-contain 不裁切（蓝图 §13 铁律）；以 <img> 渲染 SVG，
                 脚本天然不执行，服务端另有 CSP sandbox 兜底 */}
             <img
@@ -299,7 +358,7 @@ export function VideoCard({
               alt={`位置 ${index + 1} 的图片：${title || imageFile.originalName}`}
               loading="lazy"
               onError={() => setImageError(true)}
-              className="h-full w-full object-contain"
+              className="relative z-10 h-full w-full object-contain"
             />
             {imageError && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-black/85 px-4 text-center">

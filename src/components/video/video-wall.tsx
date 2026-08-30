@@ -226,6 +226,8 @@ export function VideoWall() {
   const [showTitles, setShowTitles] = useState(true);
   const [showInfo, setShowInfo] = useState(true);
   const [rate, setRate] = useState(1);
+  /** 留白填充（Step C）：base = 底色吸收；blur = 模糊背景填充（仅视频/图片生效） */
+  const [letterboxFill, setLetterboxFill] = useState<'base' | 'blur'>('base');
   const [gridDrag, setGridDrag] = useState(false);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   /** studio = 管理（全部控件 + 侧栏）；focus = 观看（极简顶栏 + 满幅网格） */
@@ -264,6 +266,8 @@ export function VideoWall() {
   const hasVideo = slots.some((s) => !!s.video);
   /** 当前项目是否含 HTML 页面：纯 HTML 项目用「刷新全部页面」替代播放组（内容打开即自动运行） */
   const hasHtml = slots.some((s) => s.kind === 'html' && !!s.html);
+  /** 当前项目是否含图片：模糊填充仅对视频/图片生效（Step C） */
+  const hasImage = slots.some((s) => s.kind === 'image' && !!s.image);
   const currentProject = projects.find((p) => p.id === projectId) ?? null;
   const projectName =
     currentProject?.name ?? (projectId === DEFAULT_PROJECT_ID ? '默认项目' : '加载中…');
@@ -301,6 +305,7 @@ export function VideoWall() {
     setLoop(s?.loop ?? d.loop);
     setMutedAll(s?.muted ?? d.muted);
     setRate(s?.playbackRate ?? d.playbackRate);
+    setLetterboxFill(s?.letterboxFill ?? d.letterboxFill);
   }, []);
 
   /* ---------- 初始化：拉取清单 + 恢复本地偏好 ---------- */
@@ -529,7 +534,15 @@ export function VideoWall() {
    */
   const updateSettings = useCallback(
     async (partial: Partial<ManifestSettings>) => {
-      const prev = { aspect, showTitles, showInfo, loop, muted: mutedAll, playbackRate: rate };
+      const prev = {
+        aspect,
+        showTitles,
+        showInfo,
+        loop,
+        muted: mutedAll,
+        playbackRate: rate,
+        letterboxFill,
+      };
       // 乐观回填
       if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
       if (partial.showTitles !== undefined) setShowTitles(partial.showTitles);
@@ -537,6 +550,7 @@ export function VideoWall() {
       if (partial.loop !== undefined) setLoop(partial.loop);
       if (partial.muted !== undefined) setMutedAll(partial.muted);
       if (partial.playbackRate !== undefined) setRate(partial.playbackRate);
+      if (partial.letterboxFill !== undefined) setLetterboxFill(partial.letterboxFill);
       try {
         const res = await fetch(withPid('/api/videos/settings'), {
           method: 'PATCH',
@@ -554,10 +568,11 @@ export function VideoWall() {
         setLoop(prev.loop);
         setMutedAll(prev.muted);
         setRate(prev.playbackRate);
+        setLetterboxFill(prev.letterboxFill);
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, showTitles, showInfo, loop, mutedAll, rate, applySettings, withPid],
+    [aspect, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, applySettings, withPid],
   );
 
   /** 单卡比例覆盖：null = 恢复跟随全局（蓝图 §13）；乐观更新 + 失败回滚 */
@@ -1320,9 +1335,17 @@ export function VideoWall() {
                 >
                   显示属性信息
                 </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={letterboxFill === 'blur'}
+                  onCheckedChange={(v) => void updateSettings({ letterboxFill: v ? 'blur' : 'base' })}
+                  disabled={!hasVideo && !hasImage}
+                  className="text-[13px]"
+                >
+                  模糊填充留白
+                </DropdownMenuCheckboxItem>
                 {!hasVideo && (
                   <p className="px-2 pb-1.5 pt-1.5 text-[10px] leading-relaxed text-muted-foreground/60">
-                    循环、静音与播放速度仅对视频生效；当前项目没有视频，HTML 页面打开即自动运行。
+                    循环、静音与播放速度仅对视频生效；模糊填充仅对视频与图片生效，HTML 页面不受影响。
                   </p>
                 )}
               </DropdownMenuContent>
@@ -1776,6 +1799,7 @@ export function VideoWall() {
                     globalAspect: aspect,
                     showTitles,
                     showInfo,
+                    letterboxFill,
                     refreshSignal: htmlRefreshTick,
                     onAspectOverride: handleSlotAspect,
                     onFiles: (files: File[], primary: number) => void distributeFiles(files, primary),

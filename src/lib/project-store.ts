@@ -199,6 +199,8 @@ function normalizeSettings(raw: unknown): ProjectSettings {
     playbackRate: [0.5, 1, 1.25, 1.5, 2].includes(Number(r.playbackRate))
       ? Number(r.playbackRate)
       : base.playbackRate,
+    // Step C：留白填充模式（非法值回落底色）
+    letterboxFill: r.letterboxFill === 'blur' ? 'blur' : 'base',
   };
 }
 

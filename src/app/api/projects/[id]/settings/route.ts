@@ -76,6 +76,12 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       }
       s.playbackRate = body.playbackRate;
     }
+    if (body.letterboxFill !== undefined) {
+      if (body.letterboxFill !== 'base' && body.letterboxFill !== 'blur') {
+        return NextResponse.json({ error: '留白填充需为 base / blur' }, { status: 400, headers: noStore });
+      }
+      s.letterboxFill = body.letterboxFill;
+    }
 
     project.updatedAt = new Date().toISOString();
     await writeProject(project);

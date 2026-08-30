@@ -24,7 +24,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown }
+    | { aspectRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -56,6 +56,12 @@ export async function PATCH(req: NextRequest) {
       return badRequest('播放速度需为 0.5 / 1 / 1.25 / 1.5 / 2');
     }
     patch.playbackRate = body.playbackRate;
+  }
+  if (body.letterboxFill !== undefined) {
+    if (body.letterboxFill !== 'base' && body.letterboxFill !== 'blur') {
+      return badRequest('留白填充需为 base / blur');
+    }
+    patch.letterboxFill = body.letterboxFill;
   }
   if (Object.keys(patch).length === 0) {
     return badRequest('至少提供一个待更新字段');
