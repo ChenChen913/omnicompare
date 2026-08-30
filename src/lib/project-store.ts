@@ -11,7 +11,10 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { unzipSync } from 'fflate';
 import {
+  BUNDLE_ASSET_EXTS,
+  BUNDLE_ENTRY,
   ContentItem,
   ContentKind,
   DEFAULT_PROJECT_ID,
@@ -19,6 +22,9 @@ import {
   HTML_EXTS,
   IMAGE_EXTS,
   Layout,
+  MAX_BUNDLE_FILES,
+  MAX_BUNDLE_SIZE,
+  MAX_BUNDLE_UNCOMPRESSED,
   MAX_FILE_SIZE,
   MAX_HTML_SIZE,
   MAX_IMAGE_SIZE,
@@ -157,7 +163,8 @@ function normalizeItem(raw: unknown, order: number): ContentItem | null {
   };
   if (kind === 'html') {
     const status = r.status === 'loading' || r.status === 'error' ? r.status : 'ready';
-    return { ...base, kind, file, status };
+    // Step B：归一化保留 zip 包标志（仅接受布尔 true，其余视为缺省单文件）
+    return r.bundle === true ? { ...base, kind, file, status, bundle: true } : { ...base, kind, file, status };
   }
   if (kind === 'image') {
     return { ...base, kind, file };
@@ -321,7 +328,16 @@ export function toSlots(project: Project): Slot[] {
     // Step 7：单卡比例覆盖随视图透传（null = 跟随全局，蓝图 §13）
     const aspect = item.aspectRatio ?? null;
     if (item.kind === 'html') {
-      return { index: i, title: item.title, video: null, kind: 'html' as const, html: item.file, image: null, aspectRatio: aspect };
+      return {
+        index: i,
+        title: item.title,
+        video: null,
+        kind: 'html' as const,
+        html: item.file,
+        image: null,
+        ...(item.bundle ? { bundle: true as const } : {}),
+        aspectRatio: aspect,
+      };
     }
     if (item.kind === 'image') {
       return { index: i, title: item.title, video: null, kind: 'image' as const, html: null, image: item.file, aspectRatio: aspect };
@@ -332,12 +348,12 @@ export function toSlots(project: Project): Slot[] {
 
 /* ============================== 文件服务 ============================== */
 
-/** 服务端校验上传文件，返回错误信息（null 表示通过）；kind 由 MIME + 扩展名双判（video / html / image） */
+/** 服务端校验上传文件，返回错误信息（null 表示通过）；kind 由 MIME + 扩展名双判（video / html / image；zip 为 bundle 型 html） */
 export function validateUploadFile(
   name: string,
   mimeType: string,
   size: number,
-): { kind: ContentKind } | { error: string } {
+): { kind: ContentKind; bundle?: boolean } | { error: string } {
   if (size === 0) return { error: '文件内容为空' };
   const ext = path.extname(name).toLowerCase();
   const isHtml = (HTML_EXTS as readonly string[]).includes(ext);
@@ -345,6 +361,12 @@ export function validateUploadFile(
     if (size > MAX_HTML_SIZE) return { error: 'HTML 文件超过 10MB 大小限制' };
     if (!isHtml) return { error: '仅支持 .html / .htm 文件' };
     return { kind: 'html' };
+  }
+  // zip 资源包（Step B）：多文件 HTML 页面，解压后以目录形式存放，经 /api/bundles/ 服务
+  if (ext === '.zip' || mimeType === 'application/zip' || mimeType === 'application/x-zip-compressed') {
+    if (size > MAX_BUNDLE_SIZE) return { error: 'zip 包超过 50MB 大小限制' };
+    if (ext !== '.zip') return { error: '仅支持 .zip 资源包' };
+    return { kind: 'html', bundle: true };
   }
   // 图片（第二阶段 Step A）：扩展名白名单或 image/* MIME 双判；SVG 同样接受（服务层 CSP 沙箱）
   const isImageExt = (IMAGE_EXTS as readonly string[]).includes(ext);
@@ -382,10 +404,111 @@ export async function saveFile(projectId: string, file: File, kind: ContentKind)
   };
 }
 
-/** 删除项目内文件（忽略不存在的情况） */
+/* ============================== zip 资源包（Step B） ============================== */
+
+/**
+ * 归一化 zip 内部路径，非法时返回 null（zip-slip 防护）：
+ * - 反斜杠统一为正斜杠；拒绝绝对路径、盘符、空字节、.. 段
+ * - 去掉空段与 ./ 段，返回包内相对路径
+ */
+function sanitizeZipEntryPath(rawPath: string): string | null {
+  if (rawPath.includes('\0')) return null;
+  const normalized = rawPath.replace(/\\/g, '/');
+  if (/^[A-Za-z]:/.test(normalized)) return null; // Windows 盘符
+  if (normalized.startsWith('/')) return null; // 绝对路径
+  const segments: string[] = [];
+  for (const seg of normalized.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') return null; // 路径穿越
+    segments.push(seg);
+  }
+  if (segments.length === 0) return null;
+  return segments.join('/');
+}
+
+/**
+ * 保存 zip 资源包：解压校验后落盘到 files/[uuid].html/ 目录（目录名即 file.filename）。
+ * 安全部暑：路径归一化 + 扩展名白名单 + 文件数/解压总大小限额（防 zip 炸弹）。
+ * 返回 FileMeta（filename = 包目录名，size/mimeType 为 zip 本身的）。
+ */
+export async function saveBundle(projectId: string, file: File): Promise<FileMeta> {
+  const filesDir = projectFilesDir(projectId);
+  await fsp.mkdir(filesDir, { recursive: true });
+  const filename = `${randomUUID()}.html`;
+  const bundleDir = path.join(filesDir, filename);
+
+  const zipBuffer = Buffer.from(await file.arrayBuffer());
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(new Uint8Array(zipBuffer));
+  } catch {
+    throw new Error('无法解析 zip 包，文件可能已损坏');
+  }
+
+  // 第一遍：路径归一化 + 白名单 + 限额校验（全部通过才开始落盘，失败不留半包）
+  const cleaned: { relPath: string; data: Uint8Array }[] = [];
+  let totalUncompressed = 0;
+  for (const [rawPath, data] of Object.entries(entries)) {
+    if (rawPath.endsWith('/')) continue; // 目录条目：写文件时按需建目录
+    const relPath = sanitizeZipEntryPath(rawPath);
+    if (!relPath) throw new Error(`zip 包内含不安全的路径：${rawPath}`);
+    const ext = path.extname(relPath).toLowerCase();
+    if (!(BUNDLE_ASSET_EXTS as readonly string[]).includes(ext)) {
+      throw new Error(`zip 包内含不支持的文件类型：${rawPath}`);
+    }
+    totalUncompressed += data.length;
+    if (totalUncompressed > MAX_BUNDLE_UNCOMPRESSED) {
+      throw new Error('zip 包解压后超过 120MB 总大小限制');
+    }
+    cleaned.push({ relPath, data });
+  }
+  if (cleaned.length === 0) throw new Error('zip 包为空');
+  if (cleaned.length > MAX_BUNDLE_FILES) {
+    throw new Error(`zip 包内文件数超过 ${MAX_BUNDLE_FILES} 个限制`);
+  }
+  if (!cleaned.some((c) => c.relPath === BUNDLE_ENTRY)) {
+    throw new Error(`zip 包根目录缺少 ${BUNDLE_ENTRY} 入口文件`);
+  }
+
+  // 第二遍：落盘（路径已归一化，不会越出包目录）
+  await fsp.mkdir(bundleDir, { recursive: true });
+  for (const { relPath, data } of cleaned) {
+    const target = path.join(bundleDir, relPath);
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, data);
+  }
+
+  return {
+    filename,
+    originalName: sanitizeOriginalName(file.name),
+    size: file.size,
+    mimeType: 'application/zip',
+  };
+}
+
+/**
+ * 跨项目解析 zip 包目录（包目录名 = file.filename = [uuid].html）：
+ * 返回包目录绝对路径；不存在或非目录返回 null。
+ */
+export async function resolveBundleDir(name: string): Promise<string | null> {
+  if (!isSafeFilename(name) || !name.endsWith('.html')) return null;
+  const ids = await listProjectIds();
+  for (const id of ids) {
+    const p = path.join(projectFilesDir(id), name);
+    try {
+      const st = await fsp.stat(p);
+      if (st.isDirectory()) return p;
+    } catch {
+      /* 继续查找下一个位置 */
+    }
+  }
+  return null;
+}
+
+/** 删除项目内文件或包目录（忽略不存在的情况；recursive 兼容 Step B 包目录） */
 export async function deleteFile(projectId: string, filename: string): Promise<void> {
   if (!isSafeFilename(filename)) return;
-  await fsp.rm(path.join(projectFilesDir(projectId), filename), { force: true });
+  await fsp.rm(path.join(projectFilesDir(projectId), filename), { force: true, recursive: true });
 }
 
 export interface ResolvedFile {

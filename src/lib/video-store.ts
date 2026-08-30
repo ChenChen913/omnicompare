@@ -100,12 +100,15 @@ export async function writeManifest(manifest: Manifest, projectId: string = DEFA
       updatedAt: now,
     };
     if (slot.kind === 'html' && slot.html) {
-      // HTML 条目：保留原有加载状态（status 由客户端渲染时本地流转）
+      // HTML 条目：保留原有加载状态（status 由客户端渲染时本地流转）；
+      // Step B：bundle 标志优先取视图，缺失时沿用已有条目的标志（防旧客户端丢失标志导致包目录失联）
+      const bundle = slot.bundle === true || (existing && existing.kind === 'html' && existing.bundle === true);
       items.push({
         ...base,
         kind: 'html',
         file: slot.html,
         status: existing && existing.kind === 'html' ? existing.status : 'ready',
+        ...(bundle ? { bundle: true } : {}),
       });
     } else if (slot.kind === 'image' && slot.image) {
       // 图片条目（第二阶段 Step A）：与视频同为静态文件，无播放语义

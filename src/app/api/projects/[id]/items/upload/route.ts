@@ -10,6 +10,7 @@ import {
   ensureDefaultProject,
   isValidId,
   readProject,
+  saveBundle,
   saveFile,
   validateUploadFile,
   withProjectLock,
@@ -59,7 +60,14 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     const project = await readProject(id);
     const insertAt = hasOrder ? Math.min(Math.max(order, 0), project.items.length) : project.items.length;
 
-    const meta = await saveFile(id, file, checked.kind);
+    // zip 资源包（Step B）：解压校验 + 落盘在保存阶段完成，失败即整体拒绝
+    let meta;
+    try {
+      meta = checked.bundle ? await saveBundle(id, file) : await saveFile(id, file, checked.kind);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'zip 包保存失败';
+      return NextResponse.json({ error: message }, { status: 400, headers: noStore });
+    }
     const now = new Date().toISOString();
     const base = {
       id: randomUUID(),
@@ -71,7 +79,13 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     } as const;
     const item: ContentItem =
       checked.kind === 'html'
-        ? { ...base, kind: 'html', file: meta, status: 'ready' }
+        ? {
+            ...base,
+            kind: 'html',
+            file: meta,
+            status: 'ready',
+            ...(checked.bundle ? { bundle: true as const } : {}),
+          }
         : checked.kind === 'image'
           ? { ...base, kind: 'image', file: meta }
           : { ...base, kind: 'video', file: meta };

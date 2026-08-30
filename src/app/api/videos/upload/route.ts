@@ -1,9 +1,10 @@
 /**
- * 内容上传 API（视频或单文件 HTML；Step 8 起支持 ?project= 多项目）
+ * 内容上传 API（视频、图片、单文件 HTML 或 zip 资源包；Step 8 起支持 ?project= 多项目）
  * POST /api/videos/upload[?project=id]  multipart: file=内容文件, slot=位置序号
- * kind 由服务端按 MIME + 扩展名双判（video / html，HTML 限 ≤10MB）；成功后返回最新清单
+ * kind 由服务端按 MIME + 扩展名双判（video / html / image；zip 解压为 bundle 型 html）；成功后返回最新清单
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { saveBundle } from '@/lib/project-store';
 import {
   readManifest,
   writeManifest,
@@ -57,7 +58,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '无效的内容位置' }, { status: 400, headers: noStore });
     }
 
-    const meta = await saveContentFile(file, checked.kind, p.id);
+    // zip 资源包（Step B）：解压校验 + 落盘在保存阶段完成，失败即整体拒绝
+    let meta;
+    try {
+      meta = checked.bundle
+        ? await saveBundle(p.id, file)
+        : await saveContentFile(file, checked.kind, p.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'zip 包保存失败';
+      return NextResponse.json({ error: message }, { status: 400, headers: noStore });
+    }
     const target = manifest.slots[slot];
     target.video = null;
     target.html = null;
@@ -65,6 +75,8 @@ export async function POST(req: NextRequest) {
     if (checked.kind === 'html') {
       target.kind = 'html';
       target.html = meta;
+      if (checked.bundle) target.bundle = true;
+      else delete target.bundle;
     } else if (checked.kind === 'image') {
       target.kind = 'image';
       target.image = meta;

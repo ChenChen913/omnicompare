@@ -24,6 +24,27 @@ export const MAX_IMAGE_SIZE = 20 * 1024 * 1024;
 /** 允许的图片扩展名（SVG 以 <img> 渲染 + 服务端 CSP 沙箱双保险，脚本不执行） */
 export const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif'] as const;
 
+/** zip 资源包大小上限（50MB，第二阶段 Step B：多文件 HTML 页面） */
+export const MAX_BUNDLE_SIZE = 50 * 1024 * 1024;
+
+/** zip 包解压后总大小上限（120MB，防 zip 炸弹） */
+export const MAX_BUNDLE_UNCOMPRESSED = 120 * 1024 * 1024;
+
+/** zip 包内文件数上限 */
+export const MAX_BUNDLE_FILES = 300;
+
+/** zip 包入口文件（必须存在于包根目录） */
+export const BUNDLE_ENTRY = 'index.html';
+
+/** zip 包内允许的资源扩展名（web 资产白名单，其余一律拒收） */
+export const BUNDLE_ASSET_EXTS = [
+  '.html', '.htm', '.css', '.js', '.mjs', '.json', '.txt',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif', '.ico',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.mp3', '.wav', '.ogg', '.mp4', '.webm',
+  '.wasm',
+] as const;
+
 /** 标题最大长度 */
 export const TITLE_MAX = 100;
 
@@ -59,6 +80,8 @@ export interface Slot {
   kind?: ContentKind;
   /** 已放置的 HTML 文件；仅 kind='html' 时存在 */
   html?: FileMeta | null;
+  /** HTML 是否为 zip 资源包（Step B）；仅 kind='html' 时存在 */
+  bundle?: boolean;
   /** 已放置的图片文件；仅 kind='image' 时存在（第二阶段 Step A） */
   image?: FileMeta | null;
   /** 单卡比例覆盖（Step 7 扩展字段，向后兼容）：null/缺省 = 跟随全局（蓝图 §13） */
@@ -152,6 +175,9 @@ export interface HtmlAsset {
   file: FileMeta;
   /** 加载状态：服务端落库即 ready，客户端渲染时按 iframe 事件本地流转 */
   status: 'loading' | 'ready' | 'error';
+  /** zip 资源包条目（第二阶段 Step B）：file.filename 同时是 files/ 下的目录名，
+   * 页面经 /api/bundles/[filename]/index.html 服务；缺省 = 单文件 HTML */
+  bundle?: boolean;
 }
 
 export interface ImageAsset {
@@ -339,9 +365,14 @@ export function isImageFile(name: string, mimeType?: string): boolean {
   return (IMAGE_EXTS as readonly string[]).includes(`.${m[1].toLowerCase()}`);
 }
 
-/** 判断是否为可导入的内容文件（视频、单文件 HTML 或图片） */
+/** 判断是否为可导入的内容文件（视频、单文件 HTML、图片或 zip 资源包） */
 export function isContentFile(name: string, mimeType: string): boolean {
-  return isVideoFile(name, mimeType) || isHtmlFile(name) || isImageFile(name, mimeType);
+  return isVideoFile(name, mimeType) || isHtmlFile(name) || isImageFile(name, mimeType) || isZipFile(name);
+}
+
+/** 判断是否为 zip 资源包（多文件 HTML 页面，Step B） */
+export function isZipFile(name: string): boolean {
+  return /\.zip$/i.test(name);
 }
 
 /**
@@ -352,6 +383,10 @@ export function validateClientFile(file: { name: string; type: string; size: num
   if (file.size === 0) return '文件内容为空';
   if (isHtmlFile(file.name)) {
     if (file.size > MAX_HTML_SIZE) return 'HTML 文件超过 10MB 大小限制';
+    return null;
+  }
+  if (isZipFile(file.name)) {
+    if (file.size > MAX_BUNDLE_SIZE) return 'zip 包超过 50MB 大小限制';
     return null;
   }
   if (isImageFile(file.name, file.type)) {

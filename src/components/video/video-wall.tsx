@@ -1754,7 +1754,7 @@ export function VideoWall() {
               选择文件导入
             </button>
             <p className="text-[11px] text-muted-foreground/60">
-              支持视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）与单文件 HTML；内容超过内容位数量时会自动扩位
+              支持视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）、单文件 HTML 与 zip 页面包（含 index.html）；内容超过内容位数量时会自动扩位
             </p>
           </div>
         ) : (
@@ -1897,8 +1897,8 @@ export function VideoWall() {
             <li>
               <strong className="font-semibold text-foreground/90">导入内容：</strong>
               点击空位或把文件拖进页面即可上传，支持
-              <strong className="font-semibold text-foreground/90">视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）与单文件 HTML</strong>
-              ，HTML 页面导入后自动运行
+              <strong className="font-semibold text-foreground/90">视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）、单文件 HTML 与 zip 页面包</strong>
+              ，HTML 页面导入后自动运行；依赖同目录资源的页面请打成 zip 包导入
             </li>
             <li>
               <strong className="font-semibold text-foreground/90">播放与展示：</strong>
@@ -1943,7 +1943,7 @@ export function VideoWall() {
       <input
         ref={importInputRef}
         type="file"
-        accept="video/mp4,video/*,.html,.htm,image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp,image/avif"
+        accept="video/mp4,video/*,.html,.htm,.zip,image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp,image/avif"
         multiple
         className="hidden"
         onChange={(e) => {

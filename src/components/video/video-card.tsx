@@ -151,24 +151,32 @@ export function VideoCard({
   // 生效比例：单卡覆盖优先，否则全局；比例只控制卡片框，内容恒 object-contain（蓝图 §13 铁律）
   const effectiveAspect = slot.aspectRatio ?? globalAspect;
 
+  const isBundle = isHtml && slot.bundle === true;
+  const htmlSrc = htmlFile
+    ? isBundle
+      ? `/api/bundles/${encodeURIComponent(htmlFile.filename)}/index.html`
+      : `/api/files/${encodeURIComponent(htmlFile.filename)}`
+    : undefined;
   const src = video
     ? `/api/files/${encodeURIComponent(video.filename)}`
-    : htmlFile
-      ? `/api/files/${encodeURIComponent(htmlFile.filename)}`
-      : imageFile
-        ? `/api/files/${encodeURIComponent(imageFile.filename)}`
-        : undefined;
+    : isBundle
+      ? htmlSrc
+      : htmlFile
+        ? `/api/files/${encodeURIComponent(htmlFile.filename)}`
+        : imageFile
+          ? `/api/files/${encodeURIComponent(imageFile.filename)}`
+          : undefined;
   const displayName = video?.originalName ?? htmlFile?.originalName ?? imageFile?.originalName ?? '';
   const displaySize = video?.size ?? htmlFile?.size ?? imageFile?.size ?? 0;
 
   // 文件选择框按当前卡片状态收窄类型：空位全类型都收，已放置按类型收
   const accept = isHtml
-    ? '.html,.htm,text/html'
+    ? '.html,.htm,text/html,.zip,application/zip'
     : isImage
       ? 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp,image/avif'
       : video
         ? 'video/mp4,video/*'
-        : 'video/mp4,video/*,.html,.htm,image/png,image/jpeg,image/gif,image/webp,image/svg+xml';
+        : 'video/mp4,video/*,.html,.htm,.zip,image/png,image/jpeg,image/gif,image/webp,image/svg+xml';
 
   return (
     <article
@@ -322,7 +330,7 @@ export function VideoCard({
         {isHtml && (
           <span className="absolute left-2.5 top-2.5 z-10 ml-9 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm">
             <Code2 className="h-3 w-3" aria-hidden />
-            HTML
+            {isBundle ? 'HTML 包' : 'HTML'}
           </span>
         )}
         {isImage && (
