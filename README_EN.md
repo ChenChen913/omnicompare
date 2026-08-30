@@ -2,19 +2,19 @@
 
 **English** | [简体中文](./README.md)
 
-A multi-content parallel comparison workspace (AI output comparison tool) built with Next.js: put the outputs of different models / tools for the same task — videos and HTML pages — side by side in one matrix for visual comparison and evaluation. The project evolved from "Video Wall", inheriting its server-side persistence, matrix layout, and batch playback capabilities, and has grown into a multi-content workspace. All data is persisted on the server and survives page refreshes and device changes.
+A multi-content parallel comparison workspace (AI output comparison tool) built with Next.js: put the outputs of different models / tools for the same task — videos, images, and HTML pages — side by side in one matrix for visual comparison and evaluation. The project evolved from "Video Wall", inheriting its server-side persistence, matrix layout, and batch playback capabilities, and has grown into a multi-content workspace. All data is persisted on the server and survives page refreshes and device changes.
 
 ## Features
 
-- **Two content types**: videos (MP4 / MOV / WebM and other common formats) and single-file self-contained HTML pages side by side in one matrix; HTML runs immediately after upload.
+- **Multiple content types**: videos (MP4 / MOV / WebM and other common formats), images (PNG / JPG / GIF / WebP / SVG / BMP / AVIF), and HTML pages side by side in one matrix; HTML accepts either a single file (≤10MB) or a zip page bundle (≤50MB, for pages relying on sibling assets), running immediately after upload.
 - **Flexible matrix**: 1–12 content slots with any row × column combination; slots expand automatically when files outnumber them, and a single item fills the screen.
-- **Multi-project management**: projects are fully isolated, grouped as active / draft / archived, with rename, status changes, and deletion supported.
+- **Multi-project management & library**: projects are fully isolated, grouped as active / draft / archived, with rename, status changes, and deletion supported; the "Library" view shows all projects — click a card to switch.
 - **Multiple import paths**: click an empty slot, drag files onto the page, or multi-select import.
-- **Adaptive top bar**: video projects get playback controls (loop / mute / speed); pure-HTML projects switch to "Refresh all"; card ratio (original / 16:9 / 9:16 / 1:1) and title / info visibility are one click away.
+- **Adaptive top bar**: video projects get playback controls (loop / mute / speed); pure-HTML projects switch to "Refresh all"; card ratio (original / 16:9 / 9:16 / 1:1), title / info visibility, and blurred letterbox fill are one click away.
 - **Per-item titles**: each item has a title box (typically the model name) that saves with a debounce and survives refreshes.
 - **Modes & themes**: toggle Studio / Focus modes (Focus leaves only the content matrix, ideal for demos and screen recording) and dark / light themes.
-- **Sandboxed HTML**: double isolation via the iframe `sandbox` attribute and server-side security headers, so pages from any model can be displayed safely.
-- **Server-side persistence**: content and settings are stored per project on the server and sync across devices; video streaming supports HTTP Range requests.
+- **Sandboxed rendering**: HTML pages (including zip bundles) and SVGs are doubly isolated via iframe / CSP headers, so pages from any model can be displayed safely; SVGs render as images and embedded scripts never execute.
+- **Server-side persistence**: content and settings are stored per project on the server and sync across devices; video streaming supports HTTP Range requests; optional blurred background fills the letterbox bars (videos / images).
 
 ## Getting started
 
@@ -51,10 +51,9 @@ Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · shadcn/u
 ## Notes
 
 - The project ships with **no authentication**. Any visitor can upload and delete content. When deploying to the public internet, configure access control (Basic Auth, IP allowlists, etc.) at your reverse proxy.
-- Upload limits: videos up to 200 MB each (MP4 / MOV / WebM and other common formats); HTML must be a single self-contained file up to 10 MB; up to 12 content slots.
-- HTML pages must be **single-file self-contained** (inlined CSS/JS); pages depending on sibling local CSS / JS / image files are not supported yet, while external CDN resources load fine.
+- Upload limits: videos up to 200 MB each (MP4 / MOV / WebM and other common formats); HTML up to 10 MB as a single file, or zip page bundles up to 50 MB (≤120 MB uncompressed, ≤300 files, must contain a root-level `index.html`; use relative paths inside the page); images up to 20 MB (PNG / JPG / GIF / WebP / SVG / BMP / AVIF); up to 12 content slots.
+- HTML pages are best kept **single-file self-contained** (inlined CSS/JS); pages depending on sibling CSS / JS / image files should be imported as a zip bundle (entry point: root-level `index.html`), while external CDN resources always load fine.
 - All runtime data lives in the `data/` directory (gitignored). Copying that directory constitutes a complete backup.
-- `prisma/` and `.env` are scaffolding leftovers; this project does not use a database and they can be safely ignored.
 
 ## Documentation
 

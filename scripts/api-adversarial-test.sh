@@ -364,6 +364,124 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/api/videos/reorder
 # 清理：恢复测试前的空状态（演示数据由 restore-demo-state.py 统一恢复）
 curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
 
+# ==============================================================
+# §20 图片专项（第二阶段 Step A：kind=image 全链路）
+# ==============================================================
+IMGDIR=$(mktemp -d)
+python3 - "$IMGDIR" <<'PYEOF'
+import struct, zlib, sys, os
+d = sys.argv[1]
+def chunk(t, b):
+    c = t + b
+    return struct.pack('>I', len(b)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+ihdr = struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0)
+open(os.path.join(d, 't.png'), 'wb').write(
+    b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr)
+    + chunk(b'IDAT', zlib.compress(b'\x00\xff\x00\x00')) + chunk(b'IEND', b''))
+open(os.path.join(d, 't.svg'), 'wb').write(
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/><script>alert(1)</script></svg>')
+open(os.path.join(d, 'bad.txt'), 'wb').write(b'not an image')
+os.system(f"dd if=/dev/urandom of={d}/big.png bs=1M count=21 2>/dev/null")
+PYEOF
+
+# 图片上传：kind=image + image 元数据
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@$IMGDIR/t.png;type=image/png" -F "slot=0")
+check "§20 PNG 上传 -> kind=image" "$(echo "$R" | jq -e '.slots[0].kind=="image" and (.slots[0].image.filename | length > 0)' >/dev/null 2>&1; echo $?)"
+# SVG 上传：image/svg+xml MIME 双判
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@$IMGDIR/t.svg;type=image/svg+xml" -F "slot=1")
+check "§20 SVG 上传 -> kind=image（svg+xml）" "$(echo "$R" | jq -e '.slots[1].kind=="image" and .slots[1].image.mimeType=="image/svg+xml"' >/dev/null 2>&1; echo $?)"
+# 非图片扩展拒绝
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@$IMGDIR/bad.txt" -F "slot=2")
+[ "$CODE" = "400" ]; check "§20 非图片扩展 .txt -> 400" $?
+# 超大图片拒绝（21MB > 20MB）
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@$IMGDIR/big.png;type=image/png" -F "slot=2")
+[ "$CODE" = "400" ]; check "§20 超大图片 21MB -> 400" $?
+# 响应头：PNG 走图片类型 + 不可变缓存
+PNG_NAME=$(curl -s "$BASE/api/videos" | jq -r '.slots[0].image.filename')
+H=$(curl -sI "$BASE/api/files/$PNG_NAME")
+check "§20 PNG 服务 image/png + immutable" "$(echo "$H" | grep -qi '^content-type: image/png' && echo "$H" | grep -qi 'immutable'; echo $?)"
+# 响应头：SVG 走 CSP 沙箱（与 HTML 同级，脚本不执行）
+SVG_NAME=$(curl -s "$BASE/api/videos" | jq -r '.slots[1].image.filename')
+H=$(curl -sI "$BASE/api/files/$SVG_NAME")
+check "§20 SVG 服务 CSP sandbox + no-store" "$(echo "$H" | grep -qi 'content-security-policy: sandbox' && echo "$H" | grep -qi 'no-store'; echo $?)"
+# 原位替换：图换图旧文件清理（磁盘文件数不变）
+BEFORE_N=$(ls "$FILES_DIR" | wc -l)
+curl -s -X POST "$BASE/api/videos/upload" -F "file=@$IMGDIR/t.png;type=image/png" -F "slot=0" >/dev/null
+AFTER_N=$(ls "$FILES_DIR" | wc -l)
+[ "$BEFORE_N" = "$AFTER_N" ]; check "§20 图换图原位替换旧文件清理（$BEFORE_N->$AFTER_N）" $?
+# v2 端点图片上传：kind=image 且 order 紧凑
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+R=$(curl -s -X POST "$BASE/api/projects/default/items/upload" -F "file=@$IMGDIR/t.png;type=image/png" -F "title=验收图")
+check "§20 v2 上传图片 kind=image" "$(echo "$R" | jq -e '.item.kind=="image" and .item.title=="验收图"' >/dev/null 2>&1; echo $?)"
+# v1 清空 all=1 后磁盘无图片孤儿
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+[ -z "$(ls "$FILES_DIR" 2>/dev/null)" ]; check "§20 清空后磁盘无孤儿文件" $?
+
+# ==============================================================
+# §21 zip 资源包专项（第二阶段 Step B：多文件 HTML 页面）
+# ==============================================================
+ZIPDIR=$(mktemp -d)
+python3 - "$ZIPDIR" <<'PYEOF'
+import zipfile, sys, os
+d = sys.argv[1]
+with zipfile.ZipFile(os.path.join(d, 'good.zip'), 'w') as z:
+    z.writestr('index.html', '<html><head><link rel="stylesheet" href="assets/style.css"></head><body><h1 id="t">bundle ok</h1><script src="assets/app.js"></script></body></html>')
+    z.writestr('assets/style.css', 'body{background:#123}')
+    z.writestr('assets/app.js', 'document.getElementById("t").textContent += " - js ran";')
+    z.writestr('sub/deep/note.txt', 'deep file')
+with zipfile.ZipFile(os.path.join(d, 'noentry.zip'), 'w') as z:
+    z.writestr('main.html', '<html></html>')
+with zipfile.ZipFile(os.path.join(d, 'slip.zip'), 'w') as z:
+    z.writestr('index.html', '<html></html>')
+    z.writestr('../evil.txt', 'pwned')
+with zipfile.ZipFile(os.path.join(d, 'badext.zip'), 'w') as z:
+    z.writestr('index.html', '<html></html>')
+    z.writestr('run.sh', 'echo hi')
+PYEOF
+
+# 正常包上传：kind=html + bundle=true
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@$ZIPDIR/good.zip;type=application/zip" -F "slot=0")
+check "§21 zip 上传 -> kind=html + bundle=true" "$(echo "$R" | jq -e '.slots[0].kind=="html" and .slots[0].bundle==true and (.slots[0].html.filename | endswith(".html"))' >/dev/null 2>&1; echo $?)"
+BUNDLE=$(echo "$R" | jq -r '.slots[0].html.filename')
+# 缺 index.html 入口
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@$ZIPDIR/noentry.zip;type=application/zip" -F "slot=1")
+[ "$CODE" = "400" ]; check "§21 缺 index.html 入口 -> 400" $?
+# zip-slip 路径穿越条目
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@$ZIPDIR/slip.zip;type=application/zip" -F "slot=1")
+[ "$CODE" = "400" ]; check "§21 zip-slip(..) 条目 -> 400" $?
+# 白名单外扩展
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@$ZIPDIR/badext.zip;type=application/zip" -F "slot=1")
+[ "$CODE" = "400" ]; check "§21 白名单外扩展 .sh -> 400" $?
+# 入口页服务：CSP 沙箱
+H=$(curl -sI "$BASE/api/bundles/$BUNDLE/index.html")
+check "§21 入口页 200 + CSP sandbox" "$(echo "$H" | grep -q '^HTTP/1.1 200' && echo "$H" | grep -qi 'content-security-policy: sandbox'; echo $?)"
+# 缺省路径 = 入口
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/bundles/$BUNDLE")
+[ "$CODE" = "200" ]; check "§21 缺省路径命中入口 index.html" $?
+# 子目录资产（含深层嵌套）
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/bundles/$BUNDLE/assets/style.css"); [ "$CODE" = "200" ]; check "§21 子目录资产 css 200" $?
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/bundles/$BUNDLE/sub/deep/note.txt"); [ "$CODE" = "200" ]; check "§21 深层嵌套资产 200" $?
+# 包内路径穿越拒绝
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/bundles/$BUNDLE/../../../etc/passwd")
+[ "$CODE" = "404" ]; check "§21 包内路径穿越 -> 404" $?
+# /api/files/ 不服务包目录（目录不作为文件）
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/files/$BUNDLE")
+[ "$CODE" = "404" ]; check "§21 /api/files/ 对包目录 404" $?
+# v1 写路径往返保留 bundle 标志
+R=$(curl -s -X PATCH "$BASE/api/videos" -H 'Content-Type: application/json' -d '{"slot":0,"title":"打包页"}')
+check "§21 PATCH 标题后 bundle 标志保留" "$(echo "$R" | jq -e '.slots[0].bundle==true and .slots[0].title=="打包页"' >/dev/null 2>&1; echo $?)"
+# v2 上传 zip -> bundle 标志
+R=$(curl -s -X POST "$BASE/api/projects/default/items/upload" -F "file=@$ZIPDIR/good.zip;type=application/zip" -F "title=v2包")
+check "§21 v2 上传 zip bundle=true" "$(echo "$R" | jq -e '.item.bundle==true and .item.kind=="html"' >/dev/null 2>&1; echo $?)"
+V2BUNDLE=$(echo "$R" | jq -r '.item.file.filename')
+# 替换 zip -> 图片：包目录整体清理（断言被替换的包目录已从磁盘消失）
+curl -s -X POST "$BASE/api/videos/upload" -F "file=@$IMGDIR/t.png;type=image/png" -F "slot=1" >/dev/null
+[ ! -d "$FILES_DIR/$V2BUNDLE" ]; check "§21 替换包->图 被替换包目录已清理（$V2BUNDLE）" $?
+# 清理：清空 + 移除临时目录
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+[ -z "$(ls "$FILES_DIR" 2>/dev/null)" ]; check "§21 清空后磁盘无孤儿（含包目录）" $?
+rm -rf "$IMGDIR" "$ZIPDIR"
+
 echo ""
 echo "========== 汇总 =========="
 echo "通过: $PASS  失败: $FAIL"

@@ -207,13 +207,14 @@ DEST=/var/backups bash scripts/backup-data.sh
 | 方法与路径 | 参数 | 成功返回 | 失败 |
 |---|---|---|---|
 | `GET /api/videos` | — | 完整 Manifest | — |
-| `POST /api/videos/upload` | FormData：`file`（视频 ≤200MB 或单文件 HTML ≤10MB，kind 服务端双判）、`slot`（0-based 数字字符串） | 更新后的 Manifest（slots 带扩展字段 kind/html）；被替换条目的旧文件同步删除 | 400 缺参/类型/大小/位置非法 |
+| `POST /api/videos/upload` | FormData：`file`（视频 ≤200MB / 单文件 HTML ≤10MB / 图片 ≤20MB（PNG/JPG/GIF/WebP/SVG/BMP/AVIF）/ zip 包 ≤50MB，kind 服务端双判；zip 解压为 bundle 型 HTML 条目）、`slot`（0-based 数字字符串） | 更新后的 Manifest（slots 带扩展字段 kind/html/image/bundle）；被替换条目的旧文件/旧包目录同步删除 | 400 缺参/类型/大小/位置非法/包校验失败 |
 | `PATCH /api/videos` | JSON：`{ slot, title?, aspectRatio? }`（至少一项），标题 trim 后截断到 100 字；aspectRatio 为单卡比例覆盖（'16:9'/'9:16'/'1:1'/'original'/'custom' 或 null=恢复跟随全局，蓝图 §13） | 更新后的 Manifest | 400 |
 | `DELETE /api/videos?slot=i` | 删除位置 i 的视频 | 更新后的 Manifest | 400/404 |
 | `DELETE /api/videos?all=1` | 清空全部视频与标题，**保留**当前数量与矩阵 | 更新后的 Manifest | 400 |
 | `PATCH /api/videos/layout` | JSON：`{ count(1-12), rows, cols }`，须满足 `rows*cols >= count`；缩减时删除被移除区间的文件 | 更新后的 Manifest | 400 非法参数/矩阵放不下 |
-| `PATCH /api/videos/settings` | JSON：`{ aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2) }` 全部可选，仅更新提供的字段（Step 7，全局比例/标题与属性显隐/播放设置） | 更新后的 Manifest（含 settings） | 400 |
-| `GET /api/files/[name]` | `name` 为 uuid 文件名（跨项目解析）；支持 `Range` 请求头；`.html` 强制沙箱安全响应头且禁缓存 | 200 全量 / 206 分片流 | 404（含路径穿越 `..%2F`）；非法 Range 416 |
+| `PATCH /api/videos/settings` | JSON：`{ aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2), letterboxFill?(base/blur) }` 全部可选，仅更新提供的字段（Step 7，全局比例/标题与属性显隐/播放设置；Step C 留白填充） | 更新后的 Manifest（含 settings） | 400 |
+| `GET /api/files/[name]` | `name` 为 uuid 文件名（跨项目解析）；支持 `Range` 请求头；`.html`/`.svg` 强制沙箱安全响应头且禁缓存 | 200 全量 / 206 分片流 | 404（含路径穿越 `..%2F`）；非法 Range 416 |
+| `GET /api/bundles/[name]/[...path]` | zip 包内静态资产：`name` = 包目录名（[uuid].html），`path` = 包内相对路径，缺省 = `index.html`；包内 html 条目同样强制 CSP 沙箱 | 200 资产流 | 400/404（含穿越） |
 
 **schema v2 接口（新 UI 与二次开发使用）：**
 
@@ -225,11 +226,11 @@ DEST=/var/backups bash scripts/backup-data.sh
 | `PATCH /api/projects/[id]` | JSON：`{ name?, status? }`，status ∈ active/draft/archived | 更新后的项目 | 400 |
 | `DELETE /api/projects/[id]` | — | `{ ok: true }`；默认项目受保护 | 403 删默认项目 |
 | `GET /api/projects/[id]/items` | — | 条目数组（order 紧凑） | 400 |
-| `POST /api/projects/[id]/items/upload` | FormData：`file`（视频 ≤200MB 或单文件 HTML ≤10MB，kind 服务端判定）、`order?`（插入位置，缺省追加）、`title?` | 201 + `{ item, items }` | 400 类型/大小/缺参 |
+| `POST /api/projects/[id]/items/upload` | FormData：`file`（视频 ≤200MB / HTML ≤10MB / 图片 ≤20MB / zip ≤50MB，kind 服务端判定）、`order?`（插入位置，缺省追加）、`title?` | 201 + `{ item, items }` | 400 类型/大小/缺参/包校验失败 |
 | `PATCH /api/projects/[id]/items/[itemId]` | JSON：`{ title?, aspectRatio?(枚举或 null), order? }` | `{ item, items }` | 400/404 |
 | `DELETE /api/projects/[id]/items/[itemId]` | — | `{ items }`（其余条目紧凑重排，文件同步删除） | 404 |
 | `PATCH /api/projects/[id]/layout` | JSON：`{ mode: 'auto' }` 或 `{ rows, cols }`（容量 ≥ max(slotCount, 条目数)） | 更新后的项目 | 400 |
-| `PATCH /api/projects/[id]/settings` | JSON：`{ aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2) }` | 更新后的项目 | 400 |
+| `PATCH /api/projects/[id]/settings` | JSON：`{ aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2), letterboxFill?(base/blur) }` | 更新后的项目 | 400 |
 
 ## 8. 数据持久化与备份
 
@@ -243,24 +244,24 @@ DEST=/var/backups bash scripts/backup-data.sh
 # 1) 生成测试视频（需 ffmpeg，任意几个几秒的小视频即可）
 mkdir -p scripts/test-videos
 ffmpeg -y -f lavfi -i testsrc2=size=640x360:rate=24:duration=3 -pix_fmt yuv420p scripts/test-videos/v01.mp4
-# …按需生成更多不同分辨率/时长的视频
+# …按需生成更多不同分辨率/时长的视频（v01~v12，可用 scripts/gen-test-videos.sh）
 
-# 2) 启动开发服务器后运行对抗测试（需 curl + jq）
-bash scripts/api-adversarial-test.sh   # v1 兼容层 47 项
+# 2) 启动开发服务器后运行对抗测试（需 curl + jq + python3）
+bash scripts/api-adversarial-test.sh   # v1 兼容层 160 项（含 §20 图片/§21 zip 包专项）
 bash scripts/api-v2-smoke-test.sh      # v2 API 38 项（会在 default 外新建临时项目并自动清理）
 ```
 
-测试覆盖：v1 清单结构、布局非法参数 9 组、标题非法 7 组 + 截断、上传对抗 6 组、替换删旧文件、3 路并发一致性、缩减删文件、Range 206/416、路径穿越防护、清空无残留；v2 项目 CRUD、双类型上传与 kind 判别、HTML 安全响应头（CSP sandbox/nosniff/no-store）、条目排序/删除紧凑重排、布局 auto/显式、设置逐字段校验、默认项目删除保护。每项二元判定（通过/失败），末尾汇总。
+测试覆盖：v1 清单结构、布局非法参数 9 组、标题非法 7 组 + 截断、上传对抗 6 组、替换删旧文件、3 路并发一致性、缩减删文件、Range 206/416、路径穿越防护、清空无残留、排序专项（§19）；图片专项（§20）：kind 判别/SVG MIME/超大与非法类型拒收/服务响应头（immutable 与 CSP 沙箱）/替换清理；zip 包专项（§21）：bundle 标志/缺入口/zip-slip/白名单外扩展拒收/入口与深层资产服务/包内穿越 404/标志往返/包目录清理；v2 项目 CRUD、多类型上传与 kind 判别、HTML 安全响应头（CSP sandbox/nosniff/no-store）、条目排序/删除紧凑重排、布局 auto/显式、设置逐字段校验（含 letterboxFill）、默认项目删除保护。每项二元判定（通过/失败），末尾汇总。
 
 ## 10. 注意事项与已知限制
 
 1. **无鉴权，勿裸奔公网**：所有 API 没有任何认证，任何人可上传/删除。公网部署请务必在反向代理层加 Basic Auth、IP 白名单或改造成登录制
 2. **互斥锁仅单进程有效**：`withManifestLock` 是进程内 Promise 队列。多实例/多机部署会破坏一致性，需改为文件锁、Redis 锁或数据库
 3. **浏览器自动播放策略**：非静音的自动播放会被拦截，因此默认静音；起播动作都在用户点击之后发生
-4. **200MB / 12 位上限**：`MAX_FILE_SIZE` 与 `SLOT_MAX` 定义在 `src/lib/types.ts`，调整后前后端自动生效；更多位数在大屏下才有意义，移动端建议 ≤ 8
+4. **200MB / 12 位上限**：`MAX_FILE_SIZE`、`MAX_IMAGE_SIZE`(20MB)、`MAX_BUNDLE_SIZE`(50MB) 与 `SLOT_MAX` 定义在 `src/lib/types.ts`，调整后前后端自动生效；更多位数在大屏下才有意义，移动端建议 ≤ 8
 5. **上传未做秒传/断点续传**：FormData 整包上传，超大视频受服务器 body 限制约束（Next 默认无限制，反代可能有限制，如 nginx `client_max_body_size`）
 6. **标题 100 字**：前后端双重限制，超出截断
-7. **prisma / .env 为脚手架残留**：可安全忽略或删除，不影响运行
+7. **zip 包约束**：须含根级 `index.html`；资产扩展名白名单（web 常用格式，见 `BUNDLE_ASSET_EXTS`）；解压后总量 ≤120MB、文件数 ≤300；页面内引用请用相对路径（绝对路径 `/x` 会落到主站而非包内）
 8. **测试资产不入库**：`scripts/test-videos/`、`scripts/shots/` 已 gitignore，需要时按第 9 节自行生成
 
 ## 11. 给 AI 编码助手的快速上下文
