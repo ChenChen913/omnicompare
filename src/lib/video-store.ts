@@ -107,7 +107,10 @@ export async function writeManifest(manifest: Manifest, projectId: string = DEFA
         file: slot.html,
         status: existing && existing.kind === 'html' ? existing.status : 'ready',
       });
-    } else if (slot.video) {
+    } else if (slot.kind === 'image' && slot.image) {
+      // 图片条目（第二阶段 Step A）：与视频同为静态文件，无播放语义
+      items.push({ ...base, kind: 'image', file: slot.image });
+    } else if (slot.video && slot.kind !== 'html') {
       items.push({ ...base, kind: 'video', file: slot.video });
     }
     // 其余（video 与 html 均为空）= 空位：不生成条目，紧凑序由下方重排保证
@@ -165,6 +168,7 @@ export function applyCountAndLayout(
     const old = manifest.slots[i];
     if (old?.video) removedFilenames.push(old.video.filename);
     else if (old?.html) removedFilenames.push(old.html.filename);
+    else if (old?.image) removedFilenames.push(old.image.filename);
   }
   while (nextSlots.length < count) {
     nextSlots.push({ index: nextSlots.length, title: '', video: null, html: null });

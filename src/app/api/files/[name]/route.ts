@@ -66,22 +66,28 @@ export async function GET(
   }
   const size = stat.size;
 
-  // HTML：一律走沙箱安全响应头（即使嵌入 iframe 也维持最小权限），且禁止缓存
-  const htmlHeaders: Record<string, string> = resolved.isHtml
+  // HTML / SVG：一律走沙箱安全响应头（即使嵌入 iframe/img 也维持最小权限），且禁止缓存。
+  // SVG 可内嵌脚本，直接在主域打开会执行；CSP sandbox 使其降级为不透明源、脚本不运行
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+  const isSvg = ext === '.svg';
+  const sandboxed = resolved.isHtml || isSvg;
+  const sandboxHeaders: Record<string, string> = sandboxed
     ? {
-        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Type': isSvg ? 'image/svg+xml' : 'text/html; charset=utf-8',
         'Content-Security-Policy': 'sandbox allow-scripts',
-        'Content-Disposition': 'inline; filename="sandbox.html"',
+        'Content-Disposition': `inline; filename="${isSvg ? 'sandbox.svg' : 'sandbox.html'}"`,
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'no-store',
       }
     : {};
 
   const baseHeaders: Record<string, string> = {
-    ...htmlHeaders,
-    'Content-Type': resolved.isHtml ? 'text/html; charset=utf-8' : mimeFromExt(name),
+    ...sandboxHeaders,
+    'Content-Type': sandboxed
+      ? sandboxHeaders['Content-Type']
+      : mimeFromExt(name),
     'Accept-Ranges': 'bytes',
-    ...(resolved.isHtml ? {} : { 'Cache-Control': 'public, max-age=31536000, immutable' }),
+    ...(sandboxed ? {} : { 'Cache-Control': 'public, max-age=31536000, immutable' }),
   };
 
   const rangeHeader = _req.headers.get('range');

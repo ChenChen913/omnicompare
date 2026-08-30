@@ -13,6 +13,7 @@ import {
   Film,
   FolderPlus,
   Gauge,
+  Image as ImageIcon,
   LayoutGrid,
   Library,
   Moon,
@@ -116,7 +117,7 @@ function defaultSlots(): Slot[] {
 
 /** 拖拽排序的稳定 id：文件名全局唯一（uuid + 扩展名），与 React key 同源；空位不参与排序 */
 function sortableIdOf(slot: Slot): string {
-  return slot.video?.filename ?? slot.html?.filename ?? `empty-${slot.index}`;
+  return slot.video?.filename ?? slot.html?.filename ?? slot.image?.filename ?? `empty-${slot.index}`;
 }
 
 /**
@@ -258,7 +259,7 @@ export function VideoWall() {
   }, []);
 
   const busy = importing || Object.values(uploading).some(Boolean);
-  const filledCount = slots.filter((s) => s.video || s.html).length;
+  const filledCount = slots.filter((s) => s.video || s.html || s.image).length;
   /** 当前项目是否含视频：纯 HTML 项目没有「播放」语义，播放类控件随之隐藏/禁用 */
   const hasVideo = slots.some((s) => !!s.video);
   /** 当前项目是否含 HTML 页面：纯 HTML 项目用「刷新全部页面」替代播放组（内容打开即自动运行） */
@@ -636,9 +637,9 @@ export function VideoWall() {
     [withPid],
   );
 
-  /** 缩减到 n 个位置时，将被移除区间内实际存在的内容数（视频或 HTML） */
+  /** 缩减到 n 个位置时，将被移除区间内实际存在的内容数（视频/HTML/图片） */
   const removedContentCount = useCallback(
-    (n: number) => slots.slice(n).filter((s) => s.video || s.html).length,
+    (n: number) => slots.slice(n).filter((s) => s.video || s.html || s.image).length,
     [slots],
   );
 
@@ -691,7 +692,7 @@ export function VideoWall() {
   }, [busy, count, layoutMode, requestLayout]);
 
   /* ---------- 拖拽排序 ---------- */
-  const filledSlots = useMemo(() => slots.filter((s) => s.video || s.html), [slots]);
+  const filledSlots = useMemo(() => slots.filter((s) => s.video || s.html || s.image), [slots]);
   const sortableIds = useMemo(() => filledSlots.map(sortableIdOf), [filledSlots]);
 
   const handleDragEnd = useCallback(
@@ -705,7 +706,7 @@ export function VideoWall() {
       const reordered = arrayMove(filledSlots, oldIdx, newIdx);
       // 服务端语义：新位置 i 放旧位置 order[i] 的内容；在 index 重编号前捕获旧位置
       const order = reordered.map((s) => s.index);
-      const empties = slots.filter((s) => !s.video && !s.html);
+      const empties = slots.filter((s) => !s.video && !s.html && !s.image);
       const prevSlots = slots;
       // 乐观更新：紧凑左填不变量（内容在前、空位在后），index 重编号。
       // 卡片 key 为稳定文件名：DOM 节点被移动而非重建，视频播放状态不中断
@@ -770,7 +771,7 @@ export function VideoWall() {
       const vids = files.filter((f) => isContentFile(f.name, f.type));
       const skipped = files.length - vids.length;
       if (vids.length === 0) {
-        toast.error('仅支持视频或单文件 HTML，请重新选择', { id: 'import' });
+        toast.error('仅支持视频、图片或单文件 HTML，请重新选择', { id: 'import' });
         return;
       }
       if (vids.length > SLOT_MAX) {
@@ -795,11 +796,11 @@ export function VideoWall() {
         primary = undefined;
       }
 
-      // 目标位选择：空位（无 video 也无 html）优先
+      // 目标位选择：空位（无 video/html/image）优先
       const targets: number[] = [];
       if (primary !== undefined) targets.push(primary);
-      targets.push(...targetSlots.filter((s) => !s.video && !s.html && s.index !== primary).map((s) => s.index));
-      targets.push(...targetSlots.filter((s) => (s.video || s.html) && s.index !== primary).map((s) => s.index));
+      targets.push(...targetSlots.filter((s) => !s.video && !s.html && !s.image && s.index !== primary).map((s) => s.index));
+      targets.push(...targetSlots.filter((s) => (s.video || s.html || s.image) && s.index !== primary).map((s) => s.index));
 
       setImporting(true);
       try {
@@ -992,6 +993,7 @@ export function VideoWall() {
                       {group.map((p) => {
                         const vc = p.items.filter((it) => it.kind === 'video').length;
                         const hc = p.items.filter((it) => it.kind === 'html').length;
+                        const ic = p.items.filter((it) => it.kind === 'image').length;
                         return (
                           <DropdownMenuItem
                             key={p.id}
@@ -1014,6 +1016,12 @@ export function VideoWall() {
                               <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border px-1 text-[10px] tabular-nums text-muted-foreground" title={`${hc} 个网页`}>
                                 <Code2 className="h-2.5 w-2.5" aria-hidden />
                                 {hc}
+                              </span>
+                            )}
+                            {ic > 0 && (
+                              <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border px-1 text-[10px] tabular-nums text-muted-foreground" title={`${ic} 张图片`}>
+                                <ImageIcon className="h-2.5 w-2.5" aria-hidden />
+                                {ic}
                               </span>
                             )}
                           </DropdownMenuItem>
@@ -1455,7 +1463,7 @@ export function VideoWall() {
                   </p>
                 </div>
               </div>
-              {/* 内容构成小结：视频 x · 网页 y——与顶栏自动适配逻辑呼应（有视频出播放组，纯网页出刷新组） */}
+              {/* 内容构成小结：视频 x · 网页 y · 图片 z——与顶栏自动适配逻辑呼应（有视频出播放组，纯网页出刷新组，图片无播放语义） */}
               {filledCount > 0 && (
                 <p className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
                   <span className="inline-flex items-center gap-1">
@@ -1469,6 +1477,17 @@ export function VideoWall() {
                     <Code2 className="h-3 w-3" aria-hidden />
                     {slots.filter((s) => s.kind === 'html' && s.html).length} 网页
                   </span>
+                  {slots.some((s) => s.kind === 'image' && s.image) && (
+                    <>
+                      <span className="text-border" aria-hidden>
+                        |
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <ImageIcon className="h-3 w-3" aria-hidden />
+                        {slots.filter((s) => s.kind === 'image' && s.image).length} 图片
+                      </span>
+                    </>
+                  )}
                 </p>
               )}
               <div className="mt-3 flex items-center justify-between gap-2">
@@ -1638,16 +1657,27 @@ export function VideoWall() {
                     <span
                       className={cn(
                         'h-1.5 w-1.5 shrink-0 rounded-full',
-                        s.kind === 'html' ? 'bg-sky-500' : s.video ? 'bg-emerald-500' : 'bg-muted-foreground/30',
+                        s.kind === 'html'
+                          ? 'bg-sky-500'
+                          : s.kind === 'image'
+                            ? 'bg-violet-500'
+                            : s.video
+                              ? 'bg-emerald-500'
+                              : 'bg-muted-foreground/30',
                       )}
                       aria-hidden
                     />
                     <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">
-                      {s.title || s.video?.originalName || s.html?.originalName || `空位 ${s.index + 1}`}
+                      {s.title || s.video?.originalName || s.html?.originalName || s.image?.originalName || `空位 ${s.index + 1}`}
                     </span>
                     {s.kind === 'html' && (
                       <span className="shrink-0 rounded border border-border px-1 text-[9px] font-semibold leading-4 text-muted-foreground/70">
                         HTML
+                      </span>
+                    )}
+                    {s.kind === 'image' && (
+                      <span className="shrink-0 rounded border border-border px-1 text-[9px] font-semibold leading-4 text-muted-foreground/70">
+                        图片
                       </span>
                     )}
                     <span
@@ -1711,7 +1741,7 @@ export function VideoWall() {
             <div className="space-y-1">
               <p className="text-base font-semibold text-foreground/90">「{projectName}」暂无内容</p>
               <p className="mx-auto max-w-md text-[13px] leading-relaxed text-muted-foreground">
-                把视频或 HTML 文件拖到页面任意位置，或点击下方按钮选择文件，内容将按顺序填入内容位
+                把视频、图片或 HTML 文件拖到页面任意位置，或点击下方按钮选择文件，内容将按顺序填入内容位
               </p>
             </div>
             <button
@@ -1724,7 +1754,7 @@ export function VideoWall() {
               选择文件导入
             </button>
             <p className="text-[11px] text-muted-foreground/60">
-              支持视频（MP4 / MOV / WebM 等）与单文件 HTML；内容超过内容位数量时会自动扩位
+              支持视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）与单文件 HTML；内容超过内容位数量时会自动扩位
             </p>
           </div>
         ) : (
@@ -1736,7 +1766,7 @@ export function VideoWall() {
             <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
               <div className="grid gap-3 sm:gap-5" style={gridStyle}>
                 {slots.map((slot) => {
-                  const isFilled = !!(slot.video || slot.html);
+                  const isFilled = !!(slot.video || slot.html || slot.image);
                   const cardProps = {
                     uploading: !!uploading[slot.index],
                     loop,
@@ -1867,7 +1897,7 @@ export function VideoWall() {
             <li>
               <strong className="font-semibold text-foreground/90">导入内容：</strong>
               点击空位或把文件拖进页面即可上传，支持
-              <strong className="font-semibold text-foreground/90">视频（MP4 / MOV / WebM 等）与单文件 HTML</strong>
+              <strong className="font-semibold text-foreground/90">视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）与单文件 HTML</strong>
               ，HTML 页面导入后自动运行
             </li>
             <li>
@@ -1909,11 +1939,11 @@ export function VideoWall() {
         </DialogContent>
       </Dialog>
 
-      {/* 一键导入的隐藏文件选择框（视频与单文件 HTML） */}
+      {/* 一键导入的隐藏文件选择框（视频、图片与单文件 HTML） */}
       <input
         ref={importInputRef}
         type="file"
-        accept="video/mp4,video/*,.html,.htm"
+        accept="video/mp4,video/*,.html,.htm,image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp,image/avif"
         multiple
         className="hidden"
         onChange={(e) => {

@@ -61,29 +61,20 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 
     const meta = await saveFile(id, file, checked.kind);
     const now = new Date().toISOString();
-    const item =
+    const base = {
+      id: randomUUID(),
+      title,
+      order: insertAt,
+      aspectRatio: null,
+      createdAt: now,
+      updatedAt: now,
+    } as const;
+    const item: ContentItem =
       checked.kind === 'html'
-        ? ({
-            id: randomUUID(),
-            kind: 'html',
-            title,
-            order: insertAt,
-            aspectRatio: null,
-            createdAt: now,
-            updatedAt: now,
-            file: meta,
-            status: 'ready',
-          } as ContentItem)
-        : ({
-            id: randomUUID(),
-            kind: 'video',
-            title,
-            order: insertAt,
-            aspectRatio: null,
-            createdAt: now,
-            updatedAt: now,
-            file: meta,
-          } as ContentItem);
+        ? { ...base, kind: 'html', file: meta, status: 'ready' }
+        : checked.kind === 'image'
+          ? { ...base, kind: 'image', file: meta }
+          : { ...base, kind: 'video', file: meta };
 
     project.items.splice(insertAt, 0, item);
     project.items = project.items.map((it, i) => (it.order === i ? it : { ...it, order: i }));

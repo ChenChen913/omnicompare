@@ -59,14 +59,18 @@ export async function POST(req: NextRequest) {
 
     const meta = await saveContentFile(file, checked.kind, p.id);
     const target = manifest.slots[slot];
+    target.video = null;
+    target.html = null;
+    target.image = null;
     if (checked.kind === 'html') {
       target.kind = 'html';
       target.html = meta;
-      target.video = null;
+    } else if (checked.kind === 'image') {
+      target.kind = 'image';
+      target.image = meta;
     } else {
       target.kind = 'video';
       target.video = meta;
-      target.html = null;
     }
     // 被替换条目的旧文件（视频或 HTML）由 writeManifest 集中清理，无需在此处理
     await writeManifest(manifest, p.id);

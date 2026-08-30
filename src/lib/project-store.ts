@@ -17,9 +17,11 @@ import {
   DEFAULT_PROJECT_ID,
   FileMeta,
   HTML_EXTS,
+  IMAGE_EXTS,
   Layout,
   MAX_FILE_SIZE,
   MAX_HTML_SIZE,
+  MAX_IMAGE_SIZE,
   Project,
   ProjectSettings,
   SLOT_MAX,
@@ -135,7 +137,8 @@ function normalizeItem(raw: unknown, order: number): ContentItem | null {
   const r = raw as Record<string, unknown>;
   const file = normalizeFileMeta(r.file);
   if (!file) return null;
-  const kind: ContentKind = r.kind === 'html' ? 'html' : 'video';
+  const kind: ContentKind =
+    r.kind === 'html' ? 'html' : r.kind === 'image' ? 'image' : 'video';
   const now = new Date().toISOString();
   const base = {
     id: typeof r.id === 'string' && r.id.length > 0 ? r.id : randomUUID(),
@@ -155,6 +158,9 @@ function normalizeItem(raw: unknown, order: number): ContentItem | null {
   if (kind === 'html') {
     const status = r.status === 'loading' || r.status === 'error' ? r.status : 'ready';
     return { ...base, kind, file, status };
+  }
+  if (kind === 'image') {
+    return { ...base, kind, file };
   }
   return { ...base, kind: 'video', file };
 }
@@ -311,18 +317,22 @@ export function applyReorder(items: ContentItem[], orderedIds: string[]): Conten
 export function toSlots(project: Project): Slot[] {
   return Array.from({ length: project.slotCount }, (_, i) => {
     const item = project.items[i];
-    if (!item) return { index: i, title: '', video: null, html: null };
+    if (!item) return { index: i, title: '', video: null, html: null, image: null };
     // Step 7：单卡比例覆盖随视图透传（null = 跟随全局，蓝图 §13）
     const aspect = item.aspectRatio ?? null;
-    return item.kind === 'html'
-      ? { index: i, title: item.title, video: null, kind: 'html' as const, html: item.file, aspectRatio: aspect }
-      : { index: i, title: item.title, video: item.file, kind: 'video' as const, html: null, aspectRatio: aspect };
+    if (item.kind === 'html') {
+      return { index: i, title: item.title, video: null, kind: 'html' as const, html: item.file, image: null, aspectRatio: aspect };
+    }
+    if (item.kind === 'image') {
+      return { index: i, title: item.title, video: null, kind: 'image' as const, html: null, image: item.file, aspectRatio: aspect };
+    }
+    return { index: i, title: item.title, video: item.file, kind: 'video' as const, html: null, image: null, aspectRatio: aspect };
   });
 }
 
 /* ============================== 文件服务 ============================== */
 
-/** 服务端校验上传文件，返回错误信息（null 表示通过）；kind 由 MIME + 扩展名双判 */
+/** 服务端校验上传文件，返回错误信息（null 表示通过）；kind 由 MIME + 扩展名双判（video / html / image） */
 export function validateUploadFile(
   name: string,
   mimeType: string,
@@ -336,8 +346,15 @@ export function validateUploadFile(
     if (!isHtml) return { error: '仅支持 .html / .htm 文件' };
     return { kind: 'html' };
   }
+  // 图片（第二阶段 Step A）：扩展名白名单或 image/* MIME 双判；SVG 同样接受（服务层 CSP 沙箱）
+  const isImageExt = (IMAGE_EXTS as readonly string[]).includes(ext);
+  if (isImageExt || mimeType.startsWith('image/')) {
+    if (size > MAX_IMAGE_SIZE) return { error: '图片文件超过 20MB 大小限制' };
+    if (!isImageExt) return { error: '仅支持 PNG / JPG / GIF / WebP / SVG / BMP / AVIF 图片' };
+    return { kind: 'image' };
+  }
   if (size > MAX_FILE_SIZE) return { error: '文件超过 200MB 大小限制' };
-  if (!isVideoFile(name, mimeType)) return { error: '仅支持视频或单文件 HTML' };
+  if (!isVideoFile(name, mimeType)) return { error: '仅支持视频、图片或单文件 HTML' };
   return { kind: 'video' };
 }
 
@@ -346,7 +363,14 @@ export async function saveFile(projectId: string, file: File, kind: ContentKind)
   const dir = projectFilesDir(projectId);
   await fsp.mkdir(dir, { recursive: true });
   const extMatch = path.extname(file.name).toLowerCase();
-  const ext = extMatch && /^(\.[A-Za-z0-9]{1,8})$/.test(extMatch) ? extMatch : kind === 'html' ? '.html' : '.mp4';
+  const ext =
+    extMatch && /^(\.[A-Za-z0-9]{1,8})$/.test(extMatch)
+      ? extMatch
+      : kind === 'html'
+        ? '.html'
+        : kind === 'image'
+          ? '.png'
+          : '.mp4';
   const filename = `${randomUUID()}${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
   await fsp.writeFile(path.join(dir, filename), buffer);

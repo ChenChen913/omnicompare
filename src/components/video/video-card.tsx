@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Code2, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
+import { Code2, Image as ImageIcon, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AspectRatio, Slot, aspectCss, aspectLabel, formatBytes } from '@/lib/types';
 import {
@@ -69,9 +69,13 @@ export function VideoCard({
   const { index, title, video } = slot;
   const isHtml = slot.kind === 'html' && !!slot.html;
   const htmlFile = slot.html ?? null;
+  const isImage = slot.kind === 'image' && !!slot.image;
+  const imageFile = slot.image ?? null;
   const [dragOver, setDragOver] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [imageError, setImageError] = useState(false);
   const [prevFilename, setPrevFilename] = useState(video?.filename);
+  const [prevImageName, setPrevImageName] = useState(imageFile?.filename);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -110,10 +114,14 @@ export function VideoCard({
     }
   }
 
-  /* ---------- 视频错误状态：切换视频时重置 ---------- */
+  /* ---------- 视频/图片错误状态：切换文件时重置 ---------- */
   if (prevFilename !== video?.filename) {
     setPrevFilename(video?.filename);
     setVideoError(false);
+  }
+  if (prevImageName !== imageFile?.filename) {
+    setPrevImageName(imageFile?.filename);
+    setImageError(false);
   }
 
   // 标题输入框自动增高：聚焦时完全展开（长标题编辑全可见），失焦时收折到约 4 行；
@@ -147,16 +155,20 @@ export function VideoCard({
     ? `/api/files/${encodeURIComponent(video.filename)}`
     : htmlFile
       ? `/api/files/${encodeURIComponent(htmlFile.filename)}`
-      : undefined;
-  const displayName = video?.originalName ?? htmlFile?.originalName ?? '';
-  const displaySize = video?.size ?? htmlFile?.size ?? 0;
+      : imageFile
+        ? `/api/files/${encodeURIComponent(imageFile.filename)}`
+        : undefined;
+  const displayName = video?.originalName ?? htmlFile?.originalName ?? imageFile?.originalName ?? '';
+  const displaySize = video?.size ?? htmlFile?.size ?? imageFile?.size ?? 0;
 
-  // 文件选择框按当前卡片状态收窄类型：空位两者都收，已放置按类型收
+  // 文件选择框按当前卡片状态收窄类型：空位全类型都收，已放置按类型收
   const accept = isHtml
     ? '.html,.htm,text/html'
-    : video
-      ? 'video/mp4,video/*'
-      : 'video/mp4,video/*,.html,.htm';
+    : isImage
+      ? 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp,image/avif'
+      : video
+        ? 'video/mp4,video/*'
+        : 'video/mp4,video/*,.html,.htm,image/png,image/jpeg,image/gif,image/webp,image/svg+xml';
 
   return (
     <article
@@ -270,6 +282,26 @@ export function VideoCard({
               </div>
             )}
           </>
+        ) : imageFile ? (
+          <>
+            {/* 图片渲染：object-contain 不裁切（蓝图 §13 铁律）；以 <img> 渲染 SVG，
+                脚本天然不执行，服务端另有 CSP sandbox 兜底 */}
+            <img
+              src={src}
+              alt={`位置 ${index + 1} 的图片：${title || imageFile.originalName}`}
+              loading="lazy"
+              onError={() => setImageError(true)}
+              className="h-full w-full object-contain"
+            />
+            {imageError && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-black/85 px-4 text-center">
+                <p className="text-sm font-medium text-destructive">图片加载失败</p>
+                <p className="text-[11px] leading-relaxed text-zinc-400">
+                  文件可能已损坏或格式不受支持，可尝试替换或移除
+                </p>
+              </div>
+            )}
+          </>
         ) : (
           <button
             type="button"
@@ -282,15 +314,21 @@ export function VideoCard({
               <UploadCloud className="h-5 w-5" aria-hidden />
             </span>
             <span className="text-sm font-medium">暂无内容</span>
-            <span className="text-[11px] text-muted-foreground/60">点击选择或拖入视频 / HTML 文件</span>
+            <span className="text-[11px] text-muted-foreground/60">点击选择或拖入视频 / 图片 / HTML 文件</span>
           </button>
         )}
 
-        {/* HTML 类型角标（内容区左上，位置角标右侧） */}
+        {/* HTML / 图片类型角标（内容区左上，位置角标右侧） */}
         {isHtml && (
           <span className="absolute left-2.5 top-2.5 z-10 ml-9 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm">
             <Code2 className="h-3 w-3" aria-hidden />
             HTML
+          </span>
+        )}
+        {isImage && (
+          <span className="absolute left-2.5 top-2.5 z-10 ml-9 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm">
+            <ImageIcon className="h-3 w-3" aria-hidden />
+            图片
           </span>
         )}
 
@@ -320,9 +358,9 @@ export function VideoCard({
           className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 text-[13px] leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
         />
         )}
-        {showInfo && (video || htmlFile) && (
+        {showInfo && (video || htmlFile || imageFile) && (
           <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-            {/* 状态点：HTML 显示加载状态（绿=就绪 / 琥珀=加载中 / 红=失败）；视频默认就绪 */}
+            {/* 状态点：HTML 显示加载状态（绿=就绪 / 琥珀=加载中 / 红=失败）；视频与图片默认就绪 */}
             <span className="flex min-w-0 items-center gap-1.5">
               {isHtml && (
                 <span
@@ -381,7 +419,7 @@ export function VideoCard({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                title={isHtml ? '替换 HTML 页面' : '替换视频'}
+                title={isHtml ? '替换 HTML 页面' : isImage ? '替换图片' : '替换视频'}
                 aria-label={`替换位置 ${index + 1} 的内容`}
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40"
               >
@@ -391,7 +429,7 @@ export function VideoCard({
                 type="button"
                 onClick={() => onClear(index)}
                 disabled={uploading}
-                title={isHtml ? '移除 HTML 页面' : '移除视频'}
+                title={isHtml ? '移除 HTML 页面' : isImage ? '移除图片' : '移除视频'}
                 aria-label={`移除位置 ${index + 1} 的内容`}
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/50 disabled:opacity-40"
               >

@@ -18,11 +18,17 @@ export const MAX_HTML_SIZE = 10 * 1024 * 1024;
 /** 允许的 HTML 扩展名 */
 export const HTML_EXTS = ['.html', '.htm'] as const;
 
+/** 单个图片文件大小上限（20MB，第二阶段 Step A） */
+export const MAX_IMAGE_SIZE = 20 * 1024 * 1024;
+
+/** 允许的图片扩展名（SVG 以 <img> 渲染 + 服务端 CSP 沙箱双保险，脚本不执行） */
+export const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif'] as const;
+
 /** 标题最大长度 */
 export const TITLE_MAX = 100;
 
-/** 内容类型：MVP 仅 video / html；image、svg、markdown、pdf 为第二阶段预留 */
-export type ContentKind = 'video' | 'html';
+/** 内容类型：video / html（MVP）+ image（第二阶段 Step A，SVG 随图片链路支持） */
+export type ContentKind = 'video' | 'html' | 'image';
 
 /** 内容比例：original = 16:9 容器 + contain（v1 行为） */
 export type AspectRatio = '16:9' | '9:16' | '1:1' | 'original' | 'custom';
@@ -53,6 +59,8 @@ export interface Slot {
   kind?: ContentKind;
   /** 已放置的 HTML 文件；仅 kind='html' 时存在 */
   html?: FileMeta | null;
+  /** 已放置的图片文件；仅 kind='image' 时存在（第二阶段 Step A） */
+  image?: FileMeta | null;
   /** 单卡比例覆盖（Step 7 扩展字段，向后兼容）：null/缺省 = 跟随全局（蓝图 §13） */
   aspectRatio?: AspectRatio | null;
 }
@@ -146,7 +154,12 @@ export interface HtmlAsset {
   status: 'loading' | 'ready' | 'error';
 }
 
-export type ContentItem = ContentItemBase & (VideoAsset | HtmlAsset);
+export interface ImageAsset {
+  kind: 'image';
+  file: FileMeta;
+}
+
+export type ContentItem = ContentItemBase & (VideoAsset | HtmlAsset | ImageAsset);
 
 /** 项目级播放与展示设置 */
 export interface ProjectSettings {
@@ -264,7 +277,7 @@ export function autoLayoutFor(count: number): Layout {
   return { rows, cols };
 }
 
-/** 扩展名 -> MIME 类型 */
+/** 扩展名 -> MIME 类型（含视频/图片/web 资产；web 资产类型供 zip 包条目静态服务使用） */
 export function mimeFromExt(name: string): string {
   const m = /\.([A-Za-z0-9]{1,8})$/.exec(name);
   const ext = m ? `.${m[1].toLowerCase()}` : '';
@@ -276,6 +289,29 @@ export function mimeFromExt(name: string): string {
     '.ogv': 'video/ogg',
     '.avi': 'video/x-msvideo',
     '.mkv': 'video/x-matroska',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.bmp': 'image/bmp',
+    '.avif': 'image/avif',
+    '.ico': 'image/x-icon',
+    '.html': 'text/html',
+    '.htm': 'text/html',
+    '.css': 'text/css',
+    '.js': 'text/javascript',
+    '.mjs': 'text/javascript',
+    '.json': 'application/json',
+    '.txt': 'text/plain',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.otf': 'font/otf',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
   };
   return map[ext] ?? 'application/octet-stream';
 }
@@ -295,9 +331,17 @@ export function isHtmlFile(name: string): boolean {
   return (HTML_EXTS as readonly string[]).includes(`.${m[1].toLowerCase()}`);
 }
 
-/** 判断是否为可导入的内容文件（视频或单文件 HTML） */
+/** 判断是否为可接受的图片文件（扩展名或 MIME 判别；SVG 随图片链路支持） */
+export function isImageFile(name: string, mimeType?: string): boolean {
+  if (mimeType && mimeType.startsWith('image/')) return true;
+  const m = /\.([A-Za-z0-9]{1,8})$/.exec(name);
+  if (!m) return false;
+  return (IMAGE_EXTS as readonly string[]).includes(`.${m[1].toLowerCase()}`);
+}
+
+/** 判断是否为可导入的内容文件（视频、单文件 HTML 或图片） */
 export function isContentFile(name: string, mimeType: string): boolean {
-  return isVideoFile(name, mimeType) || isHtmlFile(name);
+  return isVideoFile(name, mimeType) || isHtmlFile(name) || isImageFile(name, mimeType);
 }
 
 /**
@@ -310,7 +354,11 @@ export function validateClientFile(file: { name: string; type: string; size: num
     if (file.size > MAX_HTML_SIZE) return 'HTML 文件超过 10MB 大小限制';
     return null;
   }
-  if (!isVideoFile(file.name, file.type)) return '仅支持视频或单文件 HTML';
+  if (isImageFile(file.name, file.type)) {
+    if (file.size > MAX_IMAGE_SIZE) return '图片文件超过 20MB 大小限制';
+    return null;
+  }
+  if (!isVideoFile(file.name, file.type)) return '仅支持视频、图片或单文件 HTML';
   if (file.size > MAX_FILE_SIZE) return '文件超过 200MB 大小限制';
   return null;
 }
