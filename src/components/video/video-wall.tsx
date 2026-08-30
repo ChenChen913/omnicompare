@@ -103,6 +103,7 @@ import { Input } from '@/components/ui/input';
 const PREF_MODE = 'omnicompare:mode';
 const PREF_SIDEBAR = 'omnicompare:sidebar';
 const PREF_PROJECT = 'omnicompare:project';
+const PREF_VIEW = 'omnicompare:view';
 
 /** 项目状态展示名与状态点配色（蓝图 §7：active/draft/archived） */
 const STATUS_META = {
@@ -232,6 +233,8 @@ export function VideoWall() {
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   /** studio = 管理（全部控件 + 侧栏）；focus = 观看（极简顶栏 + 满幅网格） */
   const [mode, setMode] = useState<'studio' | 'focus'>('studio');
+  /** 视图（Step D）：workspace = 内容矩阵；library = 项目库（侧栏「库」入口，SPA 内切换） */
+  const [view, setView] = useState<'workspace' | 'library'>('workspace');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   /** 侧栏窗格列表点击定位时的高亮位 */
   const [highlight, setHighlight] = useState<number | null>(null);
@@ -363,6 +366,8 @@ export function VideoWall() {
       if (savedSidebar !== null) setSidebarOpen(savedSidebar === '1');
       const savedProject = localStorage.getItem(PREF_PROJECT);
       if (savedProject) setProjectId(savedProject);
+      const savedView = localStorage.getItem(PREF_VIEW);
+      if (savedView === 'workspace' || savedView === 'library') setView(savedView);
     } catch {
       /* 忽略隐私模式下的存储错误 */
     }
@@ -373,6 +378,12 @@ export function VideoWall() {
       localStorage.setItem(PREF_MODE, mode);
     } catch {}
   }, [mode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PREF_VIEW, view);
+    } catch {}
+  }, [view]);
 
   useEffect(() => {
     try {
@@ -405,6 +416,11 @@ export function VideoWall() {
   useEffect(() => {
     void refreshProjects();
   }, [refreshProjects]);
+
+  /* 进入项目库时刷新项目列表（其他会话的状态变更也能看到） */
+  useEffect(() => {
+    if (view === 'library') void refreshProjects();
+  }, [view, refreshProjects]);
 
   /** 切换项目：内容处理中禁止切换，避免在途请求把旧项目数据写进新项目视图 */
   const switchProject = useCallback(
@@ -502,6 +518,15 @@ export function VideoWall() {
       }
     },
     [projectId],
+  );
+
+  /** 打开项目库中的某个项目：切换项目并回到工作空间视图 */
+  const openFromLibrary = useCallback(
+    (id: string) => {
+      if (id !== projectId) switchProject(id);
+      setView('workspace');
+    },
+    [projectId, switchProject],
   );
 
   /* next-themes 首帧渲染后才确定主题，先挂载再渲染图标避免水合不一致 */
@@ -1100,11 +1125,39 @@ export function VideoWall() {
           </div>
           </div>
 
-          {/* 第二行：功能按钮行——不换行、窄屏横向滑动，任何项目切换/按钮显隐下高度恒定（震动根治） */}
+          {/* 第二行：功能按钮行——不换行、窄屏横向滑动，任何项目切换/按钮显隐下高度恒定（震动根治）。
+              库视图下只展示库上下文动作（新建项目），高度仍由 h-10 按钮撑起不变 */}
           <div className="no-scrollbar -mx-1 flex min-w-0 items-center gap-1.5 overflow-x-auto px-1 [&>*]:shrink-0 sm:gap-2">
 
+            {/* 项目库视图：库标签 + 新建项目（保持功能行高度恒定） */}
+            {view === 'library' && (
+              <>
+                <span className="inline-flex h-10 items-center gap-1.5 px-1 text-[13px] font-semibold text-muted-foreground">
+                  <Library className="h-4 w-4" aria-hidden />
+                  项目库
+                  <span className="tabular-nums text-muted-foreground/60">· {projects.length} 个项目</span>
+                </span>
+                <Divider />
+                {mode === 'studio' && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setNewName('');
+                      setCreating(true);
+                    }}
+                    className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4"
+                  >
+                    <FolderPlus className="h-4 w-4" aria-hidden />
+                    新建项目
+                  </button>
+                )}
+                <Divider />
+              </>
+            )}
+
             {/* 播放控制组：纯 HTML 项目没有播放语义，整组隐藏 */}
-            {hasVideo && (
+            {view === 'workspace' && hasVideo && (
               <>
                 <button
                   type="button"
@@ -1132,7 +1185,7 @@ export function VideoWall() {
 
             {/* 纯 HTML 项目：页面打开即自动运行，等价的主动作是「刷新全部页面」，
                 与视频项目的播放组占用同一槽位——顶栏逻辑随内容自动适配（D11） */}
-            {hasHtml && !hasVideo && filledCount > 0 && (
+            {view === 'workspace' && hasHtml && !hasVideo && filledCount > 0 && (
               <>
                 <button
                   type="button"
@@ -1148,7 +1201,7 @@ export function VideoWall() {
                 <Divider />
               </>
             )}
-            {mode === 'studio' && (
+            {view === 'workspace' && mode === 'studio' && (
               <Popover>
                 <PopoverTrigger asChild>
                   <button
@@ -1267,7 +1320,8 @@ export function VideoWall() {
               </Popover>
             )}
 
-            {/* 显示设置下拉：循环/静音/速度（仅对视频生效）+ 标题/属性显隐（全局生效） */}
+            {/* 显示设置下拉：循环/静音/速度（仅对视频生效）+ 标题/属性显隐（全局生效）；库视图隐藏 */}
+            {view === 'workspace' && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -1350,15 +1404,16 @@ export function VideoWall() {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+            )}
 
-            {mode === 'studio' && (
+            {view === 'workspace' && mode === 'studio' && (
               <>
                 <button
                   type="button"
                   onClick={() => importInputRef.current?.click()}
                   disabled={busy}
                   className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
-                  title="选择多个视频或 HTML 文件，按顺序填入各位置"
+                  title="选择多个视频、图片、HTML 或 zip 页面包，按顺序填入各位置"
                   aria-label="一键导入多个内容文件"
                 >
                   <UploadCloud className="h-4 w-4" aria-hidden />
@@ -1403,11 +1458,14 @@ export function VideoWall() {
 
             <Divider />
 
-            {/* Studio ↔ Focus 模式切换 */}
+            {/* Studio ↔ Focus 模式切换（库视图进入专注会同时切回工作空间） */}
             {mode === 'studio' ? (
               <button
                 type="button"
-                onClick={() => setMode('focus')}
+                onClick={() => {
+                  if (view === 'library') setView('workspace');
+                  setMode('focus');
+                }}
                 className={cn(ctlBtn, 'border-primary/50 bg-primary/10 text-primary hover:bg-primary/20')}
                 title="进入专注模式：隐藏管理控件，专心观看对比"
                 aria-label="进入专注模式"
@@ -1449,7 +1507,7 @@ export function VideoWall() {
         )}
         onDragOver={(e) => {
           // 仅外部文件拖入时提示；卡片排序（pointer 模拟）不产生 dataTransfer
-          if (!e.dataTransfer.types.includes('Files')) return;
+          if (view === 'library' || !e.dataTransfer.types.includes('Files')) return;
           e.preventDefault();
           if (!gridDrag) setGridDrag(true);
         }}
@@ -1457,6 +1515,7 @@ export function VideoWall() {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setGridDrag(false);
         }}
         onDrop={(e) => {
+          if (view === 'library') return; // 库视图不接收文件导入
           e.preventDefault();
           setGridDrag(false);
           const files = Array.from(e.dataTransfer.files);
@@ -1627,36 +1686,49 @@ export function VideoWall() {
               添加内容
             </button>
 
-            {/* 视图导航（库/设置为占位，随后续阶段开放） */}
+            {/* 视图导航（工作空间 / 项目库；设置入口评估后维持占位，见 BLUEPRINT D13） */}
             <nav className="flex flex-col gap-1" aria-label="视图切换">
               <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">视图</p>
               <button
                 type="button"
-                aria-current="page"
-                className="flex items-center gap-2.5 rounded-lg bg-primary/15 px-3 py-2 text-[13px] font-medium text-primary"
+                onClick={() => setView('workspace')}
+                aria-current={view === 'workspace' ? 'page' : undefined}
+                className={cn(
+                  'flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                  view === 'workspace'
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
               >
                 <LayoutGrid className="h-4 w-4" aria-hidden />
                 工作空间
               </button>
               <button
                 type="button"
-                disabled
-                title="第二阶段上线"
-                className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground/50"
+                onClick={() => setView('library')}
+                aria-current={view === 'library' ? 'page' : undefined}
+                className={cn(
+                  'flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                  view === 'library'
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
               >
                 <Library className="h-4 w-4" aria-hidden />
                 库
-                <span className="ml-auto text-[10px] font-normal text-muted-foreground/40">即将上线</span>
+                <span className="ml-auto text-[10px] font-normal text-muted-foreground/60 tabular-nums">
+                  {projects.length} 个项目
+                </span>
               </button>
               <button
                 type="button"
                 disabled
-                title="第二阶段上线"
+                title="设置已收编于顶栏「布局」与「显示」弹层，暂不提供独立页面（D13）"
                 className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground/50"
               >
                 <Settings className="h-4 w-4" aria-hidden />
                 设置
-                <span className="ml-auto text-[10px] font-normal text-muted-foreground/40">即将上线</span>
+                <span className="ml-auto text-[10px] font-normal text-muted-foreground/40">收编于顶栏</span>
               </button>
             </nav>
 
@@ -1741,7 +1813,73 @@ export function VideoWall() {
             switching && 'pointer-events-none opacity-45',
           )}
         >
-        {loading ? (
+        {view === 'library' ? (
+          /* 项目库（Step D）：项目卡片网格，点击卡片打开对应工作台。
+             排序：进行中 > 草稿 > 已归档，同组内按更新时间倒序 */
+          <section className="w-full" aria-label="项目库">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-[13px] text-muted-foreground">
+                点击卡片打开对应工作台；新建项目在顶栏，改名/归档/删除在打开项目后的侧栏「管理」。
+              </p>
+            </div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {[...projects]
+                .sort((a, b) => {
+                  const order = { active: 0, draft: 1, archived: 2 } as const;
+                  if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+                  return (b.updatedAt > a.updatedAt ? 1 : -1);
+                })
+                .map((p) => {
+                  const vc = p.items.filter((it) => it.kind === 'video').length;
+                  const hc = p.items.filter((it) => it.kind === 'html').length;
+                  const ic = p.items.filter((it) => it.kind === 'image').length;
+                  const isCurrent = p.id === projectId;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => openFromLibrary(p.id)}
+                      className={cn(
+                        'group flex flex-col gap-3 rounded-2xl border bg-card p-5 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/10',
+                        isCurrent ? 'border-primary/70 ring-2 ring-primary/40' : 'border-border hover:border-primary/50',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-[15px] font-bold text-foreground" title={p.name}>
+                            {p.name}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-muted-foreground/70">
+                            更新于 {new Date(p.updatedAt).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+                            {isCurrent && <span className="ml-1.5 font-semibold text-primary">· 当前打开</span>}
+                          </p>
+                        </div>
+                        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
+                          <span className={cn('h-1.5 w-1.5 rounded-full', STATUS_META[p.status].dot)} aria-hidden />
+                          {STATUS_META[p.status].label}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5" title={`${vc} 个视频`}>
+                          <Film className="h-3 w-3" aria-hidden />{vc}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5" title={`${hc} 个网页`}>
+                          <Code2 className="h-3 w-3" aria-hidden />{hc}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5" title={`${ic} 张图片`}>
+                          <ImageIcon className="h-3 w-3" aria-hidden />{ic}
+                        </span>
+                        <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-primary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                          打开工作台
+                          <ChevronRight className="h-3 w-3" aria-hidden />
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
+          </section>
+        ) : loading ? (
           <div className="grid gap-3 sm:gap-5" style={gridStyle}>
             {slots.map((s) => (
               <div
