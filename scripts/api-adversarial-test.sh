@@ -60,9 +60,9 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" 
 [ "$CODE" = "400" ]; check "非视频文件 -> 400" $?
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/tmp/empty.mp4" -F "slot=0")
 [ "$CODE" = "400" ]; check "空文件 -> 400" $?
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v01.mp4" -F "slot=999")
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v01-landscape.mp4" -F "slot=999")
 [ "$CODE" = "400" ]; check "slot=999 越界 -> 400" $?
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v01.mp4")
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v01-landscape.mp4")
 [ "$CODE" = "400" ]; check "缺少 slot -> 400" $?
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "slot=0")
 [ "$CODE" = "400" ]; check "缺少 file -> 400" $?
@@ -282,6 +282,87 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/videos?project=$PID")
 [ "$CODE" = "404" ]; check "删除后 v1 视图 -> 404" $?
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$BASE/api/projects/default")
 [ "$CODE" = "403" ]; check "默认项目删除受保护 -> 403" $?
+
+echo "== 18. HTML 专项扩展（Step 9 补）=="
+FILES_DIR="/home/z/my-project/data/projects/default/files"
+# 前置：6 位布局 + 清空（保证可重复）
+curl -s -X PATCH "$BASE/api/videos/layout" -H 'Content-Type: application/json' -d '{"count":6,"rows":2,"cols":3}' >/dev/null
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+# 18a 超大 HTML：超过 10MB 上限必须拒绝
+python3 -c "open('/tmp/big.html','w').write('<!DOCTYPE html><html><body>' + 'A'*(11*1024*1024) + '</body></html>')"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/videos/upload" -F "file=@/tmp/big.html;type=text/html" -F "slot=0")
+[ "$CODE" = "400" ]; check "超大 HTML（11MB > 10MB 上限）-> 400" $?
+rm -f /tmp/big.html
+# 18b HTML 原位替换视频：旧视频文件被集中清理（v1 视图看不见的文件也要删）
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v01-landscape.mp4" -F "slot=0")
+VF=$(echo "$R" | jq -r '.slots[0].video.filename')
+[ -f "$FILES_DIR/$VF" ]; check "前置：视频已落盘（$VF）" $?
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/tmp/adv-test-page.html;type=text/html" -F "slot=0")
+check "HTML 原位替换视频 -> 槽位变 html 且 video 清空" "$(expect_json_field "$R" '.slots[0].kind=="html" and .slots[0].video==null'; echo $?)"
+[ ! -f "$FILES_DIR/$VF" ]; check "被替换的视频文件已从磁盘删除" $?
+HF=$(echo "$R" | jq -r '.slots[0].html.filename')
+# 18c HTML 替换 HTML：旧文件清理、新文件落盘
+R=$(curl -s -X POST "$BASE/api/videos/upload" -F "file=@/tmp/adv-test-page.html;type=text/html" -F "slot=0")
+HF2=$(echo "$R" | jq -r '.slots[0].html.filename')
+[ ! -f "$FILES_DIR/$HF" ]; check "HTML 替换 HTML 后旧文件已删除" $?
+[ -f "$FILES_DIR/$HF2" ]; check "新 HTML 文件已落盘（$HF2）" $?
+# 18d v1↔v2 一致性：HTML 条目在 v2 items 视图的 kind 与文件名
+check "v2 items 视图 kind=html 且文件名一致" "$(curl -s "$BASE/api/projects/default/items" | jq -e 'length==1 and .[0].kind=="html" and .[0].file.filename=="'$HF2'"' >/dev/null 2>&1; echo $?)"
+# 18e 跨项目文件解析 + 项目删除文件清理（蓝图 §8：文件路由按 uuid 全局解析）
+R=$(curl -s -X POST "$BASE/api/projects" -H 'Content-Type: application/json' -d '{"name":"HTML跨项目解析测试"}')
+PID2=$(echo "$R" | jq -r '.id // empty')
+[ -n "$PID2" ]; check "创建第二个项目 -> 返回 id" $?
+R=$(curl -s -X POST "$BASE/api/videos/upload?project=$PID2" -F "file=@/tmp/adv-test-page.html;type=text/html" -F "slot=0")
+HF3=$(echo "$R" | jq -r '.slots[0].html.filename')
+[ -n "$HF3" ] && [ "$HF3" != "null" ]; check "第二个项目 HTML 上传成功（$HF3）" $?
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/files/$HF3")
+[ "$CODE" = "200" ]; check "跨项目文件直链解析 -> 200（uuid 全局唯一）" $?
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$BASE/api/projects/$PID2")
+[ "$CODE" = "200" ]; check "删除第二个项目 -> 200" $?
+[ ! -e "/home/z/my-project/data/projects/$PID2" ]; check "项目目录已整体删除" $?
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/files/$HF3")
+[ "$CODE" = "404" ]; check "项目删除后文件直链 -> 404（跨项目解析已失效）" $?
+# 清理默认项目，交给 §19 前置
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+
+echo "== 19. 排序专项（Step 9 补，蓝图 §14）=="
+# 前置：6 位清空，上传 3 个视频并命名 A/B/C
+curl -s -X PATCH "$BASE/api/videos/layout" -H 'Content-Type: application/json' -d '{"count":6,"rows":2,"cols":3}' >/dev/null
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v01-landscape.mp4" -F "slot=0" >/dev/null
+curl -s -X PATCH "$BASE/api/videos" -H 'Content-Type: application/json' -d '{"slot":0,"title":"对比项A"}' >/dev/null
+curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v02-portrait.mp4" -F "slot=1" >/dev/null
+curl -s -X PATCH "$BASE/api/videos" -H 'Content-Type: application/json' -d '{"slot":1,"title":"对比项B"}' >/dev/null
+curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v03-square.mp4" -F "slot=2" >/dev/null
+curl -s -X PATCH "$BASE/api/videos" -H 'Content-Type: application/json' -d '{"slot":2,"title":"对比项C"}' >/dev/null
+REF=$(curl -s "$BASE/api/videos")
+check "前置：3 个视频就位" "$(expect_json_field "$REF" '([.slots[] | select(.video != null)] | length)==3'; echo $?)"
+FILES_BEFORE=$(ls "$FILES_DIR" | sort)
+# 非法 order 对抗：非数组/长度不符/越界/重复/非整数/缺失
+for body in '{"order":"x"}' '{"order":[0,1]}' '{"order":[0,1,3]}' '{"order":[0,0,1]}' '{"order":[0,1.5,2]}' '{}' '{"order":[0,1,"2"]}'; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/api/videos/reorder" -H 'Content-Type: application/json' -d "$body")
+  [ "$CODE" = "400" ]; check "非法排序 -> 400: $body" $?
+done
+# 合法反转：order 为「新位置 -> 旧位置」映射，[2,1,0] 即完全倒序
+R=$(curl -s -X PATCH "$BASE/api/videos/reorder" -H 'Content-Type: application/json' -d '{"order":[2,1,0]}')
+check "合法反转 -> 200 且槽 0 变为 对比项C（标题跟随内容）" "$(expect_json_field "$R" '.slots[0].title=="对比项C" and .slots[2].title=="对比项A"'; echo $?)"
+# 磁盘文件集合不变（排序只改 order，不动文件）
+FILES_AFTER=$(ls "$FILES_DIR" | sort)
+[ "$FILES_BEFORE" = "$FILES_AFTER" ]; check "排序不增删磁盘文件" $?
+# v2 一致性：order 恒紧凑 0..n-1，且按 order 排出的标题序列与 v1 视图一致
+check "v2 items order 紧凑 0..n-1" "$(curl -s "$BASE/api/projects/default/items" | jq -e '[.[].order] | sort == [0,1,2]' >/dev/null 2>&1; echo $?)"
+V2T=$(curl -s "$BASE/api/projects/default/items" | jq -c '[.[]] | sort_by(.order) | map(.title)')
+[ "$V2T" = '["对比项C","对比项B","对比项A"]' ]; check "v2 items 顺序与 v1 视图一致（实际 $V2T）" $?
+# 空项目排序：order=[] -> 200 无变化
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/api/videos/reorder" -H 'Content-Type: application/json' -d '{"order":[]}')
+[ "$CODE" = "200" ]; check "空项目 order=[] -> 200 无变化" $?
+# 非空项目 order 长度不符（空数组对非空清单）
+curl -s -X POST "$BASE/api/videos/upload" -F "file=@/home/z/my-project/scripts/test-videos/v01-landscape.mp4" -F "slot=0" >/dev/null
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/api/videos/reorder" -H 'Content-Type: application/json' -d '{"order":[]}')
+[ "$CODE" = "400" ]; check "非空清单 order=[] 长度不符 -> 400" $?
+# 清理：恢复测试前的空状态（演示数据由 restore-demo-state.py 统一恢复）
+curl -s -X DELETE "$BASE/api/videos?all=1" >/dev/null
 
 echo ""
 echo "========== 汇总 =========="

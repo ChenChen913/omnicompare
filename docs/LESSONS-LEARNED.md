@@ -181,7 +181,17 @@ html body[data-scroll-locked] {
 - **现象**：git log 中出现 UUID 信息的自动提交，把 `upload/` 用户素材、原型 zip 收进了库；且出现过「恢复会话时以为代码没提交，实际已被自动提交收走」。
 - **规则**：① 每次恢复会话**先 `git log` 核对状态**，勿按摘要假设；② 发现误收用 `git reset --soft <远程HEAD>` 软回退，把 `upload/` 整体移出跟踪并 `.gitignore` 根治；③ UUID 提交若内容正确，`amend` 成规范提交消息即可。
 
-### 5.3 凭据卫生
+### 5.3 untracked 文件死于环境重置（本项目最大规模的实际事故）
+
+- **现象**：新一轮会话开始后，`POST /api/videos/upload` 全线失败（"Server action not found"）；对抗测试从 110 项暴跌至 2 项失败起步；`data/` 演示数据、`worklog.md`、测试视频资产全部消失。
+- **根因链**：沙箱/工作区在会话间会重置到 **git 跟踪状态**——所有 gitignored 与 untracked 文件一并清除。排查发现 `src/app/api/videos/upload/route.ts` 与 v2 的 `items/upload/route.ts` **从未被 git 跟踪**（历史上被 UUID 自动提交器收走后又软回退出库，此后一直 untracked 存活了多个任务周期），重置时被清。雪上加霜：一次自动 amend 把「这两个文件的删除」混入了纯文档提交（bbe6d95），使其从 git 历史消失。
+- **恢复**：`git log --all -- '*upload*'` 找到最后包含它们的历史提交（99557d1，恰好已推送远程），`git show <commit>:<path>` 直接导出恢复，137 项测试全绿。
+- **教训与流程**：
+  1. **任务结束的验收标准 = `git status` 干净**——所有新建文件要么提交、要么显式 gitignore，不留 untracked；
+  2. 恢复丢失文件先翻历史：`git log --all -- <pathspec>` + 悬挂对象 `git fsck --lost-found`，已推送远程的提交是最可靠的备份；
+  3. 重要产物尽量做成**可再生的脚本**（测试视频用 gen-test-videos.sh 再生、演示数据用 API 驱动的 restore-demo-state.py 重建，不依赖本地二进制备份）。
+
+### 5.4 凭据卫生
 
 - 推送用 token 嵌 URL 一次性使用，**推送后立即 `git remote set-url` 脱敏**；用 `git ls-remote`/API 验证远程状态。凭据经聊天传输、权限大，提醒用户及时轮换。
 
@@ -265,3 +275,6 @@ html body[data-scroll-locked] {
 - [ ] 新增 schema 字段：检查所有 normalize/serialize 路径
 - [ ] 推送凭据：一次性使用，推后立即 `set-url` 脱敏
 - [ ] 批量编辑：小步单条 + 每步验证
+- [ ] 任务结束 `git status` 必须干净：新文件要么提交要么显式 ignore，不留 untracked（环境重置会清掉它们）
+- [ ] 本地产物优先做成可再生的脚本（测试资产/演示数据），不依赖二进制备份
+- [ ] 每轮改动后跑：v1 对抗 + v2 冒烟 + `tsc --noEmit` + eslint 四件套

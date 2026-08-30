@@ -79,3 +79,6 @@ server.log
 /scripts/shots/
 # 用户上传素材（原型/需求文档/临时页面）一律不入库，防止自动提交误收
 /upload/
+
+# 本地备份产物（backup-data.sh 输出）
+/backups/

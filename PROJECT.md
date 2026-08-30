@@ -146,7 +146,35 @@ bun run build        # next build，产物为 standalone 模式
 bun run start        # NODE_ENV=production bun .next/standalone/server.js
 ```
 
-### 5.4 修改端口
+构建产物已通过完整验证：17 个路由正确生成、standalone 启动后首页/清单 API 正常、`tsc --noEmit` 与 eslint 零错误（CI 中每次提交都会复验，见 `.github/workflows/ci.yml`）。
+
+### 5.4 Docker 部署（推荐生产方式）
+
+项目含服务端文件存储（`data/`），适合带持久卷的单机部署（VPS / 家用服务器），Docker 三件套已随仓库提供：
+
+```bash
+docker compose up -d --build     # 构建镜像并启动，监听 3000 端口
+docker compose logs -f           # 查看日志
+```
+
+- **多阶段构建**（`Dockerfile`）：bun 安装依赖 → bun 构建 → node:24-slim 运行 standalone 产物，镜像内不含源码与依赖
+- **数据持久化**（`docker-compose.yml`）：宿主机 `./data` 挂载到容器 `/app/data`，上传的视频/HTML 与清单全部落在这里——**升级镜像不丢数据，删除容器不丢数据**
+- 健康检查：容器内每 30s 探测 `/api/videos`，异常自动重启
+- 反向代理建议：生产环境建议在前面加一层 Nginx/Caddy 做 HTTPS 与 gzip（上传大文件注意调大 `client_max_body_size`，本项目上限 200MB）
+
+### 5.5 数据备份与恢复
+
+```bash
+bash scripts/backup-data.sh          # 打包 data/projects → backups/，默认保留 14 份
+KEEP=30 bash scripts/backup-data.sh  # 自定义保留份数
+DEST=/var/backups bash scripts/backup-data.sh
+```
+
+- 备份为 tar.gz（含全部项目清单 + 文件），先写临时名再原子改名，不会产生半个包
+- 恢复：`tar -xzf <备份包> -C data/`（解出 `projects/` 目录）后重启服务
+- 建议用 crontab 每日定时备份：`0 3 * * * cd /path/to/omnicompare && KEEP=14 bash scripts/backup-data.sh`
+
+### 5.6 修改端口
 
 - 开发：`next dev -p 3000`（改 `package.json` 的 dev 脚本）
 - 生产：standalone 模式读 `PORT` 环境变量，`PORT=8080 bun .next/standalone/server.js`
