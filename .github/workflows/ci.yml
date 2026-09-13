@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # 允许在 Actions 页面手动触发一次。
+  # 加它的直接原因：有一次 push 事件 GitHub 已登记（仓库事件流里有），但没有产生工作流运行，
+  # 于是"这次改动 CI 到底过没过"无从验证。有手动入口就不必靠再推一次空提交来重试。
+  workflow_dispatch:
 
 jobs:
   verify:
