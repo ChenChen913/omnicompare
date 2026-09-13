@@ -172,7 +172,7 @@ bun run typecheck    # tsc --noEmit
 bun run lint         # eslint .
 bun run build        # 生产构建（含 standalone 拷贝自检）
 
-# 启动服务后跑接口回归（零外部依赖，57 项断言）
+# 启动服务后跑接口回归（零外部依赖，62 项断言）
 node scripts/api-regression-test.mjs
 
 # 死代码体检：按 import 图列出不可达模块

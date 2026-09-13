@@ -327,13 +327,33 @@ async function main() {
   /* ---------------------------------------------------------------- */
   section('P3-11 文件服务与 Range');
   {
-    const cur = await req('GET', '/api/videos');
-    const svgSlot = (cur.body?.slots ?? []).find((s) => s.kind === 'image' && s.image);
-    if (svgSlot) {
-      const r = await req('GET', `/api/files/${svgSlot.image.filename}`, { raw: true });
-      check('图片流可访问', r.status === 200, `实际：${r.status}`);
+    // 自己上传探针文件，不依赖"项目里恰好有什么"。
+    // 历史写法是先查清单里有没有图片再决定是否断言，导致断言总数随环境漂移
+    // （57 或 58），还会静默跳过一整项 —— 测试的可信度就来自总数恒定。
+    const up = await req('POST', '/api/videos/upload', {
+      form: { file: namedBlob(new Blob([PNG_1PX], { type: 'image/png' }), 'range-probe.png'), slot: '4' },
+    });
+    const file = (up.body?.slots ?? [])
+      .map((s) => s.image)
+      .find((f) => f && f.originalName === 'range-probe.png');
+    check('准备：探针文件上传成功', up.status === 200 && !!file, `状态 ${up.status}`);
+
+    if (file) {
+      const full = await req('GET', `/api/files/${file.filename}`, { raw: true });
+      check('文件流全量请求 200', full.status === 200, `实际：${full.status}`);
+
+      const part = await fetch(`${BASE}/api/files/${file.filename}`, { headers: { Range: 'bytes=0-9' } });
+      check('Range 分片返回 206', part.status === 206, `实际：${part.status}`);
+      check(
+        'Content-Range 与实际大小一致',
+        part.headers.get('content-range') === `bytes 0-9/${PNG_1PX.length}`,
+        `实际：${part.headers.get('content-range')}`,
+      );
+
+      const oob = await fetch(`${BASE}/api/files/${file.filename}`, { headers: { Range: 'bytes=99999999-' } });
+      check('越界 Range 返回 416', oob.status === 416, `实际：${oob.status}`);
     }
-    // 用已上传的 bundle 目录当"大文件"测 Range 不适用，改测 404 与穿越
+
     const missing = await req('GET', '/api/files/does-not-exist-0000.mp4');
     check('不存在的文件 404', missing.status === 404, `实际：${missing.status}`);
     const trav = await req('GET', '/api/files/..%2F..%2Fpackage.json');

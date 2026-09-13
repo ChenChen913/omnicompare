@@ -186,7 +186,7 @@ bun run typecheck    # tsc --noEmit
 bun run lint         # eslint .
 bun run build        # production build (with a standalone copy self-check)
 
-# API regression suite (no external dependencies, 57 assertions)
+# API regression suite (no external dependencies, 62 assertions)
 node scripts/api-regression-test.mjs
 
 # Dead-code scan: lists unreachable modules from the import graph

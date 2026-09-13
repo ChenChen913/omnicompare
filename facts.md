@@ -16,7 +16,7 @@
    - `bun run start` — 生产模式跑 standalone 产物
 6. **检查命令**（逐字取自 `package.json` scripts）：`bun run lint`、`bun run typecheck`。
 7. **测试命令**：
-   - `node scripts/api-regression-test.mjs` — 零外部依赖，57 项断言
+   - `node scripts/api-regression-test.mjs` — 零外部依赖，62 项断言（总数恒定，不随环境漂移）
    - `bash scripts/api-adversarial-test.sh`、`bash scripts/api-v2-smoke-test.sh` — 需 curl + jq + python3
 8. **仓库规模**：
    - `node -e "..."`（统计 `src` 下 .ts/.tsx/.mjs）→ **33 个文件 / 6318 行**
