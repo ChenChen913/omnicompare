@@ -4,9 +4,9 @@
 
 OmniCompare: a comparison workspace that puts videos, images, and HTML pages produced by multiple AI models into one matrix for side-by-side review.
 
-> **About demo assets**: the repository currently contains no screenshots or GIFs, so this document does not reference
-> images that do not exist. It shows real command output instead.
-> <!-- TODO: 需补充演示素材——建议在 docs/ 放一张 Studio 模式矩阵截图与一张纯 HTML 项目截图，并替换本段 -->
+[![OmniCompare demo](docs/demo.gif)](docs/demo.mp4)
+
+> A 10-second looping preview (no audio). Click the image to open the full video.
 
 Real output from a local run:
 

@@ -7,8 +7,9 @@ OmniCompare（灵动对比）：把多个 AI 模型产出的视频、图片与 H
 
 **简体中文** | [English](./README_EN.md)
 
-> **关于演示素材**：仓库中目前没有任何截图或 GIF，本文不引用不存在的图片，改用实跑输出与结构说明。
-> <!-- TODO: 需补充演示素材——建议在 docs/ 放一张 Studio 模式矩阵截图与一张纯 HTML 项目截图，并替换本段 -->
+[![OmniCompare 演示](docs/demo.gif)](docs/demo.mp4)
+
+> 10 秒循环预览（无声）。点图看完整视频。
 
 启动后的真实现场（本地实跑输出）：
 
@@ -182,6 +183,16 @@ bun run scripts/find-dead-code.mjs
 `scripts/api-adversarial-test.sh`（v1 兼容层）与 `scripts/api-v2-smoke-test.sh`（v2）是更早的对抗测试，需要额外装 `curl`、`jq`、`python3`，缺 `jq` 会直接失败。
 
 改动前请先读 [PROJECT.md](./PROJECT.md) §11 的「给 AI 编码助手的快速上下文」，那里列着不能违反的数据层不变量。往 `src/components/ui/` 加组件用 `npx shadcn@latest add <组件名>`（`components.json` 已配好）。
+
+### 更新首页演示素材
+
+README 顶部那张会动的预览图是 GIF —— GitHub 的 Markdown 渲染器会直接删掉 `<video>` / `<iframe>` 标签，**README 里没有任何办法内嵌播放 MP4**，能自己动的只有图片格式。录好新的演示视频后：
+
+```sh
+node scripts/make-demo-media.mjs 你的录制.mp4 --keep-mp4
+```
+
+它会按 GitHub 正文宽度（900px）与 12fps 转出 `docs/demo.gif`，两遍调色板保证画质，超过 8MB 会自动降规格重试；同时压一份 `docs/demo.mp4` 供「点图看完整视频」用，以及一份体积约为 GIF 一半的 `docs/demo.webp`——想改用它把 README 里的 `docs/demo.gif` 换成 `docs/demo.webp` 即可，代价是老 Safari 不显示 WebP 动画。不想要的多余产物用 `--no-webp`、`--no-poster` 关掉。
 
 ## 常见问题
 
