@@ -209,6 +209,23 @@ wrote `... | tee dev.log`, which leaves a 0-byte file on Windows because `tee` i
 Check whether `.next/standalone/.next/static` exists. A failed copy step leaves exactly that state — HTML 200 with
 every static asset 404. The current build script verifies the copy and exits non-zero instead.
 
+**`npm run dev` fails with `EADDRINUSE: address already in use :::3000`.**
+Something else holds the port — usually a previous dev server that was never shut down (closing the terminal window
+does not stop it). The dev script checks the port up front and tells you the owning PID plus three ways out:
+
+```
+✗ 端口 3000 已被占用，服务没能启动。
+  占用它的进程 PID：34712
+  三种处置方式：
+    1) taskkill /PID 34712 /F        (Windows; use `kill 34712` on macOS/Linux)
+    2) set PORT=3001 && bun run dev  (use `PORT=3001 bun run dev` on macOS/Linux)
+    3) netstat -ano | findstr :3000
+```
+
+**Startup reports `Unable to acquire lock at .next/dev/lock`.**
+Another dev instance is already running for this project (Next's single-instance lock). Stop the old instance, or
+delete `.next/dev/lock` if you are sure there is none. The script warns about this file before starting.
+
 **Uploading a zip page bundle reports a missing root `index.html`.**
 The entry file must sit at the very root of the archive, not inside a subdirectory.
 
@@ -216,8 +233,8 @@ The entry file must sit at the very root of the archive, not inside a subdirecto
 Browsers block autoplay with sound. Global mute is on by default, and every playback action happens after a click.
 
 **How do I change the port?**
-For development, edit the `-p` flag of the dev script in `package.json`. For production, use
-`PORT=8080 bun run start`.
+For development, use `PORT=3001 bun run dev` (the script states explicitly when the port comes from the environment,
+so it never drifts silently). For production, use `PORT=8080 bun run start`.
 
 ## Known limitations
 

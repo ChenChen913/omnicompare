@@ -196,11 +196,29 @@ node scripts/make-demo-media.mjs 你的录制.mp4 --keep-mp4
 
 ## 常见问题
 
+**Q：`npm run dev` 报 `EADDRINUSE: address already in use :::3000`，起不来？**
+A：端口被占了，多半是上一次的开发服务器没关干净（关掉终端窗口不会自动停掉它）。当前脚本会在启动前预检端口，直接告诉你**占用进程的 PID** 和三种处置方式：
+
+```
+✗ 端口 3000 已被占用，服务没能启动。
+  占用它的进程 PID：34712
+  三种处置方式：
+    1) 关掉它（多半是上一次没关干净的开发服务器）：
+         taskkill /PID 34712 /F
+    2) 换个端口启动：
+         set PORT=3001 && bun run dev
+    3) 查看占用情况：
+         netstat -ano | findstr :3000
+```
+
 **Q：`bun run dev` 起来了，但 `dev.log` 是空的？**
 A：确认用的是仓库当前的 dev 脚本。它通过 `scripts/run-with-log.mjs` 双写日志；早期版本写作 `... | tee dev.log`，在 Windows 上 `tee` 不可用，日志会一直是 0 字节。
 
 **Q：做完 `bun run build` 后启动，首页能打开但一片空白？**
 A：检查 `.next/standalone/.next/static` 是否存在。构建脚本的拷贝步骤失败时会留下这种「HTML 返回 200、静态资源全部 404」的状态；当前脚本在拷贝后会自检并以非零退出码报错。
+
+**Q：启动报 `Unable to acquire lock at .next/dev/lock`？**
+A：这个项目已经有一个 dev 实例在跑（Next 的单实例锁）。关掉旧实例即可；确认没有旧实例时，删掉 `.next/dev/lock` 后重试。脚本检测到该文件时会提前提示。
 
 **Q：上传 zip 页面包提示「根目录缺少 index.html」？**
 A：入口文件必须正好在包根目录，不能在子目录里。
@@ -209,7 +227,7 @@ A：入口文件必须正好在包根目录，不能在子目录里。
 A：浏览器会拦截非静音的自动播放。项目默认全局静音，播放动作都发生在你点击之后。
 
 **Q：想换端口？**
-A：开发改 `package.json` 里 dev 脚本的 `-p`；生产用 `PORT=8080 bun run start`。
+A：开发用 `PORT=3001 bun run dev`（脚本会明确提示"端口取自环境变量"，不会静默漂移）；生产用 `PORT=8080 bun run start`。
 
 ## 已知限制
 

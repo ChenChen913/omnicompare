@@ -17,9 +17,9 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "dev": "node scripts/run-with-log.mjs dev.log -- next dev -p 3000",
+    "dev": "node scripts/run-with-log.mjs dev.log --port 3000 -- next dev",
     "build": "next build && node scripts/copy-standalone.mjs",
-    "start": "node scripts/run-with-log.mjs server.log --env NODE_ENV=production --env PORT=3000 -- node .next/standalone/server.js",
+    "start": "node scripts/run-with-log.mjs server.log --port 3000 --env NODE_ENV=production -- node .next/standalone/server.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },

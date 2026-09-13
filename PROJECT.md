@@ -191,11 +191,16 @@ bun run dev          # 或 npm run dev，监听 http://localhost:3000
 ```
 
 开发模式会同时把日志写到终端与 `dev.log`，由 `scripts/run-with-log.mjs` 实现（该文件已 gitignore）。
+该脚本还会**预检端口**并给出可执行的处置建议，见 5.6。
 
 > 历史坑：这三个脚本原先写作 `next dev -p 3000 2>&1 | tee dev.log` / `cp -r ...` / `NODE_ENV=production bun ...`，
 > 全是 Unix 专有写法 —— Windows 上服务能起来但 `dev.log` 恒为 0 字节，`build` 会在 `next build` 成功之后
 > 因 `cp -r` 失败而**静默产出不完整的 standalone 产物**（首页 200、静态资源全部 404，浏览器一片空白）。
 > 现已全部换成 `node scripts/*.mjs`，Windows / macOS / Linux 行为一致。
+>
+> 另一个坑：Windows 下 `next` 是 `node_modules/.bin/next.cmd` 包装，spawn 必须经 shell，而
+> `shell: true` 会触发 `DEP0190`（子进程参数只拼接、不转义）。现在改为用 `node` 直接执行
+> `node_modules/next/dist/bin/next`，既避开 shell 也不丢参数 —— **不要再改回 shell: true**。
 
 ### 5.3 生产构建与启动
 
@@ -238,9 +243,16 @@ DEST=/var/backups bash scripts/backup-data.sh
 
 ### 5.6 修改端口
 
-- 开发：改 `package.json` 中 dev 脚本的 `-p 3000`
-- 生产：`package.json` 的 start 脚本通过 `--env PORT=3000` 传端口，改这里或用
-  `PORT=8080 bun run start` 覆盖（standalone 读 `PORT` 环境变量）
+- 开发：`PORT=3001 bun run dev`（Windows 用 `set PORT=3001 && bun run dev`）
+- 生产：`PORT=8080 bun run start`（standalone 读 `PORT` 环境变量）
+- 两个脚本都通过 `--port <n>` 声明默认端口（3000），并**在启动前预检**：被占用时直接
+  打印占用进程 PID 与三种处置方式，而不是把 `EADDRINUSE` 堆栈丢给用户
+- 端口取值优先级：环境变量 `PORT` > 脚本默认值。**环境变量生效时脚本会明确提示**——
+  本机 shell 里可能存在别的工具设的 `PORT`，静默沿用会造成"文档写 3000、实际起在别处"
+  的端口漂移，比直接报错难查得多
+- 注意 Next 的语义差异：用 `-p` 显式指定端口时不会自动换端口，用 `PORT` 环境变量同样
+  绑定该端口不重试；只有**两者都不给**时才允许自动换端口。本项目刻意选择"确定即确定"，
+  避免服务悄悄跑在别的端口上
 
 ### 5.7 如何关闭
 
