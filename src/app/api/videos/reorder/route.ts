@@ -13,7 +13,10 @@ import { resolveProjectParam } from '@/lib/v1-project-param';
 
 export const dynamic = 'force-dynamic';
 
-const noStore = { 'Cache-Control': 'no-store' } as const;
+const noStore = {
+  'Cache-Control': 'no-store',
+  'Content-Type': 'application/json; charset=utf-8',
+} as const;
 
 function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400, headers: noStore });

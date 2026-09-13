@@ -20,6 +20,8 @@ export interface VideoCardProps {
   highlighted?: boolean;
   /** 全局内容比例（蓝图 §13）；单卡覆盖由 slot.aspectRatio 表达，null = 跟随全局 */
   globalAspect?: AspectRatio;
+  /** 全局自定义比例宽高：仅当生效比例为 'custom' 时参与计算（缺省/非法回落 16:9） */
+  globalCustomRatio?: { w: number; h: number };
   /** 全局标题显隐：false 时隐藏标题输入框（蓝图 §13） */
   showTitles?: boolean;
   /** 全局属性信息显隐：false 时隐藏标题下方信息行（文件名/大小/比例/操作） */
@@ -59,6 +61,7 @@ export function VideoCard({
   dragHandle,
   isDragging,
   globalAspect = 'original',
+  globalCustomRatio,
   showTitles = true,
   showInfo = true,
   letterboxFill = 'base',
@@ -176,6 +179,8 @@ export function VideoCard({
 
   // 生效比例：单卡覆盖优先，否则全局；比例只控制卡片框，内容恒 object-contain（蓝图 §13 铁律）
   const effectiveAspect = slot.aspectRatio ?? globalAspect;
+  // 'custom' 时用全局自定义宽高（单卡只覆盖档位，不单独设宽高）；缺失/非法由 aspectCss 回落 16:9
+  const boxAspect = aspectCss(effectiveAspect, globalCustomRatio);
 
   const isBundle = isHtml && slot.bundle === true;
   const htmlSrc = htmlFile
@@ -232,7 +237,7 @@ export function VideoCard({
 
       {/* 内容区域：比例只控制卡片框（行内 aspect-ratio），视频 object-contain 不裁切；HTML 为沙箱 iframe */}
       <div
-        style={{ aspectRatio: aspectCss(effectiveAspect) }}
+        style={{ aspectRatio: boxAspect }}
         className="relative w-full overflow-hidden bg-black"
         onDragOver={(e) => {
           e.preventDefault();
@@ -467,7 +472,7 @@ export function VideoCard({
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[8.5rem] border-border bg-card">
-                    {([null, '16:9', '9:16', '1:1', 'original'] as const).map((a) => (
+                    {([null, '16:9', '9:16', '1:1', 'original', 'custom'] as const).map((a) => (
                       <DropdownMenuItem
                         key={a ?? 'follow'}
                         onClick={() => onAspectOverride(index, a)}

@@ -5,13 +5,8 @@
  * - applyReorder 按 id 重排并保证 order 0..n-1 紧凑无空洞（蓝图 §19.4）
  */
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  applyReorder,
-  isValidId,
-  readProject,
-  withProjectLock,
-  writeProject,
-} from '@/lib/project-store';
+import { applyReorder, readProject, withProjectLock, writeProject } from '@/lib/project-store';
+import { resolveProjectId } from '@/lib/v2-project-param';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,9 +16,8 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   const { id } = await params;
-  if (!isValidId(id)) {
-    return NextResponse.json({ error: '无效的项目 id' }, { status: 400, headers: noStore });
-  }
+  const resolved = await resolveProjectId(id);
+  if (resolved.error) return resolved.error;
 
   const body = (await req.json().catch(() => null)) as { orderedIds?: unknown } | null;
   if (!body || !Array.isArray(body.orderedIds) || body.orderedIds.some((x) => typeof x !== 'string')) {

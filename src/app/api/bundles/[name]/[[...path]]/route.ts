@@ -18,7 +18,10 @@ import { mimeFromExt } from '@/lib/types';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const noStore = { 'Cache-Control': 'no-store' } as const;
+const noStore = {
+  'Cache-Control': 'no-store',
+  'Content-Type': 'application/json; charset=utf-8',
+} as const;
 
 type Ctx = { params: Promise<{ name: string; path?: string[] }> };
 
@@ -55,12 +58,17 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 
   const ext = path.extname(target).toLowerCase();
   const isHtmlEntry = ext === '.html' || ext === '.htm';
+  // SVG 与 HTML 同级处理：SVG 可内嵌 <script>，直接作为顶层文档打开会在本站源下执行脚本。
+  // /api/files/[name] 已对 .svg 强制沙箱，这里必须一致（历史遗漏点），
+  // 否则 zip 包内的 .svg 就是一条绕过 sandbox 的存储型 XSS 通道。
+  const isSvg = ext === '.svg';
+  const sandboxed = isHtmlEntry || isSvg;
 
-  const headers: Record<string, string> = isHtmlEntry
+  const headers: Record<string, string> = sandboxed
     ? {
-        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Type': isSvg ? 'image/svg+xml' : 'text/html; charset=utf-8',
         'Content-Security-Policy': 'sandbox allow-scripts',
-        'Content-Disposition': 'inline; filename="sandbox.html"',
+        'Content-Disposition': `inline; filename="${isSvg ? 'sandbox.svg' : 'sandbox.html'}"`,
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'no-store',
       }

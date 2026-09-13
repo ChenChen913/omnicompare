@@ -224,6 +224,10 @@ export function VideoWall() {
   const [loop, setLoop] = useState(true);
   const [mutedAll, setMutedAll] = useState(false);
   const [aspect, setAspect] = useState<AspectRatio>('original');
+  /** 全局自定义比例宽高（aspectRatio='custom' 时生效） */
+  const [customRatio, setCustomRatio] = useState<{ w: number; h: number } | undefined>(undefined);
+  /** 自定义比例输入草稿（受控输入需要允许中间态，提交时再校验） */
+  const [ratioDraft, setRatioDraft] = useState({ w: '16', h: '9' });
   const [showTitles, setShowTitles] = useState(true);
   const [showInfo, setShowInfo] = useState(true);
   const [rate, setRate] = useState(1);
@@ -303,6 +307,7 @@ export function VideoWall() {
   const applySettings = useCallback((s?: ManifestSettings) => {
     const d = defaultSettings();
     setAspect(s?.aspectRatio ?? d.aspectRatio);
+    setCustomRatio(s?.customRatio);
     setShowTitles(s?.showTitles ?? d.showTitles);
     setShowInfo(s?.showInfo ?? d.showInfo);
     setLoop(s?.loop ?? d.loop);
@@ -310,6 +315,11 @@ export function VideoWall() {
     setRate(s?.playbackRate ?? d.playbackRate);
     setLetterboxFill(s?.letterboxFill ?? d.letterboxFill);
   }, []);
+
+  /* 自定义比例草稿跟随服务端值同步（首次加载与切换项目后回填） */
+  useEffect(() => {
+    setRatioDraft({ w: String(customRatio?.w ?? 16), h: String(customRatio?.h ?? 9) });
+  }, [customRatio]);
 
   /* ---------- 初始化：拉取清单 + 恢复本地偏好 ---------- */
   useEffect(() => {
@@ -537,11 +547,6 @@ export function VideoWall() {
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
   }, [resolvedTheme, setTheme]);
 
-  /** Studio ↔ Focus 双向切换：只改壳层，不动内容与播放状态 */
-  const toggleMode = useCallback(() => {
-    setMode((m) => (m === 'studio' ? 'focus' : 'studio'));
-  }, []);
-
   /**
    * 侧栏窗格点击：滚动到对应卡片并短暂高亮。
    * 只滚动视口、不改任何状态，网格与视频元素不受影响。
@@ -561,6 +566,7 @@ export function VideoWall() {
     async (partial: Partial<ManifestSettings>) => {
       const prev = {
         aspect,
+        customRatio,
         showTitles,
         showInfo,
         loop,
@@ -570,6 +576,7 @@ export function VideoWall() {
       };
       // 乐观回填
       if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
+      if (partial.customRatio !== undefined) setCustomRatio(partial.customRatio);
       if (partial.showTitles !== undefined) setShowTitles(partial.showTitles);
       if (partial.showInfo !== undefined) setShowInfo(partial.showInfo);
       if (partial.loop !== undefined) setLoop(partial.loop);
@@ -588,6 +595,7 @@ export function VideoWall() {
       } catch {
         // 回滚乐观更新
         setAspect(prev.aspect);
+        setCustomRatio(prev.customRatio);
         setShowTitles(prev.showTitles);
         setShowInfo(prev.showInfo);
         setLoop(prev.loop);
@@ -597,8 +605,20 @@ export function VideoWall() {
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, applySettings, withPid],
   );
+
+  /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
+  const applyCustomRatio = useCallback(() => {
+    const w = Number(ratioDraft.w);
+    const h = Number(ratioDraft.h);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+      toast.error('自定义比例需为两个正数', { id: 'aspect' });
+      setRatioDraft({ w: String(customRatio?.w ?? 16), h: String(customRatio?.h ?? 9) });
+      return;
+    }
+    void updateSettings({ aspectRatio: 'custom', customRatio: { w, h } });
+  }, [ratioDraft, customRatio, updateSettings]);
 
   /** 单卡比例覆盖：null = 恢复跟随全局（蓝图 §13）；乐观更新 + 失败回滚 */
   const handleSlotAspect = useCallback(
@@ -771,7 +791,7 @@ export function VideoWall() {
         }
       })();
     },
-    [slots, filledSlots, sortableIds, withPid],
+    [slots, filledSlots, sortableIds, withPid, applySettings],
   );
 
   /* ---------- 上传与分配 ---------- */
@@ -1313,8 +1333,54 @@ export function VideoWall() {
                       </button>
                     ))}
                   </div>
+                  {/* 自定义比例（蓝图 §13）：宽高比直接写进卡片容器的 aspect-ratio */}
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void updateSettings({ aspectRatio: 'custom' })}
+                      aria-pressed={aspect === 'custom'}
+                      className={cn(
+                        'h-8 shrink-0 rounded-md border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                        aspect === 'custom'
+                          ? 'border-primary bg-primary/20 text-primary'
+                          : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
+                      )}
+                    >
+                      自定义
+                    </button>
+                    <Input
+                      value={ratioDraft.w}
+                      onChange={(e) => setRatioDraft((d) => ({ ...d, w: e.target.value }))}
+                      onBlur={applyCustomRatio}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          applyCustomRatio();
+                        }
+                      }}
+                      inputMode="numeric"
+                      aria-label="自定义比例宽"
+                      className="h-8 w-full min-w-0 text-center text-xs tabular-nums"
+                    />
+                    <span className="shrink-0 text-xs text-muted-foreground">:</span>
+                    <Input
+                      value={ratioDraft.h}
+                      onChange={(e) => setRatioDraft((d) => ({ ...d, h: e.target.value }))}
+                      onBlur={applyCustomRatio}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          applyCustomRatio();
+                        }
+                      }}
+                      inputMode="numeric"
+                      aria-label="自定义比例高"
+                      className="h-8 w-full min-w-0 text-center text-xs tabular-nums"
+                    />
+                  </div>
                   <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
                     「原始」为 16:9 容器等比容纳；竖版内容选 9:16 可减少留白，单卡可在信息行单独覆盖。
+                    自定义比例填宽 : 高（如 21 : 9），失焦或回车即保存。
                   </p>
                 </PopoverContent>
               </Popover>
@@ -1935,6 +2001,7 @@ export function VideoWall() {
                     highlighted: highlight === slot.index,
                     dragActive: gridDrag,
                     globalAspect: aspect,
+                    globalCustomRatio: customRatio,
                     showTitles,
                     showInfo,
                     letterboxFill,
@@ -1958,7 +2025,7 @@ export function VideoWall() {
                   <div
                     key={`pad-${i}`}
                     aria-hidden
-                    style={{ aspectRatio: aspectCss(aspect) }}
+                    style={{ aspectRatio: aspectCss(aspect, customRatio) }}
                     className="rounded-2xl border border-dashed border-border/60 bg-muted/20"
                   />
                 ))}

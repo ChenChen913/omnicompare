@@ -10,7 +10,10 @@ import { SLOT_MAX, SLOT_MIN, defaultLayoutFor, defaultSettings } from '@/lib/typ
 
 export const dynamic = 'force-dynamic';
 
-const noStore = { 'Cache-Control': 'no-store' } as const;
+const noStore = {
+  'Cache-Control': 'no-store',
+  'Content-Type': 'application/json; charset=utf-8',
+} as const;
 
 export async function GET() {
   const ids = await listProjectIds();

@@ -17,7 +17,10 @@ import { resolveProjectParam } from '@/lib/v1-project-param';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
-const noStore = { 'Cache-Control': 'no-store' } as const;
+const noStore = {
+  'Cache-Control': 'no-store',
+  'Content-Type': 'application/json; charset=utf-8',
+} as const;
 
 export async function POST(req: NextRequest) {
   let form: FormData;

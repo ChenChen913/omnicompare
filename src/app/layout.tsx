@@ -21,7 +21,9 @@ export const metadata: Metadata = {
     "把多个 AI 模型生成的结果放进同一矩阵并行对比：视频与 HTML 网页混合展示、自定义数量与行列布局、批量上传、统一播放控制、暗亮双主题。数据持久化在服务端，换设备不丢。",
   keywords: ["OmniCompare", "灵动对比", "AI 对比", "视频矩阵", "HTML 预览", "对比工作台"],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    // 使用仓库自带的本地图标：不依赖第三方 CDN，离线/内网部署同样可用，
+    // 也避免每次访问都向外部域名发起请求（隐私与可用性）
+    icon: "/logo.svg",
   },
 };
 

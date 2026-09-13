@@ -1,25 +1,33 @@
 /**
  * 项目设置 API（schema v2）
  * PATCH /api/projects/[id]/settings
- * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate? }
+ * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill? }
  * 全局比例 / 标题与属性信息显隐 / 批量播放设置（只作用于 kind=video 的条目，见 BLUEPRINT §9/§13）
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { isValidId, readProject, withProjectLock, writeProject } from '@/lib/project-store';
-import { AspectRatio } from '@/lib/types';
+import { readProject, withProjectLock, writeProject } from '@/lib/project-store';
+import { resolveProjectId } from '@/lib/v2-project-param';
+import {
+  ASPECT_RATIOS,
+  CUSTOM_RATIO_MAX,
+  PLAYBACK_RATES,
+  AspectRatio,
+  parseCustomRatio,
+} from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
-const noStore = { 'Cache-Control': 'no-store' } as const;
+const noStore = {
+  'Cache-Control': 'no-store',
+  'Content-Type': 'application/json; charset=utf-8',
+} as const;
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const ASPECTS: AspectRatio[] = ['16:9', '9:16', '1:1', 'original', 'custom'];
-const RATES = [0.5, 1, 1.25, 1.5, 2];
-
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   const { id } = await params;
-  if (!isValidId(id)) return NextResponse.json({ error: '无效的项目 id' }, { status: 400, headers: noStore });
+  const resolved = await resolveProjectId(id);
+  if (resolved.error) return resolved.error;
 
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) return NextResponse.json({ error: '请求体格式错误' }, { status: 400, headers: noStore });
@@ -29,22 +37,30 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     const s = project.settings;
 
     if (body.aspectRatio !== undefined) {
-      if (typeof body.aspectRatio !== 'string' || !ASPECTS.includes(body.aspectRatio as AspectRatio)) {
-        return NextResponse.json({ error: '无效的比例值' }, { status: 400, headers: noStore });
+      if (
+        typeof body.aspectRatio !== 'string' ||
+        !(ASPECT_RATIOS as readonly string[]).includes(body.aspectRatio)
+      ) {
+        return NextResponse.json(
+          { error: `比例取值需为 ${ASPECT_RATIOS.join(' / ')}` },
+          { status: 400, headers: noStore },
+        );
       }
       s.aspectRatio = body.aspectRatio as AspectRatio;
     }
     if (body.customRatio !== undefined) {
-      if (
-        body.customRatio === null ||
-        typeof body.customRatio !== 'object' ||
-        Number((body.customRatio as Record<string, unknown>).w) <= 0 ||
-        Number((body.customRatio as Record<string, unknown>).h) <= 0
-      ) {
-        return NextResponse.json({ error: '无效的自定义比例' }, { status: 400, headers: noStore });
+      if (body.customRatio === null) {
+        delete s.customRatio;
+      } else {
+        const parsed = parseCustomRatio(body.customRatio);
+        if (!parsed) {
+          return NextResponse.json(
+            { error: `自定义比例需为 0-${CUSTOM_RATIO_MAX} 之间的正数宽高` },
+            { status: 400, headers: noStore },
+          );
+        }
+        s.customRatio = parsed;
       }
-      const c = body.customRatio as Record<string, unknown>;
-      s.customRatio = { w: Number(c.w), h: Number(c.h) };
     }
     if (body.showTitles !== undefined) {
       if (typeof body.showTitles !== 'boolean') {
@@ -71,8 +87,14 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       s.muted = body.muted;
     }
     if (body.playbackRate !== undefined) {
-      if (typeof body.playbackRate !== 'number' || !RATES.includes(body.playbackRate)) {
-        return NextResponse.json({ error: '播放速度仅支持 0.5 / 1 / 1.25 / 1.5 / 2' }, { status: 400, headers: noStore });
+      if (
+        typeof body.playbackRate !== 'number' ||
+        !(PLAYBACK_RATES as readonly number[]).includes(body.playbackRate)
+      ) {
+        return NextResponse.json(
+          { error: `播放速度仅支持 ${PLAYBACK_RATES.join(' / ')}` },
+          { status: 400, headers: noStore },
+        );
       }
       s.playbackRate = body.playbackRate;
     }

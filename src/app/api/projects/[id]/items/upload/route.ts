@@ -2,13 +2,15 @@
  * 条目上传 API（schema v2）
  * POST /api/projects/[id]/items/upload
  * multipart: file（必填）、order（可选 0..n，插入位置，缺省追加到末尾）、title（可选）
- * kind 由服务端按 MIME + 扩展名双判（video / html），HTML 限 ≤10MB
+ * kind 由服务端按 MIME + 扩展名双判（video / html / image；zip 解压为 bundle 型 html）
+ *
+ * 数量上限：条目数不得超过 SLOT_MAX（与 v1 的"内容位 1-12"是同一个上限）。
+ * 上传后会把 slotCount 抬到条目数，保证 v1 视图（按 slotCount 输出槽位）
+ * 永远看得见全部条目 —— 否则尾部条目对 v1 不可见，会被 v1 写路径当成已删除内容清理掉。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import {
-  ensureDefaultProject,
-  isValidId,
   readProject,
   saveBundle,
   saveFile,
@@ -16,7 +18,8 @@ import {
   withProjectLock,
   writeProject,
 } from '@/lib/project-store';
-import { ContentItem, TITLE_MAX } from '@/lib/types';
+import { resolveProjectId } from '@/lib/v2-project-param';
+import { ContentItem, SLOT_MAX, TITLE_MAX } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -27,8 +30,8 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(req: NextRequest, { params }: Ctx) {
   const { id } = await params;
-  if (!isValidId(id)) return NextResponse.json({ error: '无效的项目 id' }, { status: 400, headers: noStore });
-  await ensureDefaultProject();
+  const resolved = await resolveProjectId(id);
+  if (resolved.error) return resolved.error;
 
   let form: FormData;
   try {
@@ -58,6 +61,12 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 
   return withProjectLock(id, async () => {
     const project = await readProject(id);
+    if (project.items.length >= SLOT_MAX) {
+      return NextResponse.json(
+        { error: `内容条目已达上限 ${SLOT_MAX} 个` },
+        { status: 400, headers: noStore },
+      );
+    }
     const insertAt = hasOrder ? Math.min(Math.max(order, 0), project.items.length) : project.items.length;
 
     // zip 资源包（Step B）：解压校验 + 落盘在保存阶段完成，失败即整体拒绝
@@ -92,6 +101,9 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 
     project.items.splice(insertAt, 0, item);
     project.items = project.items.map((it, i) => (it.order === i ? it : { ...it, order: i }));
+    // 窗格数跟随条目数（不超过 SLOT_MAX）：v1 视图按 slotCount 输出槽位，
+    // 小于条目数会让尾部条目对 v1 不可见，进而被 v1 写路径误删
+    project.slotCount = Math.max(project.slotCount, project.items.length);
     project.updatedAt = now;
     await writeProject(project);
 

@@ -11,7 +11,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { unzipSync } from 'fflate';
+import { Unzip, UnzipInflate } from 'fflate';
 import {
   BUNDLE_ASSET_EXTS,
   BUNDLE_ENTRY,
@@ -37,6 +37,7 @@ import {
   defaultSettings,
   isVideoFile,
   mimeFromExt,
+  parseCustomRatio,
 } from './types';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -179,16 +180,7 @@ function normalizeSettings(raw: unknown): ProjectSettings {
   const aspectRatio = ['16:9', '9:16', '1:1', 'original', 'custom'].includes(r.aspectRatio as string)
     ? (r.aspectRatio as ProjectSettings['aspectRatio'])
     : base.aspectRatio;
-  const customRatio =
-    r.customRatio &&
-    typeof r.customRatio === 'object' &&
-    Number((r.customRatio as Record<string, unknown>).w) > 0 &&
-    Number((r.customRatio as Record<string, unknown>).h) > 0
-      ? {
-          w: Number((r.customRatio as Record<string, unknown>).w),
-          h: Number((r.customRatio as Record<string, unknown>).h),
-        }
-      : undefined;
+  const customRatio = parseCustomRatio(r.customRatio) ?? undefined;
   return {
     aspectRatio,
     customRatio,
@@ -208,8 +200,17 @@ function normalizeSettings(raw: unknown): ProjectSettings {
  * 读取项目清单并归一化。
  * items 按 order 升序输出且重排为紧凑 0..n-1（容忍磁盘上的历史空洞）；
  * slotCount 兜底为 max(items.length, 1)，layout 兜底为按 slotCount 的近方形矩阵。
+ *
+ * 默认项目读取前先跑一次幂等迁移（见下方注释），这是迁移不被绕过的兜底保险。
  */
 export async function readProject(id: string): Promise<Project> {
+  // 默认项目：先确保 v1→v2 迁移已完成。
+  // 背景（历史事故）：清单缺失时本函数会返回一份"空白默认项目"，任何 v2 写路径
+  // （PATCH settings/layout 等）都会把它落盘，于是 migrateV1ToV2 的幂等判据
+  // 「data/projects/default/manifest.json 是否存在」被提前占用，v1 数据永远迁不进来
+  // —— 用户升级后旧内容彻底不可见。把迁移放在读取入口，任何路径都无法绕过。
+  if (id === DEFAULT_PROJECT_ID) await ensureDefaultProject();
+
   const now = new Date().toISOString();
   const base: Project = {
     id,
@@ -233,7 +234,12 @@ export async function readProject(id: string): Promise<Project> {
       .filter((it): it is ContentItem => it !== null)
       .map((it, i) => ({ ...it, order: i }));
 
-    const slotCount = clampInt(raw.slotCount, SLOT_MIN, SLOT_MAX, Math.max(items.length, 1));
+    // 窗格数恒不小于条目数：v1 视图按 slotCount 输出槽位，一旦小于条目数，
+    // 尾部条目在 v1 视图里不可见，会被 v1 写路径当成"已删除内容"清理掉（静默丢数据）。
+    const slotCount = Math.max(
+      clampInt(raw.slotCount, SLOT_MIN, SLOT_MAX, Math.max(items.length, 1)),
+      Math.min(items.length, SLOT_MAX),
+    );
     const effectiveCount = Math.max(slotCount, items.length);
     const layoutRaw = raw.layout;
     const layout: Layout | 'auto' =
@@ -350,6 +356,9 @@ export function toSlots(project: Project): Slot[] {
 
 /* ============================== 文件服务 ============================== */
 
+/** zip 的 MIME 类型（不同浏览器/系统给出的变体） */
+const ZIP_MIMES = ['application/zip', 'application/x-zip-compressed'];
+
 /** 服务端校验上传文件，返回错误信息（null 表示通过）；kind 由 MIME + 扩展名双判（video / html / image；zip 为 bundle 型 html） */
 export function validateUploadFile(
   name: string,
@@ -360,12 +369,16 @@ export function validateUploadFile(
   const ext = path.extname(name).toLowerCase();
   const isHtml = (HTML_EXTS as readonly string[]).includes(ext);
   if (isHtml || mimeType === 'text/html') {
+    // 双判一致性检查：MIME 明确是 zip 却挂着 .html 扩展名 —— 说明上传方标错了类型
+    // （典型场景：zip 包被改名成 .html）。放行会把压缩二进制当 HTML 存成单文件页面，
+    // 既不渲染也不报错，用户只会看到"传上去了但打不开"。宁可明确拒收。
+    if (ZIP_MIMES.includes(mimeType)) return { error: '文件类型与扩展名不一致：这是 zip 包，请用 .zip 扩展名上传' };
     if (size > MAX_HTML_SIZE) return { error: 'HTML 文件超过 10MB 大小限制' };
     if (!isHtml) return { error: '仅支持 .html / .htm 文件' };
     return { kind: 'html' };
   }
   // zip 资源包（Step B）：多文件 HTML 页面，解压后以目录形式存放，经 /api/bundles/ 服务
-  if (ext === '.zip' || mimeType === 'application/zip' || mimeType === 'application/x-zip-compressed') {
+  if (ext === '.zip' || ZIP_MIMES.includes(mimeType)) {
     if (size > MAX_BUNDLE_SIZE) return { error: 'zip 包超过 50MB 大小限制' };
     if (ext !== '.zip') return { error: '仅支持 .zip 资源包' };
     return { kind: 'html', bundle: true };
@@ -409,29 +422,69 @@ export async function saveFile(projectId: string, file: File, kind: ContentKind)
 /* ============================== zip 资源包（Step B） ============================== */
 
 /**
- * 归一化 zip 内部路径，非法时返回 null（zip-slip 防护）：
- * - 反斜杠统一为正斜杠；拒绝绝对路径、盘符、空字节、.. 段
+ * Windows 保留设备名（CON/PRN/AUX/NUL/COM1-9/LPT1-9，含带扩展名形式）：
+ * 这些名字作为路径段在 Windows 上会命中设备而不是普通文件，一律拒绝。
+ */
+const WINDOWS_RESERVED_SEGMENT = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+/**
+ * 归一化 zip 内部路径，非法时抛错（zip-slip 防护）：
+ * - 反斜杠统一为正斜杠；拒绝绝对路径、盘符、空字节、.. 段、Windows 保留设备名
  * - 去掉空段与 ./ 段，返回包内相对路径
  */
-function sanitizeZipEntryPath(rawPath: string): string | null {
-  if (rawPath.includes('\0')) return null;
+function sanitizeZipEntryPath(rawPath: string): string {
+  const reject = (): never => {
+    throw new Error(`zip 包内含不安全的路径：${rawPath}`);
+  };
+  if (rawPath.includes('\0')) reject();
   const normalized = rawPath.replace(/\\/g, '/');
-  if (/^[A-Za-z]:/.test(normalized)) return null; // Windows 盘符
-  if (normalized.startsWith('/')) return null; // 绝对路径
+  if (/^[A-Za-z]:/.test(normalized)) reject(); // Windows 盘符
+  if (normalized.startsWith('/')) reject(); // 绝对路径
   const segments: string[] = [];
   for (const seg of normalized.split('/')) {
     if (seg === '' || seg === '.') continue;
-    if (seg === '..') return null; // 路径穿越
+    if (seg === '..') reject(); // 路径穿越
+    if (WINDOWS_RESERVED_SEGMENT.test(seg)) reject(); // Windows 设备名
     segments.push(seg);
   }
-  if (segments.length === 0) return null;
+  if (segments.length === 0) reject();
   return segments.join('/');
 }
 
+/** 把解压分片合并成一个连续缓冲（分片是 Buffer 视图时不做额外拷贝） */
+function concatChunks(chunks: Uint8Array[], total: number): Uint8Array {
+  const out = Buffer.allocUnsafe(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
 /**
- * 保存 zip 资源包：解压校验后落盘到 files/[uuid].html/ 目录（目录名即 file.filename）。
- * 安全部暑：路径归一化 + 扩展名白名单 + 文件数/解压总大小限额（防 zip 炸弹）。
- * 返回 FileMeta（filename = 包目录名，size/mimeType 为 zip 本身的）。
+ * 喂给 fflate 的 zip 输入切片大小。
+ *
+ * 为什么必须切片：fflate 的 Inflate 每次 `push` 只会把"当次输入能解出的内容"投递出来
+ * （`Inflate.prototype.c` 用 32KB 预分配缓冲 + 按需翻倍，然后一次性 ondata）。
+ * 一次性把整个 zip 交给 `Unzip.push(buf, true)`，它就会把**整个条目**解完再一次性投递
+ * ——实测 300MB 载荷只回调一次、单片 300MB，此时"边解边累计"的限额检查形同虚设。
+ * 按 8KB 切片喂入后，单次投递上界 ≈ 8KB × DEFLATE 理论最大膨胀比(≈1032:1) ≈ 8MB，
+ * 越限中止的滞后被压到 MB 级，内存上界才真正落到「限额 + 一片」。
+ */
+const ZIP_INPUT_SLICE = 8 * 1024;
+
+/**
+ * 保存 zip 资源包：流式解压，边解边校验，超限立即中止。
+ * 安全部署（历史事故修正）：路径归一化 + 扩展名白名单 + 文件数/解压总大小限额。
+ *
+ * 早期实现用 `unzipSync` 先把整包解压进内存、再检查 120MB 限额，
+ * 于是 300KB 的 zip 炸弹（解压比 ~1000:1）能让进程 RSS 暴涨数百 MB；
+ * 上限允许的 50MB 包理论上可申请数十 GB。现在改为 fflate 的流式 Unzip：
+ *   1. 预检中央目录/本地头声明的 originalSize，典型炸弹在 inflate 之前就被拒（零解压成本）；
+ *   2. 分片喂入 + 解压过程中累计**实际**字节数，声明值被伪造也能在越限瞬间中止；
+ *   3. 中止用异常硬退出 push 循环。
+ * 全部通过后才落盘，失败不留半包。
  */
 export async function saveBundle(projectId: string, file: File): Promise<FileMeta> {
   const filesDir = projectFilesDir(projectId);
@@ -439,40 +492,84 @@ export async function saveBundle(projectId: string, file: File): Promise<FileMet
   const filename = `${randomUUID()}.html`;
   const bundleDir = path.join(filesDir, filename);
 
-  const zipBuffer = Buffer.from(await file.arrayBuffer());
-  let entries: Record<string, Uint8Array>;
-  try {
-    entries = unzipSync(new Uint8Array(zipBuffer));
-  } catch {
-    throw new Error('无法解析 zip 包，文件可能已损坏');
-  }
+  const zipBuffer = new Uint8Array(await file.arrayBuffer());
 
-  // 第一遍：路径归一化 + 白名单 + 限额校验（全部通过才开始落盘，失败不留半包）
+  /** 已校验通过、待落盘的文件 */
   const cleaned: { relPath: string; data: Uint8Array }[] = [];
-  let totalUncompressed = 0;
-  for (const [rawPath, data] of Object.entries(entries)) {
-    if (rawPath.endsWith('/')) continue; // 目录条目：写文件时按需建目录
-    const relPath = sanitizeZipEntryPath(rawPath);
-    if (!relPath) throw new Error(`zip 包内含不安全的路径：${rawPath}`);
+  /** 已受理的条目数：在 onfile 阶段即刻累加，不依赖条目是否已完成解压 */
+  let entryCount = 0;
+  let declaredTotal = 0;
+  let actualTotal = 0;
+  /**
+   * 中止原因。onfile 阶段的校验直接抛错即可干净退出；
+   * 但 ondata 阶段（已经进入 inflate 循环）抛错会被 fflate 用空 chunk 再次回调，
+   * 噪音异常会盖掉真正原因，故先记原因再抛，由 push 之后的统一出口上报。
+   */
+  let aborted: Error | null = null;
+  const fail = (message: string): never => {
+    aborted = new Error(message);
+    throw aborted;
+  };
+
+  const unzip = new Unzip();
+  unzip.register(UnzipInflate);
+  unzip.onfile = (entry) => {
+    if (aborted) return; // push 循环尚未退出时的残余回调
+    if (entry.name.endsWith('/')) return; // 目录条目：写文件时按需建目录
+
+    if (entryCount >= MAX_BUNDLE_FILES) {
+      fail(`zip 包内文件数超过 ${MAX_BUNDLE_FILES} 个限制`);
+    }
+    entryCount += 1;
+    const relPath = sanitizeZipEntryPath(entry.name);
     const ext = path.extname(relPath).toLowerCase();
     if (!(BUNDLE_ASSET_EXTS as readonly string[]).includes(ext)) {
-      throw new Error(`zip 包内含不支持的文件类型：${rawPath}`);
+      fail(`zip 包内含不支持的文件类型：${entry.name}`);
     }
-    totalUncompressed += data.length;
-    if (totalUncompressed > MAX_BUNDLE_UNCOMPRESSED) {
-      throw new Error('zip 包解压后超过 120MB 总大小限制');
+    // 预检声明值：zip 通常在此就能拒绝，无需付出任何解压成本
+    declaredTotal += entry.originalSize ?? 0;
+    if (declaredTotal > MAX_BUNDLE_UNCOMPRESSED) {
+      fail('zip 包解压后超过 120MB 总大小限制');
     }
-    cleaned.push({ relPath, data });
+
+    const chunks: Uint8Array[] = [];
+    let got = 0;
+    entry.ondata = (err, chunk, final) => {
+      if (aborted) return;
+      if (err) fail('无法解析 zip 包，文件可能已损坏');
+      if (chunk && chunk.length > 0) {
+        chunks.push(chunk);
+        got += chunk.length;
+        actualTotal += chunk.length;
+      }
+      // 声明值可被伪造，以实际解压量为准
+      if (actualTotal > MAX_BUNDLE_UNCOMPRESSED) {
+        fail('zip 包解压后超过 120MB 总大小限制');
+      }
+      if (final) cleaned.push({ relPath, data: concatChunks(chunks, got) });
+    };
+    entry.start();
+  };
+
+  try {
+    // 分片喂入：保证解码器增量投递，限额检查才有意义（见 ZIP_INPUT_SLICE 说明）
+    for (let offset = 0; offset < zipBuffer.length; offset += ZIP_INPUT_SLICE) {
+      if (aborted) break;
+      const end = Math.min(offset + ZIP_INPUT_SLICE, zipBuffer.length);
+      unzip.push(zipBuffer.subarray(offset, end), end === zipBuffer.length);
+    }
+  } catch (err) {
+    // 中止时 fflate 可能用空 chunk 再次回调，噪音异常不覆盖真正的中止原因
+    if (!aborted) throw err;
   }
+  if (aborted) throw aborted;
+
   if (cleaned.length === 0) throw new Error('zip 包为空');
-  if (cleaned.length > MAX_BUNDLE_FILES) {
-    throw new Error(`zip 包内文件数超过 ${MAX_BUNDLE_FILES} 个限制`);
-  }
   if (!cleaned.some((c) => c.relPath === BUNDLE_ENTRY)) {
     throw new Error(`zip 包根目录缺少 ${BUNDLE_ENTRY} 入口文件`);
   }
 
-  // 第二遍：落盘（路径已归一化，不会越出包目录）
+  // 落盘（路径已归一化，不会越出包目录）
   await fsp.mkdir(bundleDir, { recursive: true });
   for (const { relPath, data } of cleaned) {
     const target = path.join(bundleDir, relPath);

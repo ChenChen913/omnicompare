@@ -5,17 +5,23 @@
  *                           aspectRatio 为单卡比例覆盖，null = 恢复跟随全局，蓝图 §13）
  * DELETE /api/videos?slot=n[&project=id]  移除某位置的内容（连同文件）
  * DELETE /api/videos?all=1[&project=id]   清空全部内容（保留数量与矩阵设置）
+ *
+ * 文件删除顺序铁律：一律「先写清单、后删文件」。清单写入层（writeManifest）会对比
+ * 新旧条目的文件引用差集做集中清理，任何写路径都不会留下磁盘孤儿；
+ * 反过来先删文件再写清单，一旦写清单失败就会留下引用已删文件的死链卡片。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { readManifest, writeManifest, deleteVideoFile, withManifestLock } from '@/lib/video-store';
+import { readManifest, writeManifest, withManifestLock } from '@/lib/video-store';
 import { resolveProjectParam } from '@/lib/v1-project-param';
-import { AspectRatio, TITLE_MAX } from '@/lib/types';
+import { ASPECT_RATIOS, AspectRatio, TITLE_MAX } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
-const noStore = { 'Cache-Control': 'no-store' } as const;
-
-const ASPECTS: AspectRatio[] = ['16:9', '9:16', '1:1', 'original', 'custom'];
+/** 统一 JSON 响应头：显式声明 charset，避免客户端按本地编码猜测导致中文乱码 */
+const noStore = {
+  'Cache-Control': 'no-store',
+  'Content-Type': 'application/json; charset=utf-8',
+} as const;
 
 function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400, headers: noStore });
@@ -44,11 +50,11 @@ export async function PATCH(req: NextRequest) {
       aspect = null;
     } else if (
       typeof body.aspectRatio === 'string' &&
-      ASPECTS.includes(body.aspectRatio as AspectRatio)
+      (ASPECT_RATIOS as readonly string[]).includes(body.aspectRatio)
     ) {
       aspect = body.aspectRatio as AspectRatio;
     } else {
-      return badRequest('比例取值需为 16:9 / 9:16 / 1:1 / original / custom 或 null');
+      return badRequest(`比例取值需为 ${ASPECT_RATIOS.join(' / ')} 或 null`);
     }
   }
 
@@ -91,16 +97,13 @@ export async function DELETE(req: NextRequest) {
     const manifest = await readManifest(p.id);
 
     if (searchParams.get('all') === '1') {
-      await Promise.all(
-        manifest.slots
-          .filter((s) => s.video)
-          .map((s) => deleteVideoFile(s.video!.filename, p.id)),
-      );
+      // 整槽归一化（同时清除 kind/html/image 等扩展字段）：全部条目下线，
+      // 内容文件由 writeManifest 的集中孤儿清理统一删除（含 v1 视图看不见的 HTML/包目录）
       const cleared = {
         ...manifest,
         slots: manifest.slots.map((s) => ({ index: s.index, title: '', video: null })),
       };
-      await writeManifest(cleared, p.id);
+      await writeManifest(cleared, p.id, { allowTruncate: true });
       return NextResponse.json(await readManifest(p.id), { headers: noStore });
     }
 
@@ -113,12 +116,7 @@ export async function DELETE(req: NextRequest) {
       return badRequest('无效的视频位置');
     }
 
-    const target = manifest.slots[slot];
-    if (target.video) {
-      await deleteVideoFile(target.video.filename, p.id);
-    }
-    // 整槽归一化（同时清除 v1.5 扩展的 kind/html 字段）；
-    // 被移除条目的文件（含 v1 视图不可见的 HTML）由 writeManifest 集中清理
+    // 整槽归一化；被移除条目的文件由 writeManifest 集中清理（先清单后文件）
     manifest.slots[slot] = { index: slot, title: '', video: null };
     await writeManifest(manifest, p.id);
     return NextResponse.json(await readManifest(p.id), { headers: noStore });

@@ -6,7 +6,8 @@
  * - 显式矩阵沿用 v1 强校验风格
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { isValidId, readProject, withProjectLock, writeProject } from '@/lib/project-store';
+import { readProject, withProjectLock, writeProject } from '@/lib/project-store';
+import { resolveProjectId } from '@/lib/v2-project-param';
 import { SLOT_MAX, SLOT_MIN } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -17,7 +18,8 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   const { id } = await params;
-  if (!isValidId(id)) return NextResponse.json({ error: '无效的项目 id' }, { status: 400, headers: noStore });
+  const resolved = await resolveProjectId(id);
+  if (resolved.error) return resolved.error;
 
   const body = (await req.json().catch(() => null)) as
     | { mode?: unknown; rows?: unknown; cols?: unknown }

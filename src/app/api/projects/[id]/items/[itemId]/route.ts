@@ -4,15 +4,9 @@
  * DELETE /api/projects/[id]/items/[itemId]  删除条目并清理文件，其余条目紧凑重排
  */
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  deleteFile,
-  ensureDefaultProject,
-  isValidId,
-  readProject,
-  withProjectLock,
-  writeProject,
-} from '@/lib/project-store';
-import { AspectRatio, TITLE_MAX } from '@/lib/types';
+import { deleteFile, readProject, withProjectLock, writeProject } from '@/lib/project-store';
+import { resolveProjectId } from '@/lib/v2-project-param';
+import { ASPECT_RATIOS, AspectRatio, TITLE_MAX } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,11 +14,10 @@ const noStore = { 'Cache-Control': 'no-store' } as const;
 
 type Ctx = { params: Promise<{ id: string; itemId: string }> };
 
-const ASPECTS: AspectRatio[] = ['16:9', '9:16', '1:1', 'original', 'custom'];
-
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   const { id, itemId } = await params;
-  if (!isValidId(id)) return NextResponse.json({ error: '无效的项目 id' }, { status: 400, headers: noStore });
+  const resolved = await resolveProjectId(id);
+  if (resolved.error) return resolved.error;
 
   const body = (await req.json().catch(() => null)) as
     | { title?: unknown; aspectRatio?: unknown; order?: unknown }
@@ -44,7 +37,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         item.aspectRatio = null;
       } else if (
         typeof body.aspectRatio === 'string' &&
-        ASPECTS.includes(body.aspectRatio as AspectRatio)
+        (ASPECT_RATIOS as readonly string[]).includes(body.aspectRatio)
       ) {
         item.aspectRatio = body.aspectRatio as AspectRatio;
       } else {
@@ -77,7 +70,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const { id, itemId } = await params;
-  if (!isValidId(id)) return NextResponse.json({ error: '无效的项目 id' }, { status: 400, headers: noStore });
+  const resolved = await resolveProjectId(id);
+  if (resolved.error) return resolved.error;
 
   return withProjectLock(id, async () => {
     const project = await readProject(id);

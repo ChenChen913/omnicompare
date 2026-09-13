@@ -10,7 +10,7 @@
  */
 import { randomUUID } from 'crypto';
 import {
-  AspectRatio,
+  ASPECT_RATIOS,
   ContentItem,
   ContentKind,
   DEFAULT_PROJECT_ID,
@@ -18,15 +18,19 @@ import {
   Layout,
   Manifest,
   ManifestSettings,
+  PLAYBACK_RATES,
   ProjectSettings,
   Slot,
+  SLOT_MAX,
   autoLayoutFor,
   defaultSettings,
+  parseCustomRatio,
 } from './types';
 import {
   deleteFile,
   ensureDefaultProject,
   readProject,
+  reindexItems,
   saveFile,
   toSlots,
   withProjectLock,
@@ -59,6 +63,7 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
     slots: toSlots(project),
     settings: {
       aspectRatio: st.aspectRatio,
+      customRatio: st.customRatio,
       showTitles: st.showTitles,
       showInfo: st.showInfo,
       loop: st.loop,
@@ -69,12 +74,25 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
   };
 }
 
-/** 写清单：body 为 v1 视图（readManifest 的产物），按 slots 差量写回 items。
+/**
+ * 写清单：body 为 v1 视图（readManifest 的产物），按 slots 差量写回 items。
  * Step 5 起视图携带 kind/html 扩展字段，HTML 条目在 v1 写路径中原样保留；
- * 兼容未携带扩展字段的旧客户端（仅有 video 字段的槽位照常落为视频条目）。 */
-export async function writeManifest(manifest: Manifest, projectId: string = DEFAULT_PROJECT_ID): Promise<void> {
+ * 兼容未携带扩展字段的旧客户端（仅有 video 字段的槽位照常落为视频条目）。
+ *
+ * `allowTruncate`（默认 false）声明"本次写入的语义就是减少内容"：
+ * - false（绝大多数写路径）：v1 视图只能寻址前 `count` 个位置，范围外的条目
+ *   （历史 v2 写入或手改清单遗留）一律**保留**，绝不因为"视图里看不见"就当作已删除
+ *   清理掉 —— 静默删用户文件比留下不可见条目严重得多；
+ * - true（缩减窗格数 / 清空全部）：范围外条目确实要被移除，文件由下方集中清理删除。
+ */
+export async function writeManifest(
+  manifest: Manifest,
+  projectId: string = DEFAULT_PROJECT_ID,
+  options: { allowTruncate?: boolean } = {},
+): Promise<void> {
   const project = await readProject(projectId);
-  const previousFiles = new Set(project.items.map((it) => it.file.filename));
+  const previousItems = project.items;
+  const previousFiles = new Set(previousItems.map((it) => it.file.filename));
 
   project.slotCount = manifest.count;
   // Step 6 起 v1 视图支持 auto 模式：layoutMode='auto' 时存 'auto'，
@@ -82,10 +100,12 @@ export async function writeManifest(manifest: Manifest, projectId: string = DEFA
   project.layout = manifest.layoutMode === 'auto' ? 'auto' : manifest.layout;
   // Step 7：视图携带设置时写回（仅接受合法值，防御旧/异常客户端）
   if (manifest.settings) {
-    project.settings = {
-      ...project.settings,
-      ...normalizeManifestSettings(manifest.settings),
-    };
+    const patch = normalizeManifestSettings(manifest.settings);
+    project.settings = { ...project.settings, ...patch };
+    // 显式清除自定义比例时删掉键，避免留下 undefined 占位
+    if ('customRatio' in patch && patch.customRatio === undefined) {
+      delete project.settings.customRatio;
+    }
   }
 
   const now = new Date().toISOString();
@@ -123,6 +143,18 @@ export async function writeManifest(manifest: Manifest, projectId: string = DEFA
     // 紧凑序不变量：删除/替换后重排为 0..n-1（空洞在写入时即消除，蓝图 §19.4）
     .map((it, i) => (it.order === i ? it : { ...it, order: i }));
 
+  // 视图寻址范围外的条目：默认保留（见函数头说明），只有显式 allowTruncate 才随之下线
+  if (!options.allowTruncate) {
+    const visibleIds = new Set(project.items.map((it) => it.id));
+    const preserved = previousItems.filter(
+      (it) => it.order >= manifest.count && !visibleIds.has(it.id),
+    );
+    if (preserved.length > 0) {
+      project.items = reindexItems([...project.items, ...preserved]);
+      project.slotCount = Math.max(project.slotCount, Math.min(project.items.length, SLOT_MAX));
+    }
+  }
+
   // 集中式孤儿清理：被移除/被替换条目的文件统一在此删除（含 v1 视图 video=null 看不见的
   // HTML 文件），保证任意 v1 写路径（上传替换/删除/清空/缩容/改标题）后清单与磁盘 1:1
   const keptFiles = new Set(project.items.map((it) => it.file.filename));
@@ -138,24 +170,33 @@ export async function writeManifest(manifest: Manifest, projectId: string = DEFA
 }
 
 /**
- * v1 视图设置 -> ProjectSettings 字段校验：仅接受合法值，其余回落默认项目当前值。
- * customRatio 为第二阶段 UI，v1 视图不涉及。
+ * v1 视图设置 -> ProjectSettings 字段校验：仅接受合法值，其余回落默认值。
+ * 返回 Partial：未携带的字段（如旧客户端的 customRatio）保持项目原值不动。
  */
-function normalizeManifestSettings(s: ManifestSettings): ProjectSettings {
+function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings> {
   const base = defaultSettings();
-  const aspects: AspectRatio[] = ['16:9', '9:16', '1:1', 'original', 'custom'];
-  return {
-    aspectRatio: aspects.includes(s.aspectRatio) ? s.aspectRatio : base.aspectRatio,
+  const out: Partial<ProjectSettings> = {
+    aspectRatio: (ASPECT_RATIOS as readonly string[]).includes(s.aspectRatio)
+      ? s.aspectRatio
+      : base.aspectRatio,
     showTitles: typeof s.showTitles === 'boolean' ? s.showTitles : base.showTitles,
     showInfo: typeof s.showInfo === 'boolean' ? s.showInfo : base.showInfo,
     loop: typeof s.loop === 'boolean' ? s.loop : base.loop,
     muted: typeof s.muted === 'boolean' ? s.muted : base.muted,
     playbackRate:
-      typeof s.playbackRate === 'number' && [0.5, 1, 1.25, 1.5, 2].includes(s.playbackRate)
+      typeof s.playbackRate === 'number' &&
+      (PLAYBACK_RATES as readonly number[]).includes(s.playbackRate)
         ? s.playbackRate
         : base.playbackRate,
     letterboxFill: s.letterboxFill === 'blur' ? 'blur' : 'base',
   };
+  // customRatio：null = 显式清除；合法对象 = 写入；未携带/非法 = 保持原值
+  if (s.customRatio === null) out.customRatio = undefined;
+  else if (s.customRatio !== undefined) {
+    const parsed = parseCustomRatio(s.customRatio);
+    if (parsed) out.customRatio = parsed;
+  }
+  return out;
 }
 
 /**

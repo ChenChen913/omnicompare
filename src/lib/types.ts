@@ -54,6 +54,15 @@ export type ContentKind = 'video' | 'html' | 'image';
 /** 内容比例：original = 16:9 容器 + contain（v1 行为） */
 export type AspectRatio = '16:9' | '9:16' | '1:1' | 'original' | 'custom';
 
+/** 合法的比例取值（API 校验与前端选项的共同来源，避免各路由各写一份） */
+export const ASPECT_RATIOS = ['16:9', '9:16', '1:1', 'original', 'custom'] as const;
+
+/** 合法的播放倍速取值 */
+export const PLAYBACK_RATES = [0.5, 1, 1.25, 1.5, 2] as const;
+
+/** 自定义比例的宽高上限（防 NaN/Infinity/荒谬值进入 CSS aspect-ratio） */
+export const CUSTOM_RATIO_MAX = 10000;
+
 /** 文件元数据（v1 SlotVideo 的沿用） */
 export interface FileMeta {
   /** 服务器上生成的唯一文件名（uuid + 扩展名） */
@@ -107,9 +116,11 @@ export interface Manifest {
   settings?: ManifestSettings;
 }
 
-/** v1 视图的项目级设置（Blueprint §7 ProjectSettings 的 v1 平铺子集，customRatio 为第二阶段 UI） */
+/** v1 视图的项目级设置（Blueprint §7 ProjectSettings 的 v1 平铺子集） */
 export interface ManifestSettings {
   aspectRatio: AspectRatio;
+  /** 自定义比例宽高：aspectRatio='custom' 时生效；缺省/非法 = 回落 16:9 */
+  customRatio?: { w: number; h: number };
   showTitles: boolean;
   showInfo: boolean;
   loop: boolean;
@@ -119,16 +130,38 @@ export interface ManifestSettings {
   letterboxFill: 'base' | 'blur';
 }
 
-/** 比例选项 -> CSS aspect-ratio 值；original/custom 均回落 16/9 容器 + contain（蓝图 §13） */
-export function aspectCss(a: AspectRatio | null | undefined): string {
+/**
+ * 校验并规范化自定义比例：非法（缺失、非对象、NaN/Infinity、越界）一律返回 null。
+ * 前后端、v1/v2 路由共用同一套判据，避免各处各写一份导致标准漂移。
+ */
+export function parseCustomRatio(raw: unknown): { w: number; h: number } | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const c = raw as Record<string, unknown>;
+  const w = Number(c.w);
+  const h = Number(c.h);
+  if (!Number.isFinite(w) || !Number.isFinite(h)) return null;
+  if (w <= 0 || h <= 0 || w > CUSTOM_RATIO_MAX || h > CUSTOM_RATIO_MAX) return null;
+  return { w, h };
+}
+
+/**
+ * 比例选项 -> CSS aspect-ratio 值。
+ * original = 16/9 容器 + contain（蓝图 §13）；custom 需要传入自定义宽高，
+ * 缺失或非法时回落 16/9，保证任何情况下都能得到一个合法容器。
+ */
+export function aspectCss(
+  a: AspectRatio | null | undefined,
+  custom?: { w: number; h: number },
+): string {
   switch (a) {
     case '9:16':
       return '9 / 16';
     case '1:1':
       return '1 / 1';
+    case 'custom':
+      return custom && custom.w > 0 && custom.h > 0 ? `${custom.w} / ${custom.h}` : '16 / 9';
     case '16:9':
     case 'original':
-    case 'custom':
     default:
       return '16 / 9';
   }

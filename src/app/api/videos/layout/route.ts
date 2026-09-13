@@ -4,12 +4,11 @@
  * - count: 1-12；rows × cols 为矩阵，容量需 >= count（多出的格子留空）
  * - layout='auto'：交给系统按 count 自动排近方形矩阵（蓝图 §12），后续 count
  *   变化时矩阵自动跟随；显式行列则固定为手动模式
- * - 缩减数量时自动删除被移除位置上的内容文件
+ * - 缩减数量时自动删除被移除位置上的内容文件（写清单时集中清理，先清单后文件）
  */
 import { NextRequest, NextResponse } from 'next/server';
 import {
   applyCountAndLayout,
-  deleteVideoFile,
   isValidLayout,
   readManifest,
   withManifestLock,
@@ -20,7 +19,10 @@ import { resolveProjectParam } from '@/lib/v1-project-param';
 
 export const dynamic = 'force-dynamic';
 
-const noStore = { 'Cache-Control': 'no-store' } as const;
+const noStore = {
+  'Cache-Control': 'no-store',
+  'Content-Type': 'application/json; charset=utf-8',
+} as const;
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
@@ -58,13 +60,14 @@ export async function PATCH(req: NextRequest) {
 
   return withManifestLock(p.id, async () => {
     const current = await readManifest(p.id);
-    const { manifest: next, removedFilenames } = applyCountAndLayout(current, count, layout);
+    const { manifest: next } = applyCountAndLayout(current, count, layout);
     next.layoutMode = wantAuto ? 'auto' : 'manual';
-    await writeManifest(next, p.id);
+    // allowTruncate：缩减窗格数就是要移除范围外的内容，这正是该参数的语义。
+    // 被移除条目（视频 / HTML / 图片 / 整个 zip 包目录）的文件由 writeManifest
+    // 的集中孤儿清理统一删除 —— 不需要、也不应该在这里再删一遍
+    // （重复删除会掩盖真正的清理点，也会出现"先删文件后写清单"的错误顺序）。
+    await writeManifest(next, p.id, { allowTruncate: true });
 
-    if (removedFilenames.length > 0) {
-      await Promise.all(removedFilenames.map((f) => deleteVideoFile(f, p.id)));
-    }
     // 重读返回：写入层会做紧凑序重排（v2 不变量），保证客户端视图与存储一致
     return NextResponse.json(await readManifest(p.id), { headers: noStore });
   });
