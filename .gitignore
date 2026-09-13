@@ -82,3 +82,9 @@ server.log
 
 # 本地备份产物（backup-data.sh 输出）
 /backups/
+
+# 根目录下的原始屏幕录制：转换产物是 docs/demo.gif 与 docs/demo.mp4，
+# 原始录像体积大且没必要入库（用 scripts/make-demo-media.mjs 转换）
+/*.mp4
+/*.mov
+/*.mkv

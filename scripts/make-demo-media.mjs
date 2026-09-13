@@ -27,7 +27,7 @@
  * 依赖：ffmpeg / ffprobe。优先用 FFMPEG / FFPROBE 环境变量，否则找 PATH。
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, statSync, copyFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, statSync, existsSync, rmSync } from 'node:fs';
 import { join, basename, relative, resolve } from 'node:path';
 
 /* ------------------------------- 参数解析 ------------------------------- */
@@ -126,7 +126,7 @@ mkdirSync(outDir, { recursive: true });
 function buildGif(width, fps) {
   const stats = join(outDir, `.${name}-palette.png`);
   const gif = join(outDir, `${name}.gif`);
-  const vf = `fps=${fps},scale=${width}:-1:flags=lanczos`;
+  const vf = `fps=${fps},scale=${width}:-2:flags=lanczos`;
 
   run(FFMPEG, ['-y', '-v', 'error', '-i', input, '-vf', `${vf},palettegen=stats_mode=diff`, stats], 'GIF 调色板生成');
   run(FFMPEG, [
@@ -163,7 +163,7 @@ if (!noWebp) {
   const webp = join(outDir, `${name}.webp`);
   run(FFMPEG, [
     '-y', '-v', 'error', '-i', input,
-    '-vf', `fps=${fps},scale=${width}:-1:flags=lanczos`,
+    '-vf', `fps=${fps},scale=${width}:-2:flags=lanczos`,
     '-c:v', 'libwebp_anim', '-loop', '0', '-q:v', '72', '-compression_level', '6', webp,
   ], 'WebP 编码');
   webpSize = statSync(webp).size;
@@ -177,7 +177,7 @@ if (!noPoster) {
   const poster = join(outDir, `${name}-poster.png`);
   run(FFMPEG, [
     '-y', '-v', 'error', '-ss', String(posterAt), '-i', input, '-frames:v', '1',
-    '-vf', `scale=${width}:-1:flags=lanczos`, poster,
+    '-vf', `scale=${width}:-2:flags=lanczos`, poster,
   ], '封面截取');
   posterSize = statSync(poster).size;
 }
@@ -190,7 +190,7 @@ if (keepMp4) {
   mp4Name = `${name}.mp4`;
   run(FFMPEG, [
     '-y', '-v', 'error', '-i', input,
-    '-vf', `scale=${width}:-1:flags=lanczos`,
+    '-vf', `scale=${width}:-2:flags=lanczos`,
     '-c:v', 'libx264', '-preset', 'slow', '-crf', '26', '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart', '-an', join(outDir, mp4Name),
   ], 'MP4 压缩');
