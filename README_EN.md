@@ -50,9 +50,10 @@ the product was renamed once images and HTML pages joined videos.
 - **Adjustable matrix**: 1–12 content slots with any row × column combination; switch between automatic layout and an explicit matrix; slots expand automatically when you import more files than slots.
 - **Multi-project**: projects are grouped as active / draft / archived and are fully isolated from each other. Switch from the top bar, or browse everything in the Library view.
 - **Three import paths**: click an empty slot, drag files onto the page, or multi-select import.
-- **Batch playback**: play-all / pause / loop / global mute / playback rate. Pure-HTML projects have no playback semantics, so the primary action becomes "Refresh all".
+- **Batch playback**: play-all / pause / loop / global mute / playback rate. Pure-HTML projects have no playback semantics, so the primary action becomes "Refresh all". In Focus mode, Space / F toggles one-key playback (videos and BGM rewind together and start in sync) ⇄ pause-all — no mouse on screen while recording.
 - **Background music**: one project-level BGM track, supporting MP3 / WAV / FLAC / M4A / AAC / OGG (≤50MB each). Upload it from the "Music" button in the top bar (a status dot appears once set; clicking again replaces it); volume and removal live in "Play → Background music", stored per project. Focus mode adds a one-click "loop from the start" button in the bottom-right corner: videos and the music rewind together, start in sync, and loop — built for screen recording.
 - **Auto-fit viewport**: when the wall grows taller than the viewport, it scales down proportionally until everything fits on screen (screenshots and recordings capture it all); always on in Focus mode.
+- **Implicit controls**: video progress bars and play buttons are hidden by default and appear only while the pointer hovers over a card; during Focus-mode playback they never appear, keeping recordings clean.
 - **Adaptive top bar**: the controls follow the content you imported; there is no mode to pick manually.
 - **Studio / Focus modes, dark / light themes.**
 - **Sandboxed rendering**: HTML and SVG are doubly isolated by iframe `sandbox="allow-scripts"` plus server-side CSP headers.
@@ -80,7 +81,7 @@ depend on the main application.
 2. **Pick slots and matrix**: open "Layout" in the top bar, choose 1–12 slots, then pick rows × columns. Matrices marked "补" do not divide evenly and leave empty cells at the end.
 3. **Import content**: click any empty slot, drag files onto the page, or use multi-select import. Files beyond the slot count expand the matrix automatically; dropping onto an occupied card never overwrites it — the file lands in the next free slot.
 4. **Add titles**: each cell has a title box, typically the model name. It saves on blur, up to 100 characters.
-5. **Compare playback**: with videos present, "Play all" rewinds every video and starts them together. Loop, mute, speed, and background music live in the "Play" menu in the top bar; title and info visibility live in the "Title" menu — all stored on the server. To add music, click the "Music" button in the top bar and pick a file (≤50MB); adjust the volume under "Play → Background music".
+5. **Compare playback**: with videos present, "Play all" rewinds every video and starts them together. Loop, mute, speed, and background music live in the "Play" menu in the top bar; title and info visibility live in the "Title" menu — all stored on the server. To add music, click the "Music" button in the top bar and pick a file (≤50MB); adjust the volume under "Play → Background music". In Focus mode, Space or F toggles play/pause (videos and BGM in sync); combined with implicit controls you can record entirely from the keyboard.
 6. **Reorder**: drag the number badge in a card's top-left corner.
 7. **Per-card ratio**: the ratio button on the info row overrides the global ratio for that card; "Follow" restores it.
 8. **Remove**: the trash icon on a card removes one item; the trash icon in the top bar clears everything (with confirmation, irreversible).
