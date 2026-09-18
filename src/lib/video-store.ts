@@ -23,9 +23,12 @@ import {
   Slot,
   SLOT_MAX,
   TITLE_ALIGNS,
+  TITLE_POSITIONS,
+  TITLE_WEIGHTS,
   autoLayoutFor,
   defaultSettings,
   parseCustomRatio,
+  parseTitleColor,
   parseTitleFontSize,
 } from './types';
 import {
@@ -75,6 +78,9 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       // 标题格式（全局同步）：视图携带才能在 PATCH 响应中回显
       titleAlign: st.titleAlign,
       titleFontSize: st.titleFontSize,
+      titlePosition: st.titlePosition,
+      titleWeight: st.titleWeight,
+      titleColor: st.titleColor,
     },
   };
 }
@@ -210,6 +216,20 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
   if (s.titleFontSize !== undefined) {
     const size = parseTitleFontSize(s.titleFontSize);
     if (size !== null) out.titleFontSize = size;
+  }
+  if (s.titlePosition !== undefined) {
+    out.titlePosition = (TITLE_POSITIONS as readonly string[]).includes(s.titlePosition)
+      ? s.titlePosition
+      : base.titlePosition;
+  }
+  if (s.titleWeight !== undefined) {
+    out.titleWeight = (TITLE_WEIGHTS as readonly string[]).includes(s.titleWeight)
+      ? s.titleWeight
+      : base.titleWeight;
+  }
+  if (s.titleColor !== undefined) {
+    const color = parseTitleColor(s.titleColor);
+    if (color !== null) out.titleColor = color;
   }
   return out;
 }

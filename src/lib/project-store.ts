@@ -35,8 +35,11 @@ import {
   Slot,
   defaultLayoutFor,
   defaultSettings,
+  parseTitleColor,
   parseTitleFontSize,
   TITLE_ALIGNS,
+  TITLE_POSITIONS,
+  TITLE_WEIGHTS,
   isVideoFile,
   mimeFromExt,
   parseCustomRatio,
@@ -200,6 +203,14 @@ function normalizeSettings(raw: unknown): ProjectSettings {
       ? (r.titleAlign as ProjectSettings['titleAlign'])
       : base.titleAlign,
     titleFontSize: parseTitleFontSize(r.titleFontSize) ?? base.titleFontSize,
+    // 标题位置/字重/颜色：非法一律回落默认（below/normal/'default'）
+    titlePosition: (TITLE_POSITIONS as readonly string[]).includes(r.titlePosition as string)
+      ? (r.titlePosition as ProjectSettings['titlePosition'])
+      : base.titlePosition,
+    titleWeight: (TITLE_WEIGHTS as readonly string[]).includes(r.titleWeight as string)
+      ? (r.titleWeight as ProjectSettings['titleWeight'])
+      : base.titleWeight,
+    titleColor: parseTitleColor(r.titleColor) ?? base.titleColor,
   };
 }
 

@@ -1,7 +1,7 @@
 /**
  * 项目设置 API（schema v2）
  * PATCH /api/projects/[id]/settings
- * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, titleAlign?, titleFontSize? }
+ * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, titleAlign?, titleFontSize?, titlePosition?, titleWeight?, titleColor? }
  * 全局比例 / 标题与属性信息显隐 / 批量播放设置（只作用于 kind=video 的条目，见 BLUEPRINT §9/§13）
  */
 import { NextRequest, NextResponse } from 'next/server';
@@ -16,7 +16,10 @@ import {
   TITLE_ALIGNS,
   TITLE_FONT_MAX,
   TITLE_FONT_MIN,
+  TITLE_POSITIONS,
+  TITLE_WEIGHTS,
   parseCustomRatio,
+  parseTitleColor,
   parseTitleFontSize,
 } from '@/lib/types';
 
@@ -130,6 +133,40 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         );
       }
       s.titleFontSize = size;
+    }
+    if (body.titlePosition !== undefined) {
+      if (
+        typeof body.titlePosition !== 'string' ||
+        !(TITLE_POSITIONS as readonly string[]).includes(body.titlePosition)
+      ) {
+        return NextResponse.json(
+          { error: `标题位置需为 ${TITLE_POSITIONS.join(' / ')}` },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.titlePosition = body.titlePosition as ProjectSettings['titlePosition'];
+    }
+    if (body.titleWeight !== undefined) {
+      if (
+        typeof body.titleWeight !== 'string' ||
+        !(TITLE_WEIGHTS as readonly string[]).includes(body.titleWeight)
+      ) {
+        return NextResponse.json(
+          { error: `标题字重需为 ${TITLE_WEIGHTS.join(' / ')}` },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.titleWeight = body.titleWeight as ProjectSettings['titleWeight'];
+    }
+    if (body.titleColor !== undefined) {
+      const color = parseTitleColor(body.titleColor);
+      if (color === null) {
+        return NextResponse.json(
+          { error: '标题颜色需为 default 或色板内颜色值' },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.titleColor = color;
     }
 
     project.updatedAt = new Date().toISOString();

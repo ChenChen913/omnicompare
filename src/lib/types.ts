@@ -59,6 +59,39 @@ export const TITLE_FONT_MIN = 12;
 export const TITLE_FONT_MAX = 28;
 export const TITLE_FONT_DEFAULT = 16;
 
+/** 标题位置：below = 内容下方（v1 行为，可编辑 textarea）；overlay = 内容内部顶部叠加 */
+export type TitlePosition = 'below' | 'overlay';
+
+/** 合法的标题位置取值 */
+export const TITLE_POSITIONS = ['below', 'overlay'] as const;
+
+/** 标题字重档位 */
+export type TitleWeight = 'normal' | 'medium' | 'bold';
+
+/** 合法的标题字重取值（对应 CSS font-weight 400/500/700） */
+export const TITLE_WEIGHTS = ['normal', 'medium', 'bold'] as const;
+
+/** 标题颜色哨兵值：跟随主题（below 用前景色；overlay 用白色+投影保可读） */
+export const TITLE_COLOR_DEFAULT = 'default';
+
+/** 标题颜色色板（白名单，防任意 CSS 注入）：覆盖深/浅背景与叠加场景常用色 */
+export const TITLE_COLOR_PALETTE = [
+  '#ffffff', '#000000', '#facc15', '#f87171', '#fb923c',
+  '#4ade80', '#22d3ee', '#a78bfa', '#f472b6',
+] as const;
+
+/**
+ * 校验标题颜色：'default' 或色板内 hex；其余一律 null（调用方回落默认）。
+ * 色板白名单保证落库/渲染的都是受控值，不引入任意 CSS。
+ */
+export function parseTitleColor(raw: unknown): string | null {
+  if (raw === TITLE_COLOR_DEFAULT) return TITLE_COLOR_DEFAULT;
+  if (typeof raw === 'string' && (TITLE_COLOR_PALETTE as readonly string[]).includes(raw)) {
+    return raw;
+  }
+  return null;
+}
+
 /** 内容类型：video / html（MVP）+ image（第二阶段 Step A，SVG 随图片链路支持） */
 export type ContentKind = 'video' | 'html' | 'image';
 
@@ -143,6 +176,12 @@ export interface ManifestSettings {
   titleAlign?: TitleAlign;
   /** 标题字号 px（全局同步）：缺省/非法回落 TITLE_FONT_DEFAULT */
   titleFontSize?: number;
+  /** 标题位置（全局同步）：缺省/非法回落 below（v1 行为） */
+  titlePosition?: TitlePosition;
+  /** 标题字重（全局同步）：缺省/非法回落 normal */
+  titleWeight?: TitleWeight;
+  /** 标题颜色（全局同步）：'default' 或色板 hex；缺省/非法回落 'default' */
+  titleColor?: string;
 }
 
 /**
@@ -254,6 +293,12 @@ export interface ProjectSettings {
   titleAlign: TitleAlign;
   /** 标题字号 px（全局同步，TITLE_FONT_MIN~MAX） */
   titleFontSize: number;
+  /** 标题位置（全局同步）：below = 内容下方；overlay = 内容内部顶部叠加（两者排他） */
+  titlePosition: TitlePosition;
+  /** 标题字重（全局同步）：normal / medium / bold */
+  titleWeight: TitleWeight;
+  /** 标题颜色（全局同步）：'default' 或色板 hex */
+  titleColor: string;
 }
 
 /** 项目（schema v2 顶层）：items 顺序即矩阵填充顺序 */
@@ -285,6 +330,10 @@ export function defaultSettings(): ProjectSettings {
     // 标题默认居中 + 16px：比正文更醒目（v1 行为 13px 偏小，用户反馈字体过小且未居中）
     titleAlign: 'center',
     titleFontSize: TITLE_FONT_DEFAULT,
+    // 标题位置默认下方（v1 行为不变）；字重/颜色默认跟随主题常规样式
+    titlePosition: 'below',
+    titleWeight: 'normal',
+    titleColor: TITLE_COLOR_DEFAULT,
   };
 }
 

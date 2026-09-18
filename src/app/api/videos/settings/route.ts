@@ -1,6 +1,6 @@
 /**
  * 项目级播放与展示设置 API（v1 视图，蓝图 §7/§9/§13；Step 8 起支持 ?project= 多项目）
- * PATCH /api/videos/settings[?project=id]  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, titleAlign?, titleFontSize? }
+ * PATCH /api/videos/settings[?project=id]  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, titleAlign?, titleFontSize?, titlePosition?, titleWeight?, titleColor? }
  * - 全部字段可选，仅更新提供的字段；播放设置只作用于 kind=video 的内容
  * - 与其它 v1 写路径共用清单互斥锁，杜绝并发丢更新
  * - 成功返回更新后的完整 v1 清单视图（响应即回填）
@@ -15,7 +15,10 @@ import {
   TITLE_ALIGNS,
   TITLE_FONT_MAX,
   TITLE_FONT_MIN,
+  TITLE_POSITIONS,
+  TITLE_WEIGHTS,
   parseCustomRatio,
+  parseTitleColor,
   parseTitleFontSize,
 } from '@/lib/types';
 import { readProject, withProjectLock, writeProject } from '@/lib/project-store';
@@ -35,7 +38,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; titleAlign?: unknown; titleFontSize?: unknown }
+    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -108,6 +111,31 @@ export async function PATCH(req: NextRequest) {
       return badRequest(`标题字号需为 ${TITLE_FONT_MIN}-${TITLE_FONT_MAX} 之间的数字`);
     }
     patch.titleFontSize = size;
+  }
+  if (body.titlePosition !== undefined) {
+    if (
+      typeof body.titlePosition !== 'string' ||
+      !(TITLE_POSITIONS as readonly string[]).includes(body.titlePosition)
+    ) {
+      return badRequest(`标题位置需为 ${TITLE_POSITIONS.join(' / ')}`);
+    }
+    patch.titlePosition = body.titlePosition as ProjectSettings['titlePosition'];
+  }
+  if (body.titleWeight !== undefined) {
+    if (
+      typeof body.titleWeight !== 'string' ||
+      !(TITLE_WEIGHTS as readonly string[]).includes(body.titleWeight)
+    ) {
+      return badRequest(`标题字重需为 ${TITLE_WEIGHTS.join(' / ')}`);
+    }
+    patch.titleWeight = body.titleWeight as ProjectSettings['titleWeight'];
+  }
+  if (body.titleColor !== undefined) {
+    const color = parseTitleColor(body.titleColor);
+    if (color === null) {
+      return badRequest('标题颜色需为 default 或色板内颜色值');
+    }
+    patch.titleColor = color;
   }
   if (Object.keys(patch).length === 0 && !clearCustomRatio) {
     return badRequest('至少提供一个待更新字段');

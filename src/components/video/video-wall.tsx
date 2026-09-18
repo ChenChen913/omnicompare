@@ -5,6 +5,8 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  ArrowDownToLine,
+  Bold,
   BookOpen,
   ChevronDown,
   ChevronLeft,
@@ -22,6 +24,7 @@ import {
   Minus,
   Moon,
   Pause,
+  Palette,
   Play,
   Plus,
   RefreshCw,
@@ -64,10 +67,16 @@ import {
   SLOT_MAX,
   Slot,
   TITLE_ALIGNS,
+  TITLE_COLOR_DEFAULT,
+  TITLE_COLOR_PALETTE,
   TITLE_FONT_DEFAULT,
   TITLE_FONT_MAX,
   TITLE_FONT_MIN,
+  TITLE_POSITIONS,
+  TITLE_WEIGHTS,
   TitleAlign,
+  TitlePosition,
+  TitleWeight,
   aspectCss,
   aspectLabel,
   defaultLayoutFor,
@@ -247,6 +256,9 @@ export function VideoWall() {
   /** 标题格式（全局同步，存项目 settings）：所有卡片一次调节同时生效 */
   const [titleAlign, setTitleAlign] = useState<TitleAlign>('center');
   const [titleFontSize, setTitleFontSize] = useState(TITLE_FONT_DEFAULT);
+  const [titlePosition, setTitlePosition] = useState<TitlePosition>('below');
+  const [titleWeight, setTitleWeight] = useState<TitleWeight>('normal');
+  const [titleColor, setTitleColor] = useState<string>(TITLE_COLOR_DEFAULT);
   const [gridDrag, setGridDrag] = useState(false);
   /** 拖拽提示生命周期（防卡死）：卡片级 handleDrop 会 stopPropagation（防主区重复导入），
       冒泡层 onDrop 收不到 → gridDrag 可能卡在 true；drop 落进 iframe 内部文档 / 拖拽被取消等
@@ -352,6 +364,9 @@ export function VideoWall() {
     setLetterboxFill(s?.letterboxFill ?? d.letterboxFill);
     setTitleAlign(s?.titleAlign ?? d.titleAlign);
     setTitleFontSize(s?.titleFontSize ?? d.titleFontSize);
+    setTitlePosition(s?.titlePosition ?? d.titlePosition);
+    setTitleWeight(s?.titleWeight ?? d.titleWeight);
+    setTitleColor(s?.titleColor ?? d.titleColor);
   }, []);
 
   /* 自定义比例草稿跟随服务端值同步（首次加载与切换项目后回填） */
@@ -613,6 +628,9 @@ export function VideoWall() {
         letterboxFill,
         titleAlign,
         titleFontSize,
+        titlePosition,
+        titleWeight,
+        titleColor,
       };
       // 乐观回填
       if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
@@ -625,6 +643,9 @@ export function VideoWall() {
       if (partial.letterboxFill !== undefined) setLetterboxFill(partial.letterboxFill);
       if (partial.titleAlign !== undefined) setTitleAlign(partial.titleAlign);
       if (partial.titleFontSize !== undefined) setTitleFontSize(partial.titleFontSize);
+      if (partial.titlePosition !== undefined) setTitlePosition(partial.titlePosition);
+      if (partial.titleWeight !== undefined) setTitleWeight(partial.titleWeight);
+      if (partial.titleColor !== undefined) setTitleColor(partial.titleColor);
       try {
         const res = await fetch(withPid('/api/videos/settings'), {
           method: 'PATCH',
@@ -646,10 +667,13 @@ export function VideoWall() {
         setLetterboxFill(prev.letterboxFill);
         setTitleAlign(prev.titleAlign);
         setTitleFontSize(prev.titleFontSize);
+        setTitlePosition(prev.titlePosition);
+        setTitleWeight(prev.titleWeight);
+        setTitleColor(prev.titleColor);
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, titleAlign, titleFontSize, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, applySettings, withPid],
   );
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
@@ -1440,7 +1464,7 @@ export function VideoWall() {
                     ctlBtn,
                     'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
                   )}
-                  title="循环、静音、播放速度、标题/属性显隐与标题格式"
+                  title="循环、静音、播放速度、标题显隐/格式/位置与标题样式"
                   aria-label="显示设置"
                 >
                   <Eye className="h-4 w-4" aria-hidden />
@@ -1569,6 +1593,95 @@ export function VideoWall() {
                     >
                       恢复默认（{TITLE_FONT_DEFAULT}px）
                     </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger disabled={!showTitles} className="text-[13px]">
+                    <ArrowDownToLine className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    标题位置
+                    <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
+                      {titlePosition === 'overlay' ? '顶部叠加' : '内容下方'}
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  {/* 两种位置排他显示：below = 现有下方编辑框；overlay = 内容顶部叠加（点击可编辑） */}
+                  <DropdownMenuSubContent className="min-w-[9rem] border-border bg-card">
+                    {TITLE_POSITIONS.map((p) => (
+                      <DropdownMenuItem
+                        key={p}
+                        onClick={() => void updateSettings({ titlePosition: p })}
+                        className={cn('text-[13px]', p === titlePosition && 'font-semibold text-primary')}
+                      >
+                        {p === 'overlay' ? '内容顶部叠加' : '内容下方（默认）'}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger disabled={!showTitles} className="text-[13px]">
+                    <Bold className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    标题粗细
+                    <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
+                      {titleWeight === 'bold' ? '加粗' : titleWeight === 'medium' ? '中等' : '正常'}
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="min-w-[8rem] border-border bg-card">
+                    {TITLE_WEIGHTS.map((w) => (
+                      <DropdownMenuItem
+                        key={w}
+                        onClick={() => void updateSettings({ titleWeight: w })}
+                        className={cn('text-[13px]', w === titleWeight && 'font-semibold text-primary')}
+                      >
+                        <span
+                          className="mr-1"
+                          style={{ fontWeight: w === 'bold' ? 700 : w === 'medium' ? 500 : 400 }}
+                        >
+                          Aa
+                        </span>
+                        {w === 'bold' ? '加粗' : w === 'medium' ? '中等' : '正常'}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger disabled={!showTitles} className="text-[13px]">
+                    <Palette className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    标题颜色
+                    <span
+                      aria-hidden
+                      className="ml-auto inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-border"
+                      style={{
+                        background:
+                          titleColor === TITLE_COLOR_DEFAULT
+                            ? 'linear-gradient(135deg, #fff 0%, #fff 50%, #171717 50%, #171717 100%)'
+                            : titleColor,
+                      }}
+                    />
+                  </DropdownMenuSubTrigger>
+                  {/* 色板白名单（防任意 CSS 注入）；跟随主题 = below 用前景色 / overlay 用白色+投影 */}
+                  <DropdownMenuSubContent className="min-w-[9rem] border-border bg-card">
+                    <DropdownMenuItem
+                      onClick={() => void updateSettings({ titleColor: TITLE_COLOR_DEFAULT })}
+                      className={cn(
+                        'text-[13px]',
+                        titleColor === TITLE_COLOR_DEFAULT && 'font-semibold text-primary',
+                      )}
+                    >
+                      跟随主题
+                    </DropdownMenuItem>
+                    {TITLE_COLOR_PALETTE.map((c) => (
+                      <DropdownMenuItem
+                        key={c}
+                        onClick={() => void updateSettings({ titleColor: c })}
+                        className={cn('text-[13px]', titleColor === c && 'font-semibold text-primary')}
+                      >
+                        <span
+                          aria-hidden
+                          className="mr-1.5 inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-border"
+                          style={{ background: c }}
+                        />
+                        {c}
+                      </DropdownMenuItem>
+                    ))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
                 <DropdownMenuCheckboxItem
@@ -2136,6 +2249,9 @@ export function VideoWall() {
                     letterboxFill,
                     titleAlign,
                     titleFontSize,
+                    titlePosition,
+                    titleWeight,
+                    titleColor,
                     refreshSignal: htmlRefreshTick,
                     onAspectOverride: handleSlotAspect,
                     onFiles: (files: File[], primary: number) => void distributeFiles(files, primary),

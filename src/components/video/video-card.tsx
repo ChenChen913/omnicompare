@@ -7,6 +7,9 @@ import {
   AspectRatio,
   Slot,
   TitleAlign,
+  TitlePosition,
+  TitleWeight,
+  TITLE_COLOR_DEFAULT,
   TITLE_FONT_DEFAULT,
   aspectCss,
   aspectLabel,
@@ -40,6 +43,12 @@ export interface VideoCardProps {
   titleAlign?: TitleAlign;
   /** 全局标题字号 px（同步所有卡片，TITLE_FONT_MIN~MAX） */
   titleFontSize?: number;
+  /** 全局标题位置（同步所有卡片）：below = 内容下方（v1 行为）；overlay = 内容内部顶部叠加（两者排他） */
+  titlePosition?: TitlePosition;
+  /** 全局标题字重（同步所有卡片）：normal / medium / bold */
+  titleWeight?: TitleWeight;
+  /** 全局标题颜色（同步所有卡片）：'default' 或色板 hex；overlay 的 default 用白色+投影保可读 */
+  titleColor?: string;
   /** 「刷新全部页面」信号（纯 HTML 项目顶栏主动作）：数值变化时重载本卡 iframe；0 = 从未触发 */
   refreshSignal?: number;
   /** 单卡比例覆盖变更（null = 恢复跟随全局）；未传则不显示覆盖控件 */
@@ -79,6 +88,9 @@ export function VideoCard({
   letterboxFill = 'base',
   titleAlign = 'center',
   titleFontSize = TITLE_FONT_DEFAULT,
+  titlePosition = 'below',
+  titleWeight = 'normal',
+  titleColor = TITLE_COLOR_DEFAULT,
   refreshSignal = 0,
   onAspectOverride,
   onFiles,
@@ -98,9 +110,17 @@ export function VideoCard({
   const [prevImageName, setPrevImageName] = useState(imageFile?.filename);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** overlay 标题条：展示态（点击进入编辑）⇄ 编辑态（失焦退出）；below/overlay 排他，textareaRef 复用 */
+  const [overlayEditing, setOverlayEditing] = useState(false);
   /** 主视频本地引用（父级 setVideoRef 之外的副本，用于同步模糊背景层，Step C） */
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const bgVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  /* ---------- 标题样式派生（below/overlay 共用一套全局格式，保证模式切换视觉连续） ---------- */
+  const overlayMode = showTitles && titlePosition === 'overlay';
+  const belowMode = showTitles && titlePosition !== 'overlay';
+  const titleFontWeight = titleWeight === 'bold' ? 700 : titleWeight === 'medium' ? 500 : 400;
+  const titleColorCss = titleColor !== TITLE_COLOR_DEFAULT ? titleColor : undefined;
 
   /** 把主视频的播放态镜像到模糊背景层（播放/暂停/拖动/倍速/换源）；失败静默 */
   const syncBgFromMain = useCallback(() => {
@@ -262,6 +282,65 @@ export function VideoCard({
         }}
         onDrop={handleDrop}
       >
+        {/* overlay 标题（titlePosition='overlay'，与下方标题排他）：内容顶部渐变底条，
+            容器 pointer-events-none 不挡视频/iframe 交互，仅文字/编辑框可点；
+            z-[15]：低于位置角标/拖拽护盾(z-20)与上传遮罩(z-30)，高于内容与错误遮罩(z-10)；
+            左对齐时 pl-11 避开左上角位置角标（拖拽手柄），中/右对齐不受影响；
+            overlay 模式下 HTML/图片类型徽标隐藏（顶部空间让给标题，信息行仍有完整信息） */}
+        {overlayMode && (video || htmlFile || imageFile) && (
+          <div
+            className={cn(
+              'pointer-events-none absolute inset-x-0 top-0 z-[15] flex items-start bg-gradient-to-b from-black/70 via-black/35 to-transparent pb-2 pt-1',
+              titleAlign === 'left' ? 'justify-start pl-11 pr-3' : titleAlign === 'right' ? 'justify-end pl-3 pr-3' : 'justify-center px-3',
+            )}
+          >
+            {overlayEditing ? (
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={title}
+                maxLength={100}
+                autoFocus
+                onChange={(e) => onTitleChange(index, e.target.value)}
+                onBlur={() => setOverlayEditing(false)}
+                onInput={(e) => {
+                  const ta = e.currentTarget;
+                  ta.style.height = 'auto';
+                  ta.style.height = `${ta.scrollHeight}px`;
+                }}
+                placeholder="点击输入标题…"
+                aria-label={`位置 ${index + 1} 的标题（叠加显示编辑）`}
+                style={{
+                  textAlign: titleAlign,
+                  fontSize: `${titleFontSize}px`,
+                  fontWeight: titleFontWeight,
+                  color: titleColor !== TITLE_COLOR_DEFAULT ? titleColor : '#ffffff',
+                  textShadow: '0 1px 4px rgba(0,0,0,0.7)',
+                }}
+                className="pointer-events-auto no-scrollbar min-w-0 flex-1 resize-none overflow-hidden rounded-md border border-dashed border-white/40 bg-black/30 px-1.5 py-0.5 leading-snug text-white placeholder:text-white/50 focus:outline-none"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setOverlayEditing(true)}
+                title="点击编辑标题"
+                aria-label={`位置 ${index + 1} 的叠加标题，点击编辑`}
+                style={{
+                  fontSize: `${titleFontSize}px`,
+                  fontWeight: titleFontWeight,
+                  color: titleColor !== TITLE_COLOR_DEFAULT ? titleColor : '#ffffff',
+                  textShadow: '0 1px 4px rgba(0,0,0,0.7)',
+                }}
+                className={cn(
+                  'pointer-events-auto min-w-0 max-w-full rounded-md px-1 py-0.5 text-left leading-snug line-clamp-2 whitespace-pre-wrap transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60',
+                  !title && 'opacity-60',
+                )}
+              >
+                {title || '点击设置标题'}
+              </button>
+            )}
+          </div>
+        )}
         {video ? (
           <>
             {/* 模糊背景填充（Step C，letterboxFill='blur' 时）：同源视频镜像副本，
@@ -404,14 +483,14 @@ export function VideoCard({
           </button>
         )}
 
-        {/* HTML / 图片类型角标（内容区左上，位置角标右侧） */}
-        {isHtml && (
+        {/* HTML / 图片类型角标（内容区左上，位置角标右侧）；overlay 模式顶部让位给标题条，隐藏 */}
+        {isHtml && !overlayMode && (
           <span className="absolute left-2.5 top-2.5 z-10 ml-9 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm">
             <Code2 className="h-3 w-3" aria-hidden />
             {isBundle ? 'HTML 包' : 'HTML'}
           </span>
         )}
-        {isImage && (
+        {isImage && !overlayMode && (
           <span className="absolute left-2.5 top-2.5 z-10 ml-9 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm">
             <ImageIcon className="h-3 w-3" aria-hidden />
             图片
@@ -427,10 +506,10 @@ export function VideoCard({
         )}
       </div>
 
-      {/* 标题 / 属性信息区（两者可独立显隐，纯内容观看/录屏时可全部隐藏） */}
-      {(showTitles || showInfo) && (
+      {/* 标题 / 属性信息区（两者可独立显隐；标题仅在 below 模式下在此渲染，overlay 模式排他显示在内容顶部） */}
+      {(belowMode || showInfo) && (
       <div className="flex flex-1 flex-col gap-1.5 p-2.5 sm:p-3">
-        {showTitles && (
+        {belowMode && (
         <textarea
           ref={textareaRef}
           rows={1}
@@ -441,7 +520,12 @@ export function VideoCard({
           onBlur={() => recalcHeight(false)}
           placeholder="给内容起个标题，或写点介绍…"
           aria-label={`位置 ${index + 1} 的标题与介绍`}
-          style={{ textAlign: titleAlign, fontSize: `${titleFontSize}px` }}
+          style={{
+            textAlign: titleAlign,
+            fontSize: `${titleFontSize}px`,
+            fontWeight: titleFontWeight,
+            ...(titleColorCss ? { color: titleColorCss } : {}),
+          }}
           className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
         />
         )}

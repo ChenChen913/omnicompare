@@ -72,7 +72,26 @@ BODY=$(echo "$R" | head -n -1)
 check "回读 titleAlign=right" 0 0 '"titleAlign":"right"' "$BODY"
 check "回读 titleFontSize=28" 0 0 '"titleFontSize":28' "$BODY"
 
-echo "=== F. v2 路由一致性 ==="
+echo "=== F. 标题位置/粗细/颜色（overlay 模式三件套） ==="
+R=$(req PATCH /api/videos/settings '{"titlePosition":"overlay","titleWeight":"bold","titleColor":"#facc15"}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "PATCH 位置/粗细/颜色同发" 200 "$CODE" '"titlePosition":"overlay".*"titleWeight":"bold".*"titleColor":"#facc15"' "$BODY"
+R=$(req PATCH /api/videos/settings '{"titlePosition":"below","titleWeight":"normal","titleColor":"default"}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "PATCH 回 below/normal/default" 200 "$CODE" '"titlePosition":"below".*"titleWeight":"normal".*"titleColor":"default"' "$BODY"
+declare -a CASES2=(
+  '{"titlePosition":"top"}'        '{"titlePosition":123}'
+  '{"titleWeight":"heavy"}'        '{"titleWeight":700}'
+  '{"titleColor":"#fff"}'          '{"titleColor":"javascript:alert(1)"}'
+  '{"titleColor":"#GGGGGG"}'       '{"titleColor":null}'
+)
+for b in "${CASES2[@]}"; do
+  R=$(req PATCH /api/videos/settings "$b")
+  CODE=$(echo "$R" | tail -n 1)
+  check "PATCH 非法 $b → 400" 400 "$CODE" 'error|需为' "$(echo "$R" | head -n -1)"
+done
+
+echo "=== G. v2 路由一致性 ==="
 R=$(req PATCH /api/projects/default/settings '{"titleAlign":"center","titleFontSize":18}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "v2 PATCH 合法" 200 "$CODE" '"titleAlign":"center".*"titleFontSize":18' "$BODY"
@@ -83,7 +102,7 @@ R=$(req PATCH /api/projects/default/settings '{"titleAlign":"top"}')
 CODE=$(echo "$R" | tail -n 1)
 check "v2 PATCH 非法对齐 → 400" 400 "$CODE" '标题对齐' "$(echo "$R" | head -n -1)"
 
-echo "=== G. 恢复默认（center/16，不污染演示状态） ==="
+echo "=== H. 恢复默认（center/16，不污染演示状态） ==="
 R=$(req PATCH /api/videos/settings '{"titleAlign":"center","titleFontSize":16}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "恢复默认" 200 "$CODE" '"titleAlign":"center".*"titleFontSize":16' "$BODY"
