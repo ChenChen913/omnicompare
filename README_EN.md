@@ -51,6 +51,8 @@ the product was renamed once images and HTML pages joined videos.
 - **Multi-project**: projects are grouped as active / draft / archived and are fully isolated from each other. Switch from the top bar, or browse everything in the Library view.
 - **Three import paths**: click an empty slot, drag files onto the page, or multi-select import.
 - **Batch playback**: play-all / pause / loop / global mute / playback rate. Pure-HTML projects have no playback semantics, so the primary action becomes "Refresh all".
+- **Background music**: one project-level BGM track, supporting MP3 / WAV / FLAC / M4A / AAC / OGG (≤50MB each). Upload it from the "Music" button in the top bar (a status dot appears once set; clicking again replaces it); volume and removal live in "Play → Background music", stored per project. Focus mode adds a one-click "loop from the start" button in the bottom-right corner: videos and the music rewind together, start in sync, and loop — built for screen recording.
+- **Auto-fit viewport**: when the wall grows taller than the viewport, it scales down proportionally until everything fits on screen (screenshots and recordings capture it all); always on in Focus mode.
 - **Adaptive top bar**: the controls follow the content you imported; there is no mode to pick manually.
 - **Studio / Focus modes, dark / light themes.**
 - **Sandboxed rendering**: HTML and SVG are doubly isolated by iframe `sandbox="allow-scripts"` plus server-side CSP headers.
@@ -76,9 +78,9 @@ depend on the main application.
 
 1. **Create a project** from the project switcher in the top bar. The sidebar card's "Manage" entry renames it, changes its status, or deletes it (the default project cannot be deleted).
 2. **Pick slots and matrix**: open "Layout" in the top bar, choose 1–12 slots, then pick rows × columns. Matrices marked "补" do not divide evenly and leave empty cells at the end.
-3. **Import content**: click any empty slot, drag files onto the page, or use multi-select import. Files beyond the slot count expand the matrix automatically.
+3. **Import content**: click any empty slot, drag files onto the page, or use multi-select import. Files beyond the slot count expand the matrix automatically; dropping onto an occupied card never overwrites it — the file lands in the next free slot.
 4. **Add titles**: each cell has a title box, typically the model name. It saves on blur, up to 100 characters.
-5. **Compare playback**: with videos present, "Play all" rewinds every video and starts them together. Loop, mute, speed, and title / info visibility all live in the "Display" menu in the top bar and are stored on the server.
+5. **Compare playback**: with videos present, "Play all" rewinds every video and starts them together. Loop, mute, speed, and background music live in the "Play" menu in the top bar; title and info visibility live in the "Title" menu — all stored on the server. To add music, click the "Music" button in the top bar and pick a file (≤50MB); adjust the volume under "Play → Background music".
 6. **Reorder**: drag the number badge in a card's top-left corner.
 7. **Per-card ratio**: the ratio button on the info row overrides the global ratio for that card; "Follow" restores it.
 8. **Remove**: the trash icon on a card removes one item; the trash icon in the top bar clears everything (with confirmation, irreversible).
@@ -107,6 +109,7 @@ Upload and capacity limits live in `src/lib/types.ts` and are shared by client a
 | `MAX_FILE_SIZE` | 200MB | Single video |
 | `MAX_IMAGE_SIZE` | 20MB | Single image |
 | `MAX_HTML_SIZE` | 10MB | Single HTML file |
+| `MAX_AUDIO_SIZE` | 50MB | Single background music file (MP3 / WAV / FLAC / M4A / AAC / OGG) |
 | `MAX_BUNDLE_SIZE` | 50MB | zip page bundle, compressed |
 | `MAX_BUNDLE_UNCOMPRESSED` | 120MB | zip page bundle, uncompressed total |
 | `MAX_BUNDLE_FILES` | 300 | Files inside a zip page bundle |
@@ -187,6 +190,9 @@ bun run lint         # eslint .
 bun run build        # production build (with a standalone copy self-check)
 
 # API regression suite (no external dependencies, 62 assertions)
+# ⚠️ The script wipes ALL content of the default project at the end (all=1).
+#    Run it only against a local development environment, and make sure the
+#    default project holds nothing you need; back up data/ first if it does.
 node scripts/api-regression-test.mjs
 
 # Dead-code scan: lists unreachable modules from the import graph
