@@ -16,7 +16,6 @@ import {
   Crop,
   Droplets,
   Expand,
-  Eye,
   Film,
   FolderPlus,
   Gauge,
@@ -292,7 +291,7 @@ export function VideoWall() {
     [],
   );
   const [pendingCount, setPendingCount] = useState<number | null>(null);
-  /** studio = 管理（全部控件 + 侧栏）；focus = 观看（极简顶栏 + 满幅网格） */
+  /** studio = 管理（全部控件 + 侧栏 + 顶栏）；focus = 观看（顶栏整体隐藏 + 满幅网格，右下角圆形按钮退出） */
   const [mode, setMode] = useState<'studio' | 'focus'>('studio');
   /** 视图（Step D）：workspace = 内容矩阵；library = 项目库（侧栏「库」入口，SPA 内切换） */
   const [view, setView] = useState<'workspace' | 'library'>('workspace');
@@ -1092,14 +1091,16 @@ export function VideoWall() {
   /* ---------- 渲染 ---------- */
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      {/* 顶部：品牌 + 全局控制。固定两行结构（震动根治）：无论项目内容是视频还是网页、
+      {/* 顶部：品牌 + 全局控制（仅 Studio 渲染）。固定两行结构（震动根治）：无论项目内容是视频还是网页、
           播放/刷新按钮组如何显隐，顶栏恒为「品牌行 + 功能行」两行、高度不变，
-          主体内容不再被顶栏行数变化推动上下跳动 */}
+          主体内容不再被顶栏行数变化推动上下跳动。
+          专注模式整体隐藏顶栏（零干扰观看），退出入口固定在页面右下角圆形按钮 */}
+      {mode === 'studio' && (
       <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
         <div
           className={cn(
             'mx-auto flex w-full flex-col gap-2 px-3 py-3 sm:px-6',
-            mode === 'focus' || !sidebarOpen ? 'max-w-[1800px]' : 'max-w-[1400px]',
+            !sidebarOpen ? 'max-w-[1800px]' : 'max-w-[1400px]',
           )}
         >
           {/* 第一行：品牌 + 项目切换 + 使用须知 + 主题（高度恒定） */}
@@ -1116,7 +1117,7 @@ export function VideoWall() {
               )}
             </div>
 
-          {/* 项目切换器（Step 8 多项目；Studio 模式显示，Focus 保持极简顶栏） */}
+          {/* 项目切换器（Step 8 多项目） */}
           {mode === 'studio' && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -1209,14 +1210,8 @@ export function VideoWall() {
             </button>
           )}
 
-          {/* 第一行右上角：专注徽章 + 明暗主题（无框只有太阳/月亮，固定在此不再随功能行增减） */}
+          {/* 第一行右上角：明暗主题（无框只有太阳/月亮） */}
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            {mode !== 'studio' && (
-              <span className="mr-1 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
-                专注模式
-              </span>
-            )}
             <button
               type="button"
               onClick={toggleTheme}
@@ -1311,7 +1306,7 @@ export function VideoWall() {
                 <Divider />
               </>
             )}
-            {view === 'workspace' && mode === 'studio' && (
+            {view === 'workspace' && (
               <Popover>
                 <PopoverTrigger asChild>
                   <button
@@ -1536,8 +1531,8 @@ export function VideoWall() {
               </Popover>
             )}
 
-            {/* 显示设置下拉：循环/静音/速度（仅对视频生效）+ 标题/属性显隐（全局生效）；库视图隐藏 */}
-            {view === 'workspace' && (
+            {/* 播放下拉（拆分按钮 1/3）：循环/静音/播放速度三件套；纯 HTML 项目无播放语义，整组隐藏 */}
+            {view === 'workspace' && hasVideo && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -1546,18 +1541,20 @@ export function VideoWall() {
                     ctlBtn,
                     'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
                   )}
-                  title="循环、静音、播放速度、标题显隐/格式/位置与标题样式"
-                  aria-label="显示设置"
+                  title="循环播放、全部静音与播放速度"
+                  aria-label="播放设置"
                 >
-                  <Eye className="h-4 w-4" aria-hidden />
-                  <span className="hidden sm:inline">显示</span>
+                  <Play className="h-4 w-4" aria-hidden />
+                  <span className="hidden sm:inline">播放</span>
+                  <span className="inline-block min-w-[3ch] text-center text-[11px] font-semibold tabular-nums text-primary">
+                    {rate}×
+                  </span>
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-[12rem] border-border bg-card">
                 <DropdownMenuCheckboxItem
                   checked={loop}
                   onCheckedChange={(v) => void updateSettings({ loop: v === true })}
-                  disabled={!hasVideo}
                   className="text-[13px]"
                 >
                   循环播放
@@ -1565,13 +1562,12 @@ export function VideoWall() {
                 <DropdownMenuCheckboxItem
                   checked={mutedAll}
                   onCheckedChange={(v) => void updateSettings({ muted: v === true })}
-                  disabled={!hasVideo}
                   className="text-[13px]"
                 >
                   全部静音
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuSub>
-                  <DropdownMenuSubTrigger disabled={!hasVideo} className="text-[13px]">
+                  <DropdownMenuSubTrigger className="text-[13px]">
                     <Gauge className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
                     播放速度
                     <span className="ml-auto pl-2 text-[11px] tabular-nums text-muted-foreground">
@@ -1590,7 +1586,28 @@ export function VideoWall() {
                     ))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuSeparator />
+              </DropdownMenuContent>
+            </DropdownMenu>
+            )}
+
+            {/* 标题下拉（拆分按钮 2/3）：标题/属性信息显隐 + 位置/对齐/字号/粗细/颜色五组全局格式 */}
+            {view === 'workspace' && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    ctlBtn,
+                    'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
+                  )}
+                  title="标题与属性信息的显隐、位置、对齐、字号、粗细与颜色"
+                  aria-label="标题设置"
+                >
+                  <Type className="h-4 w-4" aria-hidden />
+                  <span className="hidden sm:inline">标题</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[12rem] border-border bg-card">
                 <DropdownMenuCheckboxItem
                   checked={showTitles}
                   onCheckedChange={(v) => void updateSettings({ showTitles: v === true })}
@@ -1598,6 +1615,14 @@ export function VideoWall() {
                 >
                   显示标题
                 </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={showInfo}
+                  onCheckedChange={(v) => void updateSettings({ showInfo: v === true })}
+                  className="text-[13px]"
+                >
+                  显示属性信息
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
                 {/* 标题格式（全局同步）：一次调节，所有卡片标题同时生效（存项目 settings） */}
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger
@@ -1766,61 +1791,58 @@ export function VideoWall() {
                     ))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuCheckboxItem
-                  checked={showInfo}
-                  onCheckedChange={(v) => void updateSettings({ showInfo: v === true })}
-                  className="text-[13px]"
-                >
-                  显示属性信息
-                </DropdownMenuCheckboxItem>
-                {/* 黑边填充三选一（全局同步）：base = 留黑边（原行为）；blur = 模糊填充；cover = 铺满裁切。
-                    cover 用 object-cover 等比放大裁切铺满，无黑边（仅视频/图片，HTML 豁免） */}
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger
-                    disabled={!hasVideo && !hasImage}
-                    className="text-[13px]"
-                  >
-                    {letterboxFill === 'cover' ? (
-                      <Crop className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    ) : letterboxFill === 'blur' ? (
-                      <Droplets className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    ) : (
-                      <Expand className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    )}
-                    黑边填充
-                    <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
-                      {letterboxFill === 'cover' ? '铺满裁切' : letterboxFill === 'blur' ? '模糊填充' : '留黑边'}
-                    </span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="min-w-[11rem] border-border bg-card">
-                    {LETTERBOX_FILLS.map((f) => (
-                      <DropdownMenuItem
-                        key={f}
-                        onClick={() => void updateSettings({ letterboxFill: f })}
-                        className={cn('text-[13px]', f === letterboxFill && 'font-semibold text-primary')}
-                      >
-                        {f === 'cover' ? (
-                          <Crop className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                        ) : f === 'blur' ? (
-                          <Droplets className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                        ) : (
-                          <Expand className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                        )}
-                        {f === 'cover' ? '铺满裁切（无黑边）' : f === 'blur' ? '模糊填充' : '留黑边（默认）'}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                {!hasVideo && (
-                  <p className="px-2 pb-1.5 pt-1.5 text-[10px] leading-relaxed text-muted-foreground/60">
-                    循环、静音与播放速度仅对视频生效；黑边填充仅对视频与图片生效（铺满裁切会等比放大裁掉超出部分），HTML 页面不受影响。
-                  </p>
-                )}
               </DropdownMenuContent>
             </DropdownMenu>
             )}
 
-            {view === 'workspace' && mode === 'studio' && (
+            {/* 黑边填充下拉（拆分按钮 3/3）：三选一直列少一层跳转；仅视频/图片生效，纯网页项目隐藏 */}
+            {view === 'workspace' && (hasVideo || hasImage) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    ctlBtn,
+                    'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
+                  )}
+                  title="黑边填充方式：留黑边 / 模糊填充 / 铺满裁切（铺满会等比放大裁掉超出部分）"
+                  aria-label="黑边填充设置"
+                >
+                  {letterboxFill === 'cover' ? (
+                    <Crop className="h-4 w-4" aria-hidden />
+                  ) : letterboxFill === 'blur' ? (
+                    <Droplets className="h-4 w-4" aria-hidden />
+                  ) : (
+                    <Expand className="h-4 w-4" aria-hidden />
+                  )}
+                  <span className="hidden sm:inline">填充</span>
+                  <span className="inline-block text-[11px] font-semibold text-primary">
+                    {letterboxFill === 'cover' ? '铺满' : letterboxFill === 'blur' ? '模糊' : '黑边'}
+                  </span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[13rem] border-border bg-card">
+                {LETTERBOX_FILLS.map((f) => (
+                  <DropdownMenuItem
+                    key={f}
+                    onClick={() => void updateSettings({ letterboxFill: f })}
+                    className={cn('text-[13px]', f === letterboxFill && 'font-semibold text-primary')}
+                  >
+                    {f === 'cover' ? (
+                      <Crop className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    ) : f === 'blur' ? (
+                      <Droplets className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    ) : (
+                      <Expand className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    )}
+                    {f === 'cover' ? '铺满裁切（无黑边）' : f === 'blur' ? '模糊填充' : '留黑边（默认）'}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            )}
+
+            {view === 'workspace' && (
               <>
                 <button
                   type="button"
@@ -1872,40 +1894,44 @@ export function VideoWall() {
 
             <Divider />
 
-            {/* Studio ↔ Focus 模式切换（库视图进入专注会同时切回工作空间） */}
-            {mode === 'studio' ? (
+            {/* 进入专注模式（退出入口移至右下角圆形按钮，不占顶栏；库视图进入专注会同时切回工作空间） */}
+            {mode === 'studio' && (
               <button
                 type="button"
                 onClick={() => {
                   if (view === 'library') setView('workspace');
                   setMode('focus');
+                  toast('已进入专注模式：点击右下角的圆形按钮退出', { id: 'focus-mode', duration: 3500 });
                 }}
                 className={cn(ctlBtn, 'border-primary/50 bg-primary/10 text-primary hover:bg-primary/20')}
-                title="进入专注模式：隐藏管理控件，专心观看对比"
+                title="进入专注模式：隐藏顶栏与全部管理控件，专心观看对比"
                 aria-label="进入专注模式"
               >
                 <Expand className="h-4 w-4" aria-hidden />
                 <span className="hidden sm:inline">专注</span>
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setMode('studio')}
-                className={cn(ctlBtn, 'border-primary/50 bg-primary/10 text-primary hover:bg-primary/20')}
-                title="退出专注模式，返回工作台"
-                aria-label="退出专注模式"
-              >
-                <Shrink className="h-4 w-4" aria-hidden />
-                <span className="hidden sm:inline">退出专注</span>
-              </button>
             )}
           </div>
         </div>
       </header>
+      )}
 
-      {/* 拖拽导入的浮动提示 */}
+      {/* 专注模式退出入口：右下角圆形按钮，默认半透明低调隐蔽，hover/focus 时显形 */}
+      {mode === 'focus' && (
+        <button
+          type="button"
+          onClick={() => setMode('studio')}
+          title="退出专注模式，返回工作台"
+          aria-label="退出专注模式"
+          className="fixed bottom-5 right-5 z-50 flex h-11 w-11 items-center justify-center rounded-full border border-border/60 bg-card/70 text-muted-foreground opacity-40 shadow-lg backdrop-blur transition-all hover:bg-card hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
+          <Shrink className="h-[18px] w-[18px]" aria-hidden />
+        </button>
+      )}
+
+      {/* 拖拽导入的浮动提示（专注模式下顶栏已隐藏，提示贴近页顶） */}
       {gridDrag && (
-        <div className="pointer-events-none fixed inset-x-0 top-16 z-50 flex justify-center">
+        <div className={cn('pointer-events-none fixed inset-x-0 z-50 flex justify-center', mode === 'focus' ? 'top-4' : 'top-16')}>
           <div className="flex items-center gap-2 rounded-full border border-primary/60 bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-xl shadow-primary/10 backdrop-blur">
             <UploadCloud className="h-4 w-4" aria-hidden />
             松开鼠标导入内容 · 文件较多时会自动扩展位数
@@ -2143,7 +2169,7 @@ export function VideoWall() {
               <button
                 type="button"
                 disabled
-                title="设置已收编于顶栏「布局」与「显示」弹层，暂不提供独立页面（D13）"
+                title="设置已收编于顶栏「布局」「播放」「标题」「填充」弹层，暂不提供独立页面（D13）"
                 className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground/50"
               >
                 <Settings className="h-4 w-4" aria-hidden />
@@ -2491,8 +2517,8 @@ export function VideoWall() {
             </li>
             <li>
               <strong className="font-semibold text-foreground/90">播放与展示：</strong>
-              内容下方可填写标题与介绍；顶栏「显示」菜单统一控制
-              <strong className="font-semibold text-foreground/90">循环、静音、播放速度、标题与属性显隐</strong>
+              内容下方可填写标题与介绍；顶栏「播放」「标题」「填充」三个按钮分别控制
+              <strong className="font-semibold text-foreground/90">循环/静音/倍速、标题样式与黑边填充</strong>
             </li>
             <li>
               <strong className="font-semibold text-foreground/90">顶栏随内容自动适配：</strong>
