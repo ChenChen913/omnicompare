@@ -234,6 +234,28 @@ export function VideoWall() {
   /** 留白填充（Step C）：base = 底色吸收；blur = 模糊背景填充（仅视频/图片生效） */
   const [letterboxFill, setLetterboxFill] = useState<'base' | 'blur'>('base');
   const [gridDrag, setGridDrag] = useState(false);
+  /** 拖拽提示生命周期（防卡死）：卡片级 handleDrop 会 stopPropagation（防主区重复导入），
+      冒泡层 onDrop 收不到 → gridDrag 可能卡在 true；drop 落进 iframe 内部文档 / 拖拽被取消等
+      路径主文档同样收不到收尾事件。对策：dragover 持续触发时心跳续命，350ms 无 dragover
+      （即拖拽会话已结束）自动收起提示；正常路径仍由 onDropCapture / onDragLeave 立即复位。 */
+  const gridDragTimerRef = useRef<number | null>(null);
+  const endGridDrag = useCallback(() => {
+    if (gridDragTimerRef.current !== null) {
+      window.clearTimeout(gridDragTimerRef.current);
+      gridDragTimerRef.current = null;
+    }
+    setGridDrag(false);
+  }, []);
+  const keepGridDragAlive = useCallback(() => {
+    if (gridDragTimerRef.current !== null) window.clearTimeout(gridDragTimerRef.current);
+    gridDragTimerRef.current = window.setTimeout(endGridDrag, 350);
+  }, [endGridDrag]);
+  useEffect(
+    () => () => {
+      if (gridDragTimerRef.current !== null) window.clearTimeout(gridDragTimerRef.current);
+    },
+    [],
+  );
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   /** studio = 管理（全部控件 + 侧栏）；focus = 观看（极简顶栏 + 满幅网格） */
   const [mode, setMode] = useState<'studio' | 'focus'>('studio');
@@ -1575,15 +1597,21 @@ export function VideoWall() {
           // 仅外部文件拖入时提示；卡片排序（pointer 模拟）不产生 dataTransfer
           if (view === 'library' || !e.dataTransfer.types.includes('Files')) return;
           e.preventDefault();
-          if (!gridDrag) setGridDrag(true);
+          setGridDrag(true);
+          keepGridDragAlive();
         }}
         onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) setGridDrag(false);
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) endGridDrag();
+        }}
+        onDropCapture={() => {
+          // 捕获阶段兜底：卡片级 handleDrop 会 stopPropagation（防重复导入），冒泡层 onDrop
+          // 收不到；捕获阶段先于目标阶段执行，保证任何卡内松手都立即复位拖拽提示
+          endGridDrag();
         }}
         onDrop={(e) => {
           if (view === 'library') return; // 库视图不接收文件导入
           e.preventDefault();
-          setGridDrag(false);
+          endGridDrag();
           const files = Array.from(e.dataTransfer.files);
           if (files.length > 0) void distributeFiles(files);
         }}
