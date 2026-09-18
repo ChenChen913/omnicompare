@@ -1221,6 +1221,27 @@ export function VideoWall() {
     }, 80);
   }, [getActiveVideos, bgm]);
 
+  /** 专注模式键盘快捷键：空格 / F = 播放 ⇄ 暂停（一键全开/全停，录屏时鼠标不必入镜）。
+   *  正在播放（任一视频或背景音乐）→ 全部暂停；否则从头同步播放（等价右下角圆形按钮）。
+   *  标题输入框等聚焦时不抢键；空格默认滚动页面，需 preventDefault */
+  useEffect(() => {
+    if (mode !== 'focus') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.code !== 'Space' && e.key !== 'f' && e.key !== 'F') return;
+      e.preventDefault();
+      const anyPlaying =
+        getActiveVideos().some((v) => !v.paused)
+        || (!!bgm && !!audioRef.current && !audioRef.current.paused);
+      if (anyPlaying) handlePauseAll();
+      else handleLoopShow();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mode, getActiveVideos, handleLoopShow, handlePauseAll, bgm]);
+
   /** 上传/更换背景音乐：POST FormData → 响应清单回填（服务端同临界区删除旧文件） */
   const handleBgmFile = useCallback(
     async (file: File) => {
@@ -2810,6 +2831,7 @@ export function VideoWall() {
                     uploading: !!uploading[slot.index],
                     loop,
                     muted: mutedAll,
+                    focusMode: mode === 'focus',
                     highlighted: highlight === slot.index,
                     dragActive: gridDrag,
                     globalAspect: aspect,

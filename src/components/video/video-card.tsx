@@ -40,6 +40,9 @@ export interface VideoCardProps {
   showInfo?: boolean;
   /** 全局位置编号显隐：false 时隐藏左上角数字角标（仅视觉隐藏，拖拽手柄能力保留，截图更干净） */
   showIndex?: boolean;
+  /** 专注模式（studio/focus）：本卡视频播放中永不显示原生控件（录屏画面干净）；
+   *  暂停时仍可 hover 调出操作。工作室模式不受限：hover 即显示 */
+  focusMode?: boolean;
   /** 留白填充模式（Step C 扩展 cover）：base = 底色吸收；blur = 同内容模糊放大铺底；
    *  cover = 铺满裁切（object-cover，无黑边）；仅视频/图片生效，HTML 豁免 */
   letterboxFill?: LetterboxFill;
@@ -96,6 +99,7 @@ export function VideoCard({
   showTitles = true,
   showInfo = true,
   showIndex = true,
+  focusMode = false,
   letterboxFill = 'base',
   htmlScale = 100,
   titleAlign = 'center',
@@ -118,6 +122,10 @@ export function VideoCard({
   const [dragOver, setDragOver] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [imageError, setImageError] = useState(false);
+  /** 鼠标是否悬停在内容区上：原生控件（进度条/播放键等）仅在悬停时挂载，默认隐式 */
+  const [hovered, setHovered] = useState(false);
+  /** 本卡视频是否正在播放（play/pause 事件驱动）：配合 focusMode 决定控件显隐 */
+  const [selfPlaying, setSelfPlaying] = useState(false);
   const [prevFilename, setPrevFilename] = useState(video?.filename);
   const [prevImageName, setPrevImageName] = useState(imageFile?.filename);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -134,9 +142,11 @@ export function VideoCard({
   const titleFontWeight = titleWeight === 'bold' ? 700 : titleWeight === 'medium' ? 500 : 400;
   const titleColorCss = titleColor !== TITLE_COLOR_DEFAULT ? titleColor : undefined;
 
-  /** 把主视频的播放态镜像到模糊背景层（播放/暂停/拖动/倍速/换源）；失败静默 */
+  /** 把主视频的播放态镜像到模糊背景层（播放/暂停/拖动/倍速/换源）；失败静默。
+   *  顺带驱动 selfPlaying：onPlay/onPause 都会路过这里 */
   const syncBgFromMain = useCallback(() => {
     const main = localVideoRef.current;
+    setSelfPlaying(!!main && !main.paused);
     const bg = bgVideoRef.current;
     if (!main || !bg) return;
     try {
@@ -293,6 +303,8 @@ export function VideoCard({
       {/* 内容区域：比例只控制卡片框（行内 aspect-ratio），视频 object-contain 不裁切；HTML 为沙箱 iframe */}
       <div
         style={{ aspectRatio: boxAspect }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         className="relative w-full overflow-hidden bg-black"
         onDragOver={(e) => {
           e.preventDefault();
@@ -392,7 +404,8 @@ export function VideoCard({
                 setVideoRef(index, el);
               }}
               src={src}
-              controls
+              // 原生控件默认不挂载（录屏干净）；hover 才显示，专注模式播放中永不显示
+              controls={hovered && !(focusMode && selfPlaying)}
               playsInline
               preload="auto"
               loop={loop}
