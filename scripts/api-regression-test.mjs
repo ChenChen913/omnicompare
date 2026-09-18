@@ -330,8 +330,15 @@ async function main() {
     // 自己上传探针文件，不依赖"项目里恰好有什么"。
     // 历史写法是先查清单里有没有图片再决定是否断言，导致断言总数随环境漂移
     // （57 或 58），还会静默跳过一整项 —— 测试的可信度就来自总数恒定。
+    // slot 必须落在当前 count 内（v1 路由拒收越界位置）：取末位即可，
+    // 固定写 '4' 会在内容位 < 5 的环境里 400，重蹈"总数随环境漂移"的覆辙。
+    const probeManifest = await req('GET', '/api/videos');
+    const probeCount = Number(probeManifest.body?.count) || 1;
     const up = await req('POST', '/api/videos/upload', {
-      form: { file: namedBlob(new Blob([PNG_1PX], { type: 'image/png' }), 'range-probe.png'), slot: '4' },
+      form: {
+        file: namedBlob(new Blob([PNG_1PX], { type: 'image/png' }), 'range-probe.png'),
+        slot: String(Math.max(0, probeCount - 1)),
+      },
     });
     const file = (up.body?.slots ?? [])
       .map((s) => s.image)
