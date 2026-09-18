@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Code2, Image as ImageIcon, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AspectRatio, Slot, aspectCss, aspectLabel, formatBytes } from '@/lib/types';
+import {
+  AspectRatio,
+  Slot,
+  TitleAlign,
+  TITLE_FONT_DEFAULT,
+  aspectCss,
+  aspectLabel,
+  formatBytes,
+} from '@/lib/types';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +36,10 @@ export interface VideoCardProps {
   showInfo?: boolean;
   /** 留白填充模式（Step C）：base = 底色吸收；blur = 同内容模糊放大铺底（仅视频/图片，HTML 豁免） */
   letterboxFill?: 'base' | 'blur';
+  /** 全局标题对齐（同步所有卡片）：left / center / right */
+  titleAlign?: TitleAlign;
+  /** 全局标题字号 px（同步所有卡片，TITLE_FONT_MIN~MAX） */
+  titleFontSize?: number;
   /** 「刷新全部页面」信号（纯 HTML 项目顶栏主动作）：数值变化时重载本卡 iframe；0 = 从未触发 */
   refreshSignal?: number;
   /** 单卡比例覆盖变更（null = 恢复跟随全局）；未传则不显示覆盖控件 */
@@ -65,6 +77,8 @@ export function VideoCard({
   showTitles = true,
   showInfo = true,
   letterboxFill = 'base',
+  titleAlign = 'center',
+  titleFontSize = TITLE_FONT_DEFAULT,
   refreshSignal = 0,
   onAspectOverride,
   onFiles,
@@ -167,7 +181,7 @@ export function VideoCard({
     if (!ta) return;
     const focused = document.activeElement === ta;
     recalcHeight(focused);
-  }, [title, recalcHeight]);
+  }, [title, titleFontSize, recalcHeight]);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -427,7 +441,8 @@ export function VideoCard({
           onBlur={() => recalcHeight(false)}
           placeholder="给内容起个标题，或写点介绍…"
           aria-label={`位置 ${index + 1} 的标题与介绍`}
-          className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 text-[13px] leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
+          style={{ textAlign: titleAlign, fontSize: `${titleFontSize}px` }}
+          className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
         />
         )}
         {showInfo && (video || htmlFile || imageFile) && (

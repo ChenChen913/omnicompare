@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   BookOpen,
   ChevronDown,
   ChevronLeft,
@@ -16,14 +19,17 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   Library,
+  Minus,
   Moon,
   Pause,
   Play,
+  Plus,
   RefreshCw,
   Settings,
   Shrink,
   Sun,
   Trash2,
+  Type,
   UploadCloud,
   Wand2,
 } from 'lucide-react';
@@ -57,6 +63,11 @@ import {
   Project,
   SLOT_MAX,
   Slot,
+  TITLE_ALIGNS,
+  TITLE_FONT_DEFAULT,
+  TITLE_FONT_MAX,
+  TITLE_FONT_MIN,
+  TitleAlign,
   aspectCss,
   aspectLabel,
   defaultLayoutFor,
@@ -233,6 +244,9 @@ export function VideoWall() {
   const [rate, setRate] = useState(1);
   /** 留白填充（Step C）：base = 底色吸收；blur = 模糊背景填充（仅视频/图片生效） */
   const [letterboxFill, setLetterboxFill] = useState<'base' | 'blur'>('base');
+  /** 标题格式（全局同步，存项目 settings）：所有卡片一次调节同时生效 */
+  const [titleAlign, setTitleAlign] = useState<TitleAlign>('center');
+  const [titleFontSize, setTitleFontSize] = useState(TITLE_FONT_DEFAULT);
   const [gridDrag, setGridDrag] = useState(false);
   /** 拖拽提示生命周期（防卡死）：卡片级 handleDrop 会 stopPropagation（防主区重复导入），
       冒泡层 onDrop 收不到 → gridDrag 可能卡在 true；drop 落进 iframe 内部文档 / 拖拽被取消等
@@ -336,6 +350,8 @@ export function VideoWall() {
     setMutedAll(s?.muted ?? d.muted);
     setRate(s?.playbackRate ?? d.playbackRate);
     setLetterboxFill(s?.letterboxFill ?? d.letterboxFill);
+    setTitleAlign(s?.titleAlign ?? d.titleAlign);
+    setTitleFontSize(s?.titleFontSize ?? d.titleFontSize);
   }, []);
 
   /* 自定义比例草稿跟随服务端值同步（首次加载与切换项目后回填） */
@@ -595,6 +611,8 @@ export function VideoWall() {
         muted: mutedAll,
         playbackRate: rate,
         letterboxFill,
+        titleAlign,
+        titleFontSize,
       };
       // 乐观回填
       if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
@@ -605,6 +623,8 @@ export function VideoWall() {
       if (partial.muted !== undefined) setMutedAll(partial.muted);
       if (partial.playbackRate !== undefined) setRate(partial.playbackRate);
       if (partial.letterboxFill !== undefined) setLetterboxFill(partial.letterboxFill);
+      if (partial.titleAlign !== undefined) setTitleAlign(partial.titleAlign);
+      if (partial.titleFontSize !== undefined) setTitleFontSize(partial.titleFontSize);
       try {
         const res = await fetch(withPid('/api/videos/settings'), {
           method: 'PATCH',
@@ -624,10 +644,12 @@ export function VideoWall() {
         setMutedAll(prev.muted);
         setRate(prev.playbackRate);
         setLetterboxFill(prev.letterboxFill);
+        setTitleAlign(prev.titleAlign);
+        setTitleFontSize(prev.titleFontSize);
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, titleAlign, titleFontSize, applySettings, withPid],
   );
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
@@ -1418,7 +1440,7 @@ export function VideoWall() {
                     ctlBtn,
                     'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
                   )}
-                  title="循环、静音、播放速度与标题/属性显隐"
+                  title="循环、静音、播放速度、标题/属性显隐与标题格式"
                   aria-label="显示设置"
                 >
                   <Eye className="h-4 w-4" aria-hidden />
@@ -1470,6 +1492,85 @@ export function VideoWall() {
                 >
                   显示标题
                 </DropdownMenuCheckboxItem>
+                {/* 标题格式（全局同步）：一次调节，所有卡片标题同时生效（存项目 settings） */}
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger
+                    disabled={!showTitles}
+                    className="text-[13px]"
+                  >
+                    <AlignCenter className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    标题对齐
+                    <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
+                      {titleAlign === 'left' ? '居左' : titleAlign === 'right' ? '居右' : '居中'}
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="min-w-[8rem] border-border bg-card">
+                    {TITLE_ALIGNS.map((a) => (
+                      <DropdownMenuItem
+                        key={a}
+                        onClick={() => void updateSettings({ titleAlign: a })}
+                        className={cn('text-[13px]', a === titleAlign && 'font-semibold text-primary')}
+                      >
+                        {a === 'left' ? (
+                          <AlignLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        ) : a === 'right' ? (
+                          <AlignRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <AlignCenter className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        )}
+                        {a === 'left' ? '居左' : a === 'right' ? '居右' : '居中'}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger
+                    disabled={!showTitles}
+                    className="text-[13px]"
+                  >
+                    <Type className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    标题字号
+                    <span className="ml-auto pl-2 text-[11px] tabular-nums text-muted-foreground">
+                      {titleFontSize}px
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  {/* onSelect preventDefault 保持菜单展开，可连续点按微调 */}
+                  <DropdownMenuSubContent className="min-w-[10rem] border-border bg-card">
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        void updateSettings({ titleFontSize: Math.max(TITLE_FONT_MIN, titleFontSize - 1) });
+                      }}
+                      disabled={titleFontSize <= TITLE_FONT_MIN}
+                      className="text-[13px]"
+                    >
+                      <Minus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                      减小字号
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        void updateSettings({ titleFontSize: Math.min(TITLE_FONT_MAX, titleFontSize + 1) });
+                      }}
+                      disabled={titleFontSize >= TITLE_FONT_MAX}
+                      className="text-[13px]"
+                    >
+                      <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                      增大字号
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        void updateSettings({ titleFontSize: TITLE_FONT_DEFAULT });
+                      }}
+                      disabled={titleFontSize === TITLE_FONT_DEFAULT}
+                      className="text-[13px]"
+                    >
+                      恢复默认（{TITLE_FONT_DEFAULT}px）
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
                 <DropdownMenuCheckboxItem
                   checked={showInfo}
                   onCheckedChange={(v) => void updateSettings({ showInfo: v === true })}
@@ -2033,6 +2134,8 @@ export function VideoWall() {
                     showTitles,
                     showInfo,
                     letterboxFill,
+                    titleAlign,
+                    titleFontSize,
                     refreshSignal: htmlRefreshTick,
                     onAspectOverride: handleSlotAspect,
                     onFiles: (files: File[], primary: number) => void distributeFiles(files, primary),

@@ -22,9 +22,11 @@ import {
   ProjectSettings,
   Slot,
   SLOT_MAX,
+  TITLE_ALIGNS,
   autoLayoutFor,
   defaultSettings,
   parseCustomRatio,
+  parseTitleFontSize,
 } from './types';
 import {
   deleteFile,
@@ -70,6 +72,9 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       muted: st.muted,
       playbackRate: st.playbackRate,
       letterboxFill: st.letterboxFill,
+      // 标题格式（全局同步）：视图携带才能在 PATCH 响应中回显
+      titleAlign: st.titleAlign,
+      titleFontSize: st.titleFontSize,
     },
   };
 }
@@ -195,6 +200,16 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
   else if (s.customRatio !== undefined) {
     const parsed = parseCustomRatio(s.customRatio);
     if (parsed) out.customRatio = parsed;
+  }
+  // 标题格式（全局同步）：旧客户端不携带时保持原值；携带非法值时回落默认
+  if (s.titleAlign !== undefined) {
+    out.titleAlign = (TITLE_ALIGNS as readonly string[]).includes(s.titleAlign)
+      ? s.titleAlign
+      : base.titleAlign;
+  }
+  if (s.titleFontSize !== undefined) {
+    const size = parseTitleFontSize(s.titleFontSize);
+    if (size !== null) out.titleFontSize = size;
   }
   return out;
 }

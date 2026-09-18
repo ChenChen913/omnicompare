@@ -1,7 +1,7 @@
 /**
  * 项目设置 API（schema v2）
  * PATCH /api/projects/[id]/settings
- * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill? }
+ * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, titleAlign?, titleFontSize? }
  * 全局比例 / 标题与属性信息显隐 / 批量播放设置（只作用于 kind=video 的条目，见 BLUEPRINT §9/§13）
  */
 import { NextRequest, NextResponse } from 'next/server';
@@ -12,7 +12,12 @@ import {
   CUSTOM_RATIO_MAX,
   PLAYBACK_RATES,
   AspectRatio,
+  ProjectSettings,
+  TITLE_ALIGNS,
+  TITLE_FONT_MAX,
+  TITLE_FONT_MIN,
   parseCustomRatio,
+  parseTitleFontSize,
 } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -103,6 +108,28 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         return NextResponse.json({ error: '留白填充需为 base / blur' }, { status: 400, headers: noStore });
       }
       s.letterboxFill = body.letterboxFill;
+    }
+    if (body.titleAlign !== undefined) {
+      if (
+        typeof body.titleAlign !== 'string' ||
+        !(TITLE_ALIGNS as readonly string[]).includes(body.titleAlign)
+      ) {
+        return NextResponse.json(
+          { error: `标题对齐需为 ${TITLE_ALIGNS.join(' / ')}` },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.titleAlign = body.titleAlign as ProjectSettings['titleAlign'];
+    }
+    if (body.titleFontSize !== undefined) {
+      const size = parseTitleFontSize(body.titleFontSize);
+      if (size === null) {
+        return NextResponse.json(
+          { error: `标题字号需为 ${TITLE_FONT_MIN}-${TITLE_FONT_MAX} 之间的数字` },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.titleFontSize = size;
     }
 
     project.updatedAt = new Date().toISOString();

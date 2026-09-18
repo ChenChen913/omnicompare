@@ -1,6 +1,6 @@
 /**
  * 项目级播放与展示设置 API（v1 视图，蓝图 §7/§9/§13；Step 8 起支持 ?project= 多项目）
- * PATCH /api/videos/settings[?project=id]  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill? }
+ * PATCH /api/videos/settings[?project=id]  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, titleAlign?, titleFontSize? }
  * - 全部字段可选，仅更新提供的字段；播放设置只作用于 kind=video 的内容
  * - 与其它 v1 写路径共用清单互斥锁，杜绝并发丢更新
  * - 成功返回更新后的完整 v1 清单视图（响应即回填）
@@ -12,7 +12,11 @@ import {
   CUSTOM_RATIO_MAX,
   PLAYBACK_RATES,
   ProjectSettings,
+  TITLE_ALIGNS,
+  TITLE_FONT_MAX,
+  TITLE_FONT_MIN,
   parseCustomRatio,
+  parseTitleFontSize,
 } from '@/lib/types';
 import { readProject, withProjectLock, writeProject } from '@/lib/project-store';
 import { readManifest } from '@/lib/video-store';
@@ -31,7 +35,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown }
+    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; titleAlign?: unknown; titleFontSize?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -88,6 +92,22 @@ export async function PATCH(req: NextRequest) {
       return badRequest('留白填充需为 base / blur');
     }
     patch.letterboxFill = body.letterboxFill;
+  }
+  if (body.titleAlign !== undefined) {
+    if (
+      typeof body.titleAlign !== 'string' ||
+      !(TITLE_ALIGNS as readonly string[]).includes(body.titleAlign)
+    ) {
+      return badRequest(`标题对齐需为 ${TITLE_ALIGNS.join(' / ')}`);
+    }
+    patch.titleAlign = body.titleAlign as ProjectSettings['titleAlign'];
+  }
+  if (body.titleFontSize !== undefined) {
+    const size = parseTitleFontSize(body.titleFontSize);
+    if (size === null) {
+      return badRequest(`标题字号需为 ${TITLE_FONT_MIN}-${TITLE_FONT_MAX} 之间的数字`);
+    }
+    patch.titleFontSize = size;
   }
   if (Object.keys(patch).length === 0 && !clearCustomRatio) {
     return badRequest('至少提供一个待更新字段');

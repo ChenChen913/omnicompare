@@ -48,6 +48,17 @@ export const BUNDLE_ASSET_EXTS = [
 /** 标题最大长度 */
 export const TITLE_MAX = 100;
 
+/** 标题对齐方向（全局同步，存项目 settings） */
+export type TitleAlign = 'left' | 'center' | 'right';
+
+/** 合法的标题对齐取值（API 校验与前端选项的共同来源） */
+export const TITLE_ALIGNS = ['left', 'center', 'right'] as const;
+
+/** 标题字号范围（px）：全局同步调节的上下限与默认值 */
+export const TITLE_FONT_MIN = 12;
+export const TITLE_FONT_MAX = 28;
+export const TITLE_FONT_DEFAULT = 16;
+
 /** 内容类型：video / html（MVP）+ image（第二阶段 Step A，SVG 随图片链路支持） */
 export type ContentKind = 'video' | 'html' | 'image';
 
@@ -128,6 +139,10 @@ export interface ManifestSettings {
   playbackRate: number;
   /** 留白填充（第二阶段 Step C）：base = 底色吸收；blur = 模糊背景填充（仅视频/图片，HTML 豁免） */
   letterboxFill: 'base' | 'blur';
+  /** 标题对齐（全局同步）：缺省/非法回落 center */
+  titleAlign?: TitleAlign;
+  /** 标题字号 px（全局同步）：缺省/非法回落 TITLE_FONT_DEFAULT */
+  titleFontSize?: number;
 }
 
 /**
@@ -235,6 +250,10 @@ export interface ProjectSettings {
   playbackRate: number;
   /** 留白填充（第二阶段 Step C）：base = 底色吸收（默认）；blur = 同内容模糊放大铺底 */
   letterboxFill: 'base' | 'blur';
+  /** 标题对齐（全局同步）：left / center / right */
+  titleAlign: TitleAlign;
+  /** 标题字号 px（全局同步，TITLE_FONT_MIN~MAX） */
+  titleFontSize: number;
 }
 
 /** 项目（schema v2 顶层）：items 顺序即矩阵填充顺序 */
@@ -263,7 +282,21 @@ export function defaultSettings(): ProjectSettings {
     muted: true,
     playbackRate: 1,
     letterboxFill: 'base',
+    // 标题默认居中 + 16px：比正文更醒目（v1 行为 13px 偏小，用户反馈字体过小且未居中）
+    titleAlign: 'center',
+    titleFontSize: TITLE_FONT_DEFAULT,
   };
+}
+
+/**
+ * 校验并规范化标题字号：非有限数/越界一律返回 null（调用方回落默认值）。
+ * 前后端共用同一判据，避免各路由各写一份导致标准漂移。
+ */
+export function parseTitleFontSize(raw: unknown): number | null {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (n < TITLE_FONT_MIN || n > TITLE_FONT_MAX) return null;
+  return n;
 }
 
 function isPrime(n: number): boolean {

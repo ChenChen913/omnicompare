@@ -35,6 +35,8 @@ import {
   Slot,
   defaultLayoutFor,
   defaultSettings,
+  parseTitleFontSize,
+  TITLE_ALIGNS,
   isVideoFile,
   mimeFromExt,
   parseCustomRatio,
@@ -193,6 +195,11 @@ function normalizeSettings(raw: unknown): ProjectSettings {
       : base.playbackRate,
     // Step C：留白填充模式（非法值回落底色）
     letterboxFill: r.letterboxFill === 'blur' ? 'blur' : 'base',
+    // 标题格式（全局同步）：对齐非法回落居中；字号非法/越界回落默认
+    titleAlign: (TITLE_ALIGNS as readonly string[]).includes(r.titleAlign as string)
+      ? (r.titleAlign as ProjectSettings['titleAlign'])
+      : base.titleAlign,
+    titleFontSize: parseTitleFontSize(r.titleFontSize) ?? base.titleFontSize,
   };
 }
 
