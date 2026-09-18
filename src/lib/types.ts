@@ -45,6 +45,20 @@ export const BUNDLE_ASSET_EXTS = [
   '.wasm',
 ] as const;
 
+/** 背景音乐文件大小上限（50MB） */
+export const MAX_AUDIO_SIZE = 50 * 1024 * 1024;
+
+/** 允许的背景音乐扩展名（均为浏览器原生可解码格式） */
+export const AUDIO_EXTS = ['.mp3', '.m4a', '.aac', '.wav', '.ogg', '.oga', '.flac'] as const;
+
+/** 判断是否为可接受的背景音乐文件（扩展名或 MIME 判别） */
+export function isAudioFile(name: string, mimeType?: string): boolean {
+  if (mimeType && mimeType.startsWith('audio/')) return true;
+  const m = /\.([A-Za-z0-9]{1,8})$/.exec(name);
+  if (!m) return false;
+  return (AUDIO_EXTS as readonly string[]).includes(`.${m[1].toLowerCase()}`);
+}
+
 /** 标题最大长度 */
 export const TITLE_MAX = 100;
 
@@ -216,6 +230,10 @@ export interface ManifestSettings {
   titleWeight?: TitleWeight;
   /** 标题颜色（全局同步）：'default' 或色板 hex；缺省/非法回落 'default' */
   titleColor?: string;
+  /** 背景音乐文件（全局唯一一轨）：缺省 = 未设置；文件本体存项目 files/，经 /api/files 服务 */
+  bgm?: FileMeta | null;
+  /** 背景音乐音量（0-100）：缺省/非法回落 100 */
+  bgmVolume?: number;
 }
 
 /**
@@ -342,6 +360,11 @@ export interface ProjectSettings {
   titleWeight: TitleWeight;
   /** 标题颜色（全局同步）：'default' 或色板 hex */
   titleColor: string;
+  /** 背景音乐文件（全局唯一一轨）：null = 未设置；文件本体存项目 files/，经 /api/files 服务。
+   *  仅由 /api/videos/bgm 路由写入（文件与清单同临界区变更），settings PATCH 不受理 */
+  bgm: FileMeta | null;
+  /** 背景音乐音量（0-100） */
+  bgmVolume: number;
 }
 
 /** 项目（schema v2 顶层）：items 顺序即矩阵填充顺序 */
@@ -384,6 +407,9 @@ export function defaultSettings(): ProjectSettings {
     titlePosition: 'below',
     titleWeight: 'normal',
     titleColor: TITLE_COLOR_DEFAULT,
+    // 背景音乐默认未设置；音量默认 100%（配合全局静音可做"只留 BGM"的录屏预设）
+    bgm: null,
+    bgmVolume: 100,
   };
 }
 
@@ -506,8 +532,12 @@ export function mimeFromExt(name: string): string {
     '.ttf': 'font/ttf',
     '.otf': 'font/otf',
     '.mp3': 'audio/mpeg',
+    '.m4a': 'audio/mp4',
+    '.aac': 'audio/aac',
     '.wav': 'audio/wav',
     '.ogg': 'audio/ogg',
+    '.oga': 'audio/ogg',
+    '.flac': 'audio/flac',
   };
   return map[ext] ?? 'application/octet-stream';
 }

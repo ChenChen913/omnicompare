@@ -24,6 +24,7 @@ import {
   Library,
   Minus,
   Moon,
+  Music,
   Pause,
   Palette,
   Play,
@@ -35,6 +36,7 @@ import {
   Trash2,
   Type,
   UploadCloud,
+  Volume2,
   Wand2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -60,10 +62,13 @@ import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import {
   AspectRatio,
+  AUDIO_EXTS,
   DEFAULT_PROJECT_ID,
+  FileMeta,
   Layout,
   LetterboxFill,
   LETTERBOX_FILLS,
+  MAX_AUDIO_SIZE,
   Manifest,
   ManifestSettings,
   Project,
@@ -258,6 +263,10 @@ export function VideoWall() {
   /** 位置编号显隐（左上角数字角标，兼拖拽手柄；隐藏后仅视觉消失） */
   const [showIndex, setShowIndex] = useState(true);
   const [rate, setRate] = useState(1);
+  /* 背景音乐（全局唯一一轨，存项目 settings）：bgm = 文件元数据（null 未设置）；bgmVolume 0-100 */
+  const [bgm, setBgm] = useState<FileMeta | null>(null);
+  const [bgmVolume, setBgmVolume] = useState(100);
+  const [bgmUploading, setBgmUploading] = useState(false);
   /** 留白填充（Step C，扩展 cover）：base = 底色吸收；blur = 模糊填充；cover = 铺满裁切（仅视频/图片生效） */
   const [letterboxFill, setLetterboxFill] = useState<LetterboxFill>('base');
   /** 整墙缩放百分比（SCALE_STEPS 档位）：100 = 原始大小；小档位让纵向多行布局整墙同屏便于截图 */
@@ -329,6 +338,9 @@ export function VideoWall() {
 
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const importInputRef = useRef<HTMLInputElement>(null);
+  /** 背景音乐：<audio> 元素（loop 恒开，音量/倍速由 effect 同步）与上传 input */
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const bgmInputRef = useRef<HTMLInputElement>(null);
   const titleTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   /* 自动适配视口测量锚点：顶栏（扣除其高度）/ 主体（扣除内边距）/ 网格（自然高度） */
   const headerRef = useRef<HTMLElement | null>(null);
@@ -396,6 +408,8 @@ export function VideoWall() {
     setTitlePosition(s?.titlePosition ?? d.titlePosition);
     setTitleWeight(s?.titleWeight ?? d.titleWeight);
     setTitleColor(s?.titleColor ?? d.titleColor);
+    setBgm(s?.bgm ?? null);
+    setBgmVolume(s?.bgmVolume ?? d.bgmVolume);
   }, []);
 
   /* 自定义比例草稿跟随服务端值同步（首次加载与切换项目后回填） */
@@ -664,6 +678,7 @@ export function VideoWall() {
         titlePosition,
         titleWeight,
         titleColor,
+        bgmVolume,
       };
       // 乐观回填
       if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
@@ -683,6 +698,7 @@ export function VideoWall() {
       if (partial.titlePosition !== undefined) setTitlePosition(partial.titlePosition);
       if (partial.titleWeight !== undefined) setTitleWeight(partial.titleWeight);
       if (partial.titleColor !== undefined) setTitleColor(partial.titleColor);
+      if (partial.bgmVolume !== undefined) setBgmVolume(partial.bgmVolume);
       try {
         const res = await fetch(withPid('/api/videos/settings'), {
           method: 'PATCH',
@@ -711,10 +727,11 @@ export function VideoWall() {
         setTitlePosition(prev.titlePosition);
         setTitleWeight(prev.titleWeight);
         setTitleColor(prev.titleColor);
+        setBgmVolume(prev.bgmVolume);
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, bgmVolume, applySettings, withPid],
   );
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
@@ -1109,11 +1126,11 @@ export function VideoWall() {
   /* ---------- 批量播放控制 ---------- */
   const handlePlayAll = useCallback(() => {
     const active = getActiveVideos();
-    if (active.length === 0) {
+    if (active.length === 0 && !bgm) {
       toast.error('还没有可播放的视频，请先上传', { id: 'play' });
       return;
     }
-    // 先统一暂停并回到开头，再一起播放，保证起始同步
+    // 先统一暂停并回到开头（含背景音乐），再一起播放，保证起始同步
     active.forEach((v) => {
       try {
         v.pause();
@@ -1122,19 +1139,29 @@ export function VideoWall() {
         /* 个别浏览器在未加载元数据时设置进度会抛错，忽略 */
       }
     });
+    try {
+      audioRef.current?.pause();
+      if (audioRef.current) audioRef.current.currentTime = 0;
+    } catch {}
     window.setTimeout(() => {
       const attempts = active.map((v) => v.play());
+      // 背景音乐跟随视频一起从头播放（audio loop 恒开，循环由元素自身保证）
+      if (bgm && audioRef.current) {
+        try {
+          void audioRef.current.play().catch(() => {});
+        } catch {}
+      }
       Promise.allSettled(attempts).then((results) => {
         if (results.length > 0 && results.every((r) => r.status === 'rejected')) {
           toast.error('播放被浏览器拦截，请再点一次「同时播放」', { id: 'play' });
         }
       });
     }, 80);
-  }, [getActiveVideos]);
+  }, [getActiveVideos, bgm]);
 
   const handlePauseAll = useCallback(() => {
     const active = getActiveVideos();
-    if (active.length === 0) {
+    if (active.length === 0 && !bgm) {
       toast.error('还没有可播放的视频，请先上传', { id: 'play' });
       return;
     }
@@ -1143,7 +1170,94 @@ export function VideoWall() {
         v.pause();
       } catch {}
     });
-  }, [getActiveVideos]);
+    try {
+      audioRef.current?.pause();
+    } catch {}
+  }, [getActiveVideos, bgm]);
+
+  /* ---------- 背景音乐（BGM）----------
+     全局唯一一轨：文件经 /api/videos/bgm 上传/移除，音量经 settings PATCH 持久化。
+     <audio loop> 恒开（循环由元素自身保证），音量/倍速由下方 effect 同步到元素。 */
+  /** 音量 0-100 → 元素 0-1（bgm 变化时元素重挂载，一并在依赖里兜底） */
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = bgmVolume / 100;
+  }, [bgmVolume, bgm]);
+  /** 播放倍速与视频保持一致（用户在菜单调倍速时背景音乐同步变速） */
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = rate;
+  }, [rate, bgm]);
+
+  /** 专注模式圆形按钮：视频 + 背景音乐全部从头开始同步播放，并保持循环 */
+  const handleLoopShow = useCallback(() => {
+    const active = getActiveVideos();
+    if (active.length === 0 && !bgm) {
+      toast.error('还没有视频或背景音乐，请先上传', { id: 'loop-show' });
+      return;
+    }
+    active.forEach((v) => {
+      try {
+        v.pause();
+        v.currentTime = 0;
+      } catch {
+        /* 未加载元数据时设置进度可能抛错，忽略 */
+      }
+    });
+    try {
+      audioRef.current?.pause();
+      if (audioRef.current) audioRef.current.currentTime = 0;
+    } catch {}
+    window.setTimeout(() => {
+      const attempts = active.map((v) => v.play());
+      if (bgm && audioRef.current) {
+        try {
+          void audioRef.current.play().catch(() => {});
+        } catch {}
+      }
+      Promise.allSettled(attempts).then((results) => {
+        if (results.length > 0 && results.every((r) => r.status === 'rejected')) {
+          toast.error('播放被浏览器拦截，请再点一次', { id: 'loop-show' });
+        }
+      });
+    }, 80);
+  }, [getActiveVideos, bgm]);
+
+  /** 上传/更换背景音乐：POST FormData → 响应清单回填（服务端同临界区删除旧文件） */
+  const handleBgmFile = useCallback(
+    async (file: File) => {
+      if (file.size > MAX_AUDIO_SIZE) {
+        toast.error('背景音乐不能超过 50MB', { id: 'bgm' });
+        return;
+      }
+      setBgmUploading(true);
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(withPid('/api/videos/bgm'), { method: 'POST', body: fd });
+        const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
+        if (!res.ok || !data?.slots) throw new Error(data?.error || '上传失败');
+        applySettings(data.settings);
+        toast.success(`背景音乐已设置：${file.name}`, { id: 'bgm' });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : '背景音乐上传失败，请重试', { id: 'bgm' });
+      } finally {
+        setBgmUploading(false);
+      }
+    },
+    [withPid, applySettings],
+  );
+
+  /** 移除背景音乐：DELETE /api/videos/bgm → 响应清单回填（服务端同临界区删除文件） */
+  const handleRemoveBgm = useCallback(async () => {
+    try {
+      const res = await fetch(withPid('/api/videos/bgm'), { method: 'DELETE' });
+      const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
+      if (!res.ok || !data?.slots) throw new Error(data?.error || '移除失败');
+      applySettings(data.settings);
+      toast.success('已移除背景音乐', { id: 'bgm' });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '背景音乐移除失败，请重试', { id: 'bgm' });
+    }
+  }, [withPid, applySettings]);
 
   /* ---------- 自动适配视口（autoFit）----------
      目标：整墙高度超出视口可用空间时等比缩小到恰好同屏（截图/录屏全入镜）。
@@ -1775,6 +1889,68 @@ export function VideoWall() {
                     ))}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
+                {/* 背景音乐：上传/更换、移除与音量（全局唯一一轨，存项目 settings） */}
+                <DropdownMenuSeparator />
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="text-[13px]">
+                    <Music className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    背景音乐
+                    <span className="ml-auto max-w-[10rem] truncate pl-2 text-[11px] text-muted-foreground">
+                      {bgm ? bgm.originalName : '未设置'}
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="min-w-[13rem] border-border bg-card">
+                    {bgm ? (
+                      <>
+                        <div className="px-2 py-1.5 text-[11px] text-muted-foreground" title={bgm.originalName}>
+                          <span className="block truncate">当前：{bgm.originalName}</span>
+                        </div>
+                        <div className="px-2 py-2">
+                          <div className="mb-1 flex items-center justify-between text-[12px] text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Volume2 className="h-3.5 w-3.5" aria-hidden />
+                              音量
+                            </span>
+                            <span className="tabular-nums">{bgmVolume}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={bgmVolume}
+                            onChange={(e) => setBgmVolume(Number(e.target.value))}
+                            onPointerUp={() => void updateSettings({ bgmVolume })}
+                            onKeyUp={() => void updateSettings({ bgmVolume })}
+                            aria-label="背景音乐音量"
+                            className="w-full accent-[var(--primary)]"
+                          />
+                        </div>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          disabled={bgmUploading}
+                          onClick={() => bgmInputRef.current?.click()}
+                          className="text-[13px]"
+                        >
+                          <Music className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                          {bgmUploading ? '上传中…' : '换一首'}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => void handleRemoveBgm()} className="text-[13px] text-destructive">
+                          移除背景音乐
+                        </DropdownMenuItem>
+                      </>
+                    ) : (
+                      <DropdownMenuItem
+                        disabled={bgmUploading}
+                        onClick={() => bgmInputRef.current?.click()}
+                        className="text-[13px]"
+                      >
+                        <Music className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                        {bgmUploading ? '上传中…' : '上传背景音乐'}
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
               </DropdownMenuContent>
             </DropdownMenu>
             )}
@@ -2073,6 +2249,24 @@ export function VideoWall() {
                   <span>上传</span>
                 </button>
 
+                {/* 背景音乐快捷入口：琥珀色系与「上传」主色区分；点击直接选文件（已有则更换），
+                    音量与移除仍在「播放 → 背景音乐」子菜单管理 */}
+                <button
+                  type="button"
+                  onClick={() => bgmInputRef.current?.click()}
+                  disabled={bgmUploading}
+                  className={cn(
+                    ctlBtn,
+                    'border-amber-500/40 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 dark:text-amber-400',
+                  )}
+                  title={bgm ? `背景音乐：${bgm.originalName}（点击更换）` : '上传背景音乐：支持 mp3、wav、flac、m4a 等，50MB 内'}
+                  aria-label="上传背景音乐"
+                >
+                  <Music className="h-4 w-4" aria-hidden />
+                  <span>{bgmUploading ? '上传中…' : '音乐'}</span>
+                  {bgm && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" aria-hidden />}
+                </button>
+
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <button
@@ -2118,7 +2312,6 @@ export function VideoWall() {
                 onClick={() => {
                   if (view === 'library') setView('workspace');
                   setMode('focus');
-                  toast('已进入专注模式：点击右下角的圆形按钮退出', { id: 'focus-mode', duration: 3500 });
                 }}
                 className={cn(ctlBtn, 'border-primary/50 bg-primary/10 text-primary hover:bg-primary/20')}
                 title="进入专注模式：隐藏顶栏与全部管理控件，专心观看对比"
@@ -2133,7 +2326,19 @@ export function VideoWall() {
       </header>
       )}
 
-      {/* 专注模式退出入口：右下角圆形按钮，默认半透明低调隐蔽，hover/focus 时显形 */}
+      {/* 专注模式操作区：右下角竖排圆形按钮（从头循环播放在上，退出在下），
+          默认半透明低调隐蔽，hover/focus 时显形 */}
+      {mode === 'focus' && (
+        <button
+          type="button"
+          onClick={handleLoopShow}
+          title="从头循环播放：视频与背景音乐同步开始并循环"
+          aria-label="从头循环播放"
+          className="fixed bottom-[4.75rem] right-5 z-50 flex h-11 w-11 items-center justify-center rounded-full border border-primary/40 bg-primary/15 text-primary opacity-40 shadow-lg backdrop-blur transition-all hover:bg-primary/25 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
+          <Play className="h-[18px] w-[18px] fill-current" aria-hidden />
+        </button>
+      )}
       {mode === 'focus' && (
         <button
           type="button"
@@ -2857,6 +3062,23 @@ export function VideoWall() {
           e.target.value = '';
         }}
       />
+
+      {/* 背景音乐的隐藏文件选择框（「播放 → 背景音乐」菜单入口） */}
+      <input
+        ref={bgmInputRef}
+        type="file"
+        accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void handleBgmFile(file);
+          e.target.value = '';
+        }}
+      />
+
+      {/* 背景音乐元素：loop 恒开（循环由元素自身保证）；src 跟随项目 settings.bgm，
+          未设置时不渲染音源；音量/倍速由上方 effect 同步 */}
+      <audio ref={audioRef} loop preload="auto" src={bgm ? `/api/files/${bgm.filename}` : undefined} className="hidden" />
     </div>
   );
 }

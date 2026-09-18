@@ -41,7 +41,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown }
+    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown; bgmVolume?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -164,6 +164,14 @@ export async function PATCH(req: NextRequest) {
       return badRequest('标题颜色需为 default 或色板内颜色值');
     }
     patch.titleColor = color;
+  }
+  if (body.bgmVolume !== undefined) {
+    // 背景音乐音量（0-100）；BGM 文件本体仅由 /api/videos/bgm 路由变更
+    const v = Number(body.bgmVolume);
+    if (!Number.isFinite(v) || v < 0 || v > 100) {
+      return badRequest('背景音乐音量需为 0-100 的数字');
+    }
+    patch.bgmVolume = Math.round(v);
   }
   if (Object.keys(patch).length === 0 && !clearCustomRatio) {
     return badRequest('至少提供一个待更新字段');

@@ -222,6 +222,10 @@ function normalizeSettings(raw: unknown): ProjectSettings {
       ? (r.titleWeight as ProjectSettings['titleWeight'])
       : base.titleWeight,
     titleColor: parseTitleColor(r.titleColor) ?? base.titleColor,
+    // 背景音乐：文件元数据非法一律回落 null（文件本体生命周期由 /api/videos/bgm 路由管理）
+    bgm: normalizeFileMeta(r.bgm),
+    // 背景音乐音量：非法/越界回落 100
+    bgmVolume: clampInt(r.bgmVolume, 0, 100, base.bgmVolume),
   };
 }
 
@@ -425,8 +429,12 @@ export function validateUploadFile(
   return { kind: 'video' };
 }
 
-/** 保存上传文件到指定项目，返回其元数据 */
-export async function saveFile(projectId: string, file: File, kind: ContentKind): Promise<FileMeta> {
+/** 保存上传文件到指定项目，返回其元数据；kind='audio' 用于背景音乐（同存 files/ 目录） */
+export async function saveFile(
+  projectId: string,
+  file: File,
+  kind: ContentKind | 'audio',
+): Promise<FileMeta> {
   const dir = projectFilesDir(projectId);
   await fsp.mkdir(dir, { recursive: true });
   const extMatch = path.extname(file.name).toLowerCase();
@@ -437,7 +445,9 @@ export async function saveFile(projectId: string, file: File, kind: ContentKind)
         ? '.html'
         : kind === 'image'
           ? '.png'
-          : '.mp4';
+          : kind === 'audio'
+            ? '.mp3'
+            : '.mp4';
   const filename = `${randomUUID()}${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
   await fsp.writeFile(path.join(dir, filename), buffer);

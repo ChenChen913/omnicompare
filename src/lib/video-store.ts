@@ -90,6 +90,9 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       titlePosition: st.titlePosition,
       titleWeight: st.titleWeight,
       titleColor: st.titleColor,
+      // 背景音乐（文件元数据 + 音量）：视图携带才能在客户端回显与播放
+      bgm: st.bgm,
+      bgmVolume: st.bgmVolume,
     },
   };
 }
@@ -261,6 +264,15 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
     if (typeof s.showIndex === 'boolean') out.showIndex = s.showIndex;
     else out.showIndex = base.showIndex;
   }
+  if (s.bgmVolume !== undefined) {
+    // 背景音乐音量：旧客户端不携带时保持原值；携带非法值时回落默认（100）
+    const v = Number(s.bgmVolume);
+    if (Number.isFinite(v) && v >= 0 && v <= 100) out.bgmVolume = Math.round(v);
+    else out.bgmVolume = base.bgmVolume;
+  }
+  // 注意：s.bgm（背景音乐文件）不在 v1 清单写路径受理范围 —— 文件与设置必须在
+  // 同一临界区由 /api/videos/bgm 路由变更（先删旧文件再写清单），此处静默忽略，
+  // 经 {...project.settings, ...patch} 合并后原值保留，不会被旧客户端回显清掉
   return out;
 }
 

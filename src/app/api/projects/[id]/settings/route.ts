@@ -209,6 +209,17 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       }
       s.titleColor = color;
     }
+    if (body.bgmVolume !== undefined) {
+      // 背景音乐音量（0-100）；BGM 文件本体仅由 /api/videos/bgm 路由变更
+      const v = Number(body.bgmVolume);
+      if (!Number.isFinite(v) || v < 0 || v > 100) {
+        return NextResponse.json(
+          { error: '背景音乐音量需为 0-100 的数字' },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.bgmVolume = Math.round(v);
+    }
 
     project.updatedAt = new Date().toISOString();
     await writeProject(project);
