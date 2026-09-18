@@ -186,13 +186,15 @@ if (!noPoster) {
 
 let mp4Name = null;
 if (keepMp4) {
-  // 原片按需重编码成体积可控的 H.264，避免把几十上百 MB 的录制原文件塞进仓库
+  // 原片按需重编码成体积可控的 H.264，避免把几十上百 MB 的录制原文件塞进仓库。
+  // 音轨保留（AAC 128k）：演示视频的核心卖点就是背景音乐，静音版无法展示。
   mp4Name = `${name}.mp4`;
   run(FFMPEG, [
     '-y', '-v', 'error', '-i', input,
     '-vf', `scale=${width}:-2:flags=lanczos`,
     '-c:v', 'libx264', '-preset', 'slow', '-crf', '26', '-pix_fmt', 'yuv420p',
-    '-movflags', '+faststart', '-an', join(outDir, mp4Name),
+    '-c:a', 'aac', '-b:a', '128k',
+    '-movflags', '+faststart', join(outDir, mp4Name),
   ], 'MP4 压缩');
 }
 
