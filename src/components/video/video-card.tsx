@@ -68,8 +68,10 @@ export interface VideoCardProps {
   dragHandle?: React.HTMLAttributes<HTMLSpanElement> | null;
   /** 本卡片正在被拖拽（蓝图 §14：scale 1.02 + 阴影） */
   isDragging?: boolean;
-  /** 处理文件（可多个）：第一个放入本位置，其余按顺序分配到其它位置 */
-  onFiles: (files: File[], primarySlot: number) => void;
+  /** 处理文件（可多个）：拖到空位时 primarySlot 指向该位置，第一个文件精确落入；
+   *  拖到已占用卡片时 primarySlot 不传，文件按「空位优先」顺序放入（绝不覆盖已有内容），
+   *  替换已有内容请使用卡片信息行的「替换」按钮 */
+  onFiles: (files: File[], primarySlot?: number) => void;
   onTitleChange: (slotIndex: number, title: string) => void;
   onClear: (slotIndex: number) => void;
   setVideoRef: (index: number, el: HTMLVideoElement | null) => void;
@@ -218,7 +220,11 @@ export function VideoCard({
     e.stopPropagation();
     setDragOver(false);
     const files = Array.from(e.dataTransfer.files);
-    if (files.length > 0) onFiles(files, index);
+    if (files.length === 0) return;
+    // 已占用卡片不再作为替换目标：文件按「空位优先」顺序放入，绝不覆盖已有内容；
+    // 拖到空位时仍精确落入该位置。替换已有内容请走信息行的「替换」按钮（显式意图）
+    const occupied = !!(video || htmlFile || imageFile);
+    onFiles(files, occupied ? undefined : index);
   };
 
   // 生效比例：单卡覆盖优先，否则全局；比例只控制卡片框，内容恒 object-contain（蓝图 §13 铁律）
@@ -468,7 +474,7 @@ export function VideoCard({
                 onDrop={handleDrop}
               >
                 <p className="rounded-full bg-background/90 px-3 py-1 text-xs font-medium text-primary shadow">
-                  松开鼠标导入到此位置
+                  松开鼠标添加内容（不会覆盖本卡片）
                 </p>
               </div>
             )}

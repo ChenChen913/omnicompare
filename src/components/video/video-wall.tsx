@@ -931,12 +931,13 @@ export function VideoWall() {
   }, [withPid]);
 
   /**
-   * 分配一批文件：第一个进入 primarySlot（如果指定），
+   * 分配一批文件：第一个进入 primarySlot（如果指定，仅空位拖入时指定），
    * 其余按「空位优先」的顺序依次放入。
    * 智能识别（用户预期「上传几个就显示几个」）：
    * - 空项目（一个内容都没有）：格数直接调整为本次导入数，不再保留默认 6 空框；
-   * - 已有内容：只在空位不够时按缺口扩容——绝不静默替换未被明确指向的已占用卡片
-   *   （拖到具体卡片上=替换该卡片；其余文件全部落新格或报告失败）。
+   * - 已有内容：只在空位不够时按缺口扩容——绝不静默替换已占用卡片
+   *   （拖到已占用卡片的文件与其他拖入一视同仁，按空位顺序放置；
+   *   替换已有内容走卡片信息行的「替换」按钮，属显式意图）。
    */
   const distributeFiles = useCallback(
     async (files: File[], primarySlot?: number) => {
@@ -2064,12 +2065,12 @@ export function VideoWall() {
                   type="button"
                   onClick={() => importInputRef.current?.click()}
                   disabled={busy}
-                  className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
-                  title="选择多个视频、图片、HTML 或 zip 页面包，按顺序填入各位置"
-                  aria-label="一键导入多个内容文件"
+                  className={cn(ctlBtn, 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20')}
+                  title="上传视频、图片、HTML 或 zip 页面包：按顺序填入空位，不会覆盖已有内容"
+                  aria-label="上传内容文件"
                 >
                   <UploadCloud className="h-4 w-4" aria-hidden />
-                  <span className="hidden lg:inline">一键导入</span>
+                  <span>上传</span>
                 </button>
 
                 <AlertDialog>
@@ -2620,7 +2621,7 @@ export function VideoWall() {
                     titleColor,
                     refreshSignal: htmlRefreshTick,
                     onAspectOverride: handleSlotAspect,
-                    onFiles: (files: File[], primary: number) => void distributeFiles(files, primary),
+                    onFiles: (files: File[], primary?: number) => void distributeFiles(files, primary),
                     onTitleChange: handleTitleChange,
                     onClear: handleClearSlot,
                     setVideoRef,
@@ -2761,7 +2762,8 @@ export function VideoWall() {
                 <strong className="font-semibold text-foreground/90">
                   视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）、单文件 HTML 与 zip 页面包
                 </strong>
-                。上传几个就显示几个内容框，超出时自动扩位；依赖同目录资源的页面请打成 zip 包导入。
+                。上传几个就显示几个内容框，超出时自动扩位；文件拖到已占用的卡片上会自动放入下一个空位，
+                不会覆盖已有内容，替换内容请用卡片信息行的「替换」按钮；依赖同目录资源的页面请打成 zip 包导入。
               </p>
             </li>
             <li className="flex items-start gap-2.5">
