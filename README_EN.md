@@ -4,7 +4,7 @@
 
 OmniCompare: a comparison workspace that puts videos, images, and HTML pages produced by multiple AI models into one matrix for side-by-side review.
 
-https://github.com/user-attachments/assets/e83fa951-90e9-41a9-9817-839a56b1044b
+https://github.com/user-attachments/assets/94a8c775-da2a-4a25-bdb8-92f341eb76ee
 
 > An 11-second screen recording — click to play (with background music).
 
