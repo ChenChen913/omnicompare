@@ -13,6 +13,8 @@ import {
   ChevronRight,
   Clapperboard,
   Code2,
+  Crop,
+  Droplets,
   Expand,
   Eye,
   Film,
@@ -61,9 +63,12 @@ import {
   AspectRatio,
   DEFAULT_PROJECT_ID,
   Layout,
+  LetterboxFill,
+  LETTERBOX_FILLS,
   Manifest,
   ManifestSettings,
   Project,
+  SCALE_STEPS,
   SLOT_MAX,
   Slot,
   TITLE_ALIGNS,
@@ -251,8 +256,12 @@ export function VideoWall() {
   const [showTitles, setShowTitles] = useState(true);
   const [showInfo, setShowInfo] = useState(true);
   const [rate, setRate] = useState(1);
-  /** 留白填充（Step C）：base = 底色吸收；blur = 模糊背景填充（仅视频/图片生效） */
-  const [letterboxFill, setLetterboxFill] = useState<'base' | 'blur'>('base');
+  /** 留白填充（Step C，扩展 cover）：base = 底色吸收；blur = 模糊填充；cover = 铺满裁切（仅视频/图片生效） */
+  const [letterboxFill, setLetterboxFill] = useState<LetterboxFill>('base');
+  /** 整墙缩放百分比（SCALE_STEPS 档位）：100 = 原始大小；小档位让纵向多行布局整墙同屏便于截图 */
+  const [wallScale, setWallScale] = useState(100);
+  /** 网页页面缩放百分比（仅 HTML 卡片生效）：iframe 放大视口渲染再缩回，页面内容完整可见 */
+  const [htmlScale, setHtmlScale] = useState(100);
   /** 标题格式（全局同步，存项目 settings）：所有卡片一次调节同时生效 */
   const [titleAlign, setTitleAlign] = useState<TitleAlign>('center');
   const [titleFontSize, setTitleFontSize] = useState(TITLE_FONT_DEFAULT);
@@ -362,6 +371,8 @@ export function VideoWall() {
     setMutedAll(s?.muted ?? d.muted);
     setRate(s?.playbackRate ?? d.playbackRate);
     setLetterboxFill(s?.letterboxFill ?? d.letterboxFill);
+    setWallScale(s?.wallScale ?? d.wallScale);
+    setHtmlScale(s?.htmlScale ?? d.htmlScale);
     setTitleAlign(s?.titleAlign ?? d.titleAlign);
     setTitleFontSize(s?.titleFontSize ?? d.titleFontSize);
     setTitlePosition(s?.titlePosition ?? d.titlePosition);
@@ -626,6 +637,8 @@ export function VideoWall() {
         muted: mutedAll,
         playbackRate: rate,
         letterboxFill,
+        wallScale,
+        htmlScale,
         titleAlign,
         titleFontSize,
         titlePosition,
@@ -641,6 +654,8 @@ export function VideoWall() {
       if (partial.muted !== undefined) setMutedAll(partial.muted);
       if (partial.playbackRate !== undefined) setRate(partial.playbackRate);
       if (partial.letterboxFill !== undefined) setLetterboxFill(partial.letterboxFill);
+      if (partial.wallScale !== undefined) setWallScale(partial.wallScale);
+      if (partial.htmlScale !== undefined) setHtmlScale(partial.htmlScale);
       if (partial.titleAlign !== undefined) setTitleAlign(partial.titleAlign);
       if (partial.titleFontSize !== undefined) setTitleFontSize(partial.titleFontSize);
       if (partial.titlePosition !== undefined) setTitlePosition(partial.titlePosition);
@@ -665,6 +680,8 @@ export function VideoWall() {
         setMutedAll(prev.muted);
         setRate(prev.playbackRate);
         setLetterboxFill(prev.letterboxFill);
+        setWallScale(prev.wallScale);
+        setHtmlScale(prev.htmlScale);
         setTitleAlign(prev.titleAlign);
         setTitleFontSize(prev.titleFontSize);
         setTitlePosition(prev.titlePosition);
@@ -673,7 +690,7 @@ export function VideoWall() {
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, applySettings, withPid],
   );
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
@@ -1062,9 +1079,14 @@ export function VideoWall() {
     });
   }, [getActiveVideos]);
 
-  /* 渲染列数：auto 模式窄屏收窄到 2 列竖向堆叠（蓝图 §12）；手动模式保持存储矩阵 */
+  /* 渲染列数：auto 模式窄屏收窄到 2 列竖向堆叠（蓝图 §12）；手动模式保持存储矩阵。
+     整墙缩放（wallScale）：grid 容器宽度按档位缩放并居中，100% 与引入前行为完全一致；
+     格子高度由 aspect-ratio 随宽度等比缩小，纵向多行布局选小档位可整墙同屏（截图场景） */
   const gridCols = layoutMode === 'auto' && narrow ? Math.min(layout.cols, 2) : layout.cols;
-  const gridStyle = { gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` } as const;
+  const gridStyle = {
+    gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+    width: `${wallScale}%`,
+  } as const;
   const padCellCount = Math.max(0, layout.rows * layout.cols - slots.length);
 
   /* ---------- 渲染 ---------- */
@@ -1311,7 +1333,7 @@ export function VideoWall() {
                 </PopoverTrigger>
                 <PopoverContent
                   align="end"
-                  className="w-80 border-border bg-card p-4 text-card-foreground"
+                  className="max-h-[calc(100vh-6rem)] w-80 overflow-y-auto border-border bg-card p-4 text-card-foreground"
                 >
                   <p className="text-xs font-semibold tracking-wide text-muted-foreground">内容位数量</p>
                   <div className="mt-2 grid grid-cols-6 gap-1.5">
@@ -1449,6 +1471,66 @@ export function VideoWall() {
                   <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
                     「原始」为 16:9 容器等比容纳；竖版内容选 9:16 可减少留白，单卡可在信息行单独覆盖。
                     自定义比例填宽 : 高（如 21 : 9），失焦或回车即保存。
+                  </p>
+
+                  {/* 整体大小（全局同步）：整墙宽度按档位缩放并居中，格子高度随之等比缩小。
+                      解决纵向多行布局（如 2×1）每格过大、整墙超出视口无法同屏截图的问题 */}
+                  <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
+                    整体大小
+                    <span className="ml-1 font-normal text-muted-foreground/70">（缩放整墙，同屏可见）</span>
+                  </p>
+                  <div className="mt-2 grid grid-cols-5 gap-1.5">
+                    {SCALE_STEPS.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => void updateSettings({ wallScale: s })}
+                        aria-pressed={wallScale === s}
+                        className={cn(
+                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                          wallScale === s
+                            ? 'border-primary bg-primary/20 text-primary'
+                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
+                        )}
+                      >
+                        {s}%
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
+                    {wallScale === 100
+                      ? '100% 为原始大小；纵向多行布局截图时可选 50% / 33% 缩小整墙。'
+                      : `当前整墙缩放至 ${wallScale}%，格子随宽度等比缩小，纵向布局也能一屏截全。`}
+                  </p>
+
+                  {/* 页面缩放（全局同步，仅 HTML 卡片生效）：iframe 以放大视口渲染页面再等比缩回，
+                      页面内容整体缩小后完整可见，缓解固定尺寸网页在小卡片内被裁切/滚动的问题 */}
+                  <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
+                    页面缩放
+                    <span className="ml-1 font-normal text-muted-foreground/70">（仅网页卡片生效）</span>
+                  </p>
+                  <div className="mt-2 grid grid-cols-5 gap-1.5">
+                    {SCALE_STEPS.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => void updateSettings({ htmlScale: s })}
+                        aria-pressed={htmlScale === s}
+                        className={cn(
+                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                          htmlScale === s
+                            ? 'border-primary bg-primary/20 text-primary'
+                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
+                        )}
+                      >
+                        {s}%
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
+                    {htmlScale === 100
+                      ? '100% 为原始大小；网页内容被裁切时可选 75% / 50% 看到更完整的页面。'
+                      : `网页以 ${100 / (htmlScale / 100)}% 宽高的视口渲染后缩至 ${htmlScale}% 显示，内容更完整。`}
                   </p>
                 </PopoverContent>
               </Popover>
@@ -1691,17 +1773,47 @@ export function VideoWall() {
                 >
                   显示属性信息
                 </DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem
-                  checked={letterboxFill === 'blur'}
-                  onCheckedChange={(v) => void updateSettings({ letterboxFill: v ? 'blur' : 'base' })}
-                  disabled={!hasVideo && !hasImage}
-                  className="text-[13px]"
-                >
-                  模糊填充留白
-                </DropdownMenuCheckboxItem>
+                {/* 黑边填充三选一（全局同步）：base = 留黑边（原行为）；blur = 模糊填充；cover = 铺满裁切。
+                    cover 用 object-cover 等比放大裁切铺满，无黑边（仅视频/图片，HTML 豁免） */}
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger
+                    disabled={!hasVideo && !hasImage}
+                    className="text-[13px]"
+                  >
+                    {letterboxFill === 'cover' ? (
+                      <Crop className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    ) : letterboxFill === 'blur' ? (
+                      <Droplets className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    ) : (
+                      <Expand className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    )}
+                    黑边填充
+                    <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
+                      {letterboxFill === 'cover' ? '铺满裁切' : letterboxFill === 'blur' ? '模糊填充' : '留黑边'}
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="min-w-[11rem] border-border bg-card">
+                    {LETTERBOX_FILLS.map((f) => (
+                      <DropdownMenuItem
+                        key={f}
+                        onClick={() => void updateSettings({ letterboxFill: f })}
+                        className={cn('text-[13px]', f === letterboxFill && 'font-semibold text-primary')}
+                      >
+                        {f === 'cover' ? (
+                          <Crop className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        ) : f === 'blur' ? (
+                          <Droplets className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <Expand className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                        )}
+                        {f === 'cover' ? '铺满裁切（无黑边）' : f === 'blur' ? '模糊填充' : '留黑边（默认）'}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
                 {!hasVideo && (
                   <p className="px-2 pb-1.5 pt-1.5 text-[10px] leading-relaxed text-muted-foreground/60">
-                    循环、静音与播放速度仅对视频生效；模糊填充仅对视频与图片生效，HTML 页面不受影响。
+                    循环、静音与播放速度仅对视频生效；黑边填充仅对视频与图片生效（铺满裁切会等比放大裁掉超出部分），HTML 页面不受影响。
                   </p>
                 )}
               </DropdownMenuContent>
@@ -2233,7 +2345,7 @@ export function VideoWall() {
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
-              <div className="grid gap-3 sm:gap-5" style={gridStyle}>
+              <div className="mx-auto grid gap-3 sm:gap-5" style={gridStyle}>
                 {slots.map((slot) => {
                   const isFilled = !!(slot.video || slot.html || slot.image);
                   const cardProps = {
@@ -2247,6 +2359,7 @@ export function VideoWall() {
                     showTitles,
                     showInfo,
                     letterboxFill,
+                    htmlScale,
                     titleAlign,
                     titleFontSize,
                     titlePosition,

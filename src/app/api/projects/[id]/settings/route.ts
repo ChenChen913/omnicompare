@@ -1,7 +1,7 @@
 /**
  * 项目设置 API（schema v2）
  * PATCH /api/projects/[id]/settings
- * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, titleAlign?, titleFontSize?, titlePosition?, titleWeight?, titleColor? }
+ * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, wallScale?, htmlScale?, titleAlign?, titleFontSize?, titlePosition?, titleWeight?, titleColor? }
  * 全局比例 / 标题与属性信息显隐 / 批量播放设置（只作用于 kind=video 的条目，见 BLUEPRINT §9/§13）
  */
 import { NextRequest, NextResponse } from 'next/server';
@@ -10,15 +10,18 @@ import { resolveProjectId } from '@/lib/v2-project-param';
 import {
   ASPECT_RATIOS,
   CUSTOM_RATIO_MAX,
+  LETTERBOX_FILLS,
   PLAYBACK_RATES,
   AspectRatio,
   ProjectSettings,
+  SCALE_STEPS,
   TITLE_ALIGNS,
   TITLE_FONT_MAX,
   TITLE_FONT_MIN,
   TITLE_POSITIONS,
   TITLE_WEIGHTS,
   parseCustomRatio,
+  parseScaleOption,
   parseTitleColor,
   parseTitleFontSize,
 } from '@/lib/types';
@@ -107,10 +110,36 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       s.playbackRate = body.playbackRate;
     }
     if (body.letterboxFill !== undefined) {
-      if (body.letterboxFill !== 'base' && body.letterboxFill !== 'blur') {
-        return NextResponse.json({ error: '留白填充需为 base / blur' }, { status: 400, headers: noStore });
+      if (
+        typeof body.letterboxFill !== 'string' ||
+        !(LETTERBOX_FILLS as readonly string[]).includes(body.letterboxFill)
+      ) {
+        return NextResponse.json(
+          { error: `留白填充需为 ${LETTERBOX_FILLS.join(' / ')}` },
+          { status: 400, headers: noStore },
+        );
       }
-      s.letterboxFill = body.letterboxFill;
+      s.letterboxFill = body.letterboxFill as ProjectSettings['letterboxFill'];
+    }
+    if (body.wallScale !== undefined) {
+      const scale = parseScaleOption(body.wallScale);
+      if (scale === null) {
+        return NextResponse.json(
+          { error: `整体大小需为 ${SCALE_STEPS.join(' / ')} 之一` },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.wallScale = scale;
+    }
+    if (body.htmlScale !== undefined) {
+      const scale = parseScaleOption(body.htmlScale);
+      if (scale === null) {
+        return NextResponse.json(
+          { error: `页面缩放需为 ${SCALE_STEPS.join(' / ')} 之一` },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.htmlScale = scale;
     }
     if (body.titleAlign !== undefined) {
       if (

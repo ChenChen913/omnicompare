@@ -5,6 +5,7 @@ import { Code2, Image as ImageIcon, Loader2, RefreshCw, Trash2, UploadCloud } fr
 import { cn } from '@/lib/utils';
 import {
   AspectRatio,
+  LetterboxFill,
   Slot,
   TitleAlign,
   TitlePosition,
@@ -37,8 +38,9 @@ export interface VideoCardProps {
   showTitles?: boolean;
   /** 全局属性信息显隐：false 时隐藏标题下方信息行（文件名/大小/比例/操作） */
   showInfo?: boolean;
-  /** 留白填充模式（Step C）：base = 底色吸收；blur = 同内容模糊放大铺底（仅视频/图片，HTML 豁免） */
-  letterboxFill?: 'base' | 'blur';
+  /** 留白填充模式（Step C 扩展 cover）：base = 底色吸收；blur = 同内容模糊放大铺底；
+   *  cover = 铺满裁切（object-cover，无黑边）；仅视频/图片生效，HTML 豁免 */
+  letterboxFill?: LetterboxFill;
   /** 全局标题对齐（同步所有卡片）：left / center / right */
   titleAlign?: TitleAlign;
   /** 全局标题字号 px（同步所有卡片，TITLE_FONT_MIN~MAX） */
@@ -49,6 +51,10 @@ export interface VideoCardProps {
   titleWeight?: TitleWeight;
   /** 全局标题颜色（同步所有卡片）：'default' 或色板 hex；overlay 的 default 用白色+投影保可读 */
   titleColor?: string;
+  /** 网页页面缩放百分比（同步所有 HTML 卡片，SCALE_STEPS 档位）：
+   *  iframe 以放大 1/scale 的虚拟视口渲染页面再等比缩回卡片框，页面内容缩小后完整可见；
+   *  100 = 原始行为（内容超出框时由 iframe 自行滚动/裁切） */
+  htmlScale?: number;
   /** 「刷新全部页面」信号（纯 HTML 项目顶栏主动作）：数值变化时重载本卡 iframe；0 = 从未触发 */
   refreshSignal?: number;
   /** 单卡比例覆盖变更（null = 恢复跟随全局）；未传则不显示覆盖控件 */
@@ -86,6 +92,7 @@ export function VideoCard({
   showTitles = true,
   showInfo = true,
   letterboxFill = 'base',
+  htmlScale = 100,
   titleAlign = 'center',
   titleFontSize = TITLE_FONT_DEFAULT,
   titlePosition = 'below',
@@ -215,6 +222,9 @@ export function VideoCard({
   const effectiveAspect = slot.aspectRatio ?? globalAspect;
   // 'custom' 时用全局自定义宽高（单卡只覆盖档位，不单独设宽高）；缺失/非法由 aspectCss 回落 16:9
   const boxAspect = aspectCss(effectiveAspect, globalCustomRatio);
+
+  /** 网页页面缩放比（0.33~1）：iframe 虚拟视口放大倍数的倒数；100% → 1（原始行为） */
+  const htmlScaleRatio = Math.min(Math.max(htmlScale, 1), 100) / 100;
 
   const isBundle = isHtml && slot.bundle === true;
   const htmlSrc = htmlFile
@@ -376,7 +386,11 @@ export function VideoCard({
               onSeeked={syncBgFromMain}
               onRateChange={syncBgFromMain}
               onLoadedMetadata={syncBgFromMain}
-              className="relative z-10 h-full w-full object-contain"
+              className={cn(
+                'relative z-10 h-full w-full',
+                // cover = 铺满裁切（用户可选，无黑边）；base/blur 维持 contain 不裁切（蓝图 §13 原行为）
+                letterboxFill === 'cover' ? 'object-cover' : 'object-contain',
+              )}
               aria-label={`位置 ${index + 1} 的视频：${title || video.originalName}`}
             />
             {videoError && (
@@ -391,7 +405,11 @@ export function VideoCard({
         ) : htmlFile ? (
           <>
             {/* 沙箱渲染：仅 allow-scripts，绝不给 allow-same-origin（BLUEPRINT §11.3）；
-                服务端对该 URL 还强制 CSP sandbox + nosniff + no-store 双保险 */}
+                服务端对该 URL 还强制 CSP sandbox + nosniff + no-store 双保险。
+                页面缩放（htmlScale）：iframe 以放大 1/scale 的虚拟视口渲染页面，
+                再 transform scale 等比缩回卡片框 —— 页面内容整体缩小后完整可见，
+                解决固定宽高的桌面页在小卡片内被裁切/滚动的问题；
+                scale=1（默认）时 width/height 100% 与引入前行为完全一致。 */}
             <iframe
               key={iframeNonce}
               src={src}
@@ -400,7 +418,13 @@ export function VideoCard({
               title={title || htmlFile.originalName}
               onLoad={() => setHtmlStatus('ready')}
               onError={() => setHtmlStatus('error')}
-              className="h-full w-full border-0 bg-white"
+              className="absolute inset-0 border-0 bg-white"
+              style={{
+                width: `${100 / htmlScaleRatio}%`,
+                height: `${100 / htmlScaleRatio}%`,
+                transform: `scale(${htmlScaleRatio})`,
+                transformOrigin: 'top left',
+              }}
             />
             {htmlStatus === 'loading' && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-card">
@@ -449,14 +473,17 @@ export function VideoCard({
                 className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-125 object-cover blur-2xl"
               />
             )}
-            {/* 图片渲染：object-contain 不裁切（蓝图 §13 铁律）；以 <img> 渲染 SVG，
-                脚本天然不执行，服务端另有 CSP sandbox 兜底 */}
+            {/* 图片渲染：base/blur 维持 contain 不裁切（蓝图 §13 铁律），cover 时铺满裁切；
+                以 <img> 渲染 SVG，脚本天然不执行，服务端另有 CSP sandbox 兜底 */}
             <img
               src={src}
               alt={`位置 ${index + 1} 的图片：${title || imageFile.originalName}`}
               loading="lazy"
               onError={() => setImageError(true)}
-              className="relative z-10 h-full w-full object-contain"
+              className={cn(
+                'relative z-10 h-full w-full',
+                letterboxFill === 'cover' ? 'object-cover' : 'object-contain',
+              )}
             />
             {imageError && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-black/85 px-4 text-center">

@@ -107,6 +107,28 @@ export const PLAYBACK_RATES = [0.5, 1, 1.25, 1.5, 2] as const;
 /** 自定义比例的宽高上限（防 NaN/Infinity/荒谬值进入 CSS aspect-ratio） */
 export const CUSTOM_RATIO_MAX = 10000;
 
+/** 留白填充模式：base = 底色吸收（黑边）；blur = 同内容模糊放大铺底；cover = 铺满裁切（object-cover，无黑边） */
+export type LetterboxFill = 'base' | 'blur' | 'cover';
+
+/** 合法的留白填充取值（API 校验与前端选项的共同来源） */
+export const LETTERBOX_FILLS = ['base', 'blur', 'cover'] as const;
+
+/**
+ * 缩放档位（百分比）：整墙缩放（wallScale）与网页页面缩放（htmlScale）共用同一套档位。
+ * 100 = 原始大小（默认，行为与引入前完全一致）；档位为固定白名单，不开放任意数值。
+ */
+export const SCALE_STEPS = [100, 75, 66, 50, 33] as const;
+
+/**
+ * 校验缩放档位：仅接受 SCALE_STEPS 白名单内的数值，其余返回 null（调用方回落默认/驳回）。
+ * 前后端共用同一判据，避免各路由各写一份导致标准漂移。
+ */
+export function parseScaleOption(raw: unknown): number | null {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return (SCALE_STEPS as readonly number[]).includes(n) ? n : null;
+}
+
 /** 文件元数据（v1 SlotVideo 的沿用） */
 export interface FileMeta {
   /** 服务器上生成的唯一文件名（uuid + 扩展名） */
@@ -170,8 +192,12 @@ export interface ManifestSettings {
   loop: boolean;
   muted: boolean;
   playbackRate: number;
-  /** 留白填充（第二阶段 Step C）：base = 底色吸收；blur = 模糊背景填充（仅视频/图片，HTML 豁免） */
-  letterboxFill: 'base' | 'blur';
+  /** 留白填充（第二阶段 Step C）：base = 底色吸收；blur = 模糊背景填充；cover = 铺满裁切（仅视频/图片，HTML 豁免） */
+  letterboxFill: LetterboxFill;
+  /** 整墙缩放百分比（全局同步）：缺省/非法回落 100（v1 行为） */
+  wallScale?: number;
+  /** 网页页面缩放百分比（全局同步，仅 HTML 卡片生效）：缺省/非法回落 100（v1 行为） */
+  htmlScale?: number;
   /** 标题对齐（全局同步）：缺省/非法回落 center */
   titleAlign?: TitleAlign;
   /** 标题字号 px（全局同步）：缺省/非法回落 TITLE_FONT_DEFAULT */
@@ -287,8 +313,12 @@ export interface ProjectSettings {
   loop: boolean;
   muted: boolean;
   playbackRate: number;
-  /** 留白填充（第二阶段 Step C）：base = 底色吸收（默认）；blur = 同内容模糊放大铺底 */
-  letterboxFill: 'base' | 'blur';
+  /** 留白填充（第二阶段 Step C）：base = 底色吸收（默认）；blur = 同内容模糊放大铺底；cover = 铺满裁切 */
+  letterboxFill: LetterboxFill;
+  /** 整墙缩放百分比（全局同步，SCALE_STEPS 档位）：100 = 原始大小；小档位让纵向多行布局整墙同屏，便于截图 */
+  wallScale: number;
+  /** 网页页面缩放百分比（全局同步，仅 HTML 卡片生效）：iframe 以放大视口渲染再等比缩回，页面内容完整可见 */
+  htmlScale: number;
   /** 标题对齐（全局同步）：left / center / right */
   titleAlign: TitleAlign;
   /** 标题字号 px（全局同步，TITLE_FONT_MIN~MAX） */
@@ -327,6 +357,9 @@ export function defaultSettings(): ProjectSettings {
     muted: true,
     playbackRate: 1,
     letterboxFill: 'base',
+    // 缩放默认 100%：与引入前行为完全一致（wallScale 管整墙大小，htmlScale 管网页内部视口）
+    wallScale: 100,
+    htmlScale: 100,
     // 标题默认居中 + 16px：比正文更醒目（v1 行为 13px 偏小，用户反馈字体过小且未居中）
     titleAlign: 'center',
     titleFontSize: TITLE_FONT_DEFAULT,

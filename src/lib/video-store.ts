@@ -25,9 +25,11 @@ import {
   TITLE_ALIGNS,
   TITLE_POSITIONS,
   TITLE_WEIGHTS,
+  LETTERBOX_FILLS,
   autoLayoutFor,
   defaultSettings,
   parseCustomRatio,
+  parseScaleOption,
   parseTitleColor,
   parseTitleFontSize,
 } from './types';
@@ -75,6 +77,9 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       muted: st.muted,
       playbackRate: st.playbackRate,
       letterboxFill: st.letterboxFill,
+      // 缩放档位（整墙/网页页面）：视图携带才能在 PATCH 响应中回显
+      wallScale: st.wallScale,
+      htmlScale: st.htmlScale,
       // 标题格式（全局同步）：视图携带才能在 PATCH 响应中回显
       titleAlign: st.titleAlign,
       titleFontSize: st.titleFontSize,
@@ -199,7 +204,9 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
       (PLAYBACK_RATES as readonly number[]).includes(s.playbackRate)
         ? s.playbackRate
         : base.playbackRate,
-    letterboxFill: s.letterboxFill === 'blur' ? 'blur' : 'base',
+    letterboxFill: (LETTERBOX_FILLS as readonly string[]).includes(s.letterboxFill)
+      ? s.letterboxFill
+      : base.letterboxFill,
   };
   // customRatio：null = 显式清除；合法对象 = 写入；未携带/非法 = 保持原值
   if (s.customRatio === null) out.customRatio = undefined;
@@ -230,6 +237,15 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
   if (s.titleColor !== undefined) {
     const color = parseTitleColor(s.titleColor);
     if (color !== null) out.titleColor = color;
+  }
+  if (s.wallScale !== undefined) {
+    // 缩放档位（整墙/网页页面）：旧客户端不携带时保持原值；携带非法值时回落默认
+    const scale = parseScaleOption(s.wallScale);
+    if (scale !== null) out.wallScale = scale;
+  }
+  if (s.htmlScale !== undefined) {
+    const scale = parseScaleOption(s.htmlScale);
+    if (scale !== null) out.htmlScale = scale;
   }
   return out;
 }

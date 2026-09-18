@@ -1,6 +1,6 @@
 /**
  * 项目级播放与展示设置 API（v1 视图，蓝图 §7/§9/§13；Step 8 起支持 ?project= 多项目）
- * PATCH /api/videos/settings[?project=id]  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, titleAlign?, titleFontSize?, titlePosition?, titleWeight?, titleColor? }
+ * PATCH /api/videos/settings[?project=id]  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, wallScale?, htmlScale?, titleAlign?, titleFontSize?, titlePosition?, titleWeight?, titleColor? }
  * - 全部字段可选，仅更新提供的字段；播放设置只作用于 kind=video 的内容
  * - 与其它 v1 写路径共用清单互斥锁，杜绝并发丢更新
  * - 成功返回更新后的完整 v1 清单视图（响应即回填）
@@ -10,14 +10,17 @@ import {
   ASPECT_RATIOS,
   AspectRatio,
   CUSTOM_RATIO_MAX,
+  LETTERBOX_FILLS,
   PLAYBACK_RATES,
   ProjectSettings,
+  SCALE_STEPS,
   TITLE_ALIGNS,
   TITLE_FONT_MAX,
   TITLE_FONT_MIN,
   TITLE_POSITIONS,
   TITLE_WEIGHTS,
   parseCustomRatio,
+  parseScaleOption,
   parseTitleColor,
   parseTitleFontSize,
 } from '@/lib/types';
@@ -38,7 +41,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown }
+    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -91,10 +94,27 @@ export async function PATCH(req: NextRequest) {
     patch.playbackRate = body.playbackRate;
   }
   if (body.letterboxFill !== undefined) {
-    if (body.letterboxFill !== 'base' && body.letterboxFill !== 'blur') {
-      return badRequest('留白填充需为 base / blur');
+    if (
+      typeof body.letterboxFill !== 'string' ||
+      !(LETTERBOX_FILLS as readonly string[]).includes(body.letterboxFill)
+    ) {
+      return badRequest(`留白填充需为 ${LETTERBOX_FILLS.join(' / ')}`);
     }
-    patch.letterboxFill = body.letterboxFill;
+    patch.letterboxFill = body.letterboxFill as ProjectSettings['letterboxFill'];
+  }
+  if (body.wallScale !== undefined) {
+    const scale = parseScaleOption(body.wallScale);
+    if (scale === null) {
+      return badRequest(`整体大小需为 ${SCALE_STEPS.join(' / ')} 之一`);
+    }
+    patch.wallScale = scale;
+  }
+  if (body.htmlScale !== undefined) {
+    const scale = parseScaleOption(body.htmlScale);
+    if (scale === null) {
+      return badRequest(`页面缩放需为 ${SCALE_STEPS.join(' / ')} 之一`);
+    }
+    patch.htmlScale = scale;
   }
   if (body.titleAlign !== undefined) {
     if (

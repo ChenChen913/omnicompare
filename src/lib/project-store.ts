@@ -37,6 +37,8 @@ import {
   defaultSettings,
   parseTitleColor,
   parseTitleFontSize,
+  parseScaleOption,
+  LETTERBOX_FILLS,
   TITLE_ALIGNS,
   TITLE_POSITIONS,
   TITLE_WEIGHTS,
@@ -196,8 +198,13 @@ function normalizeSettings(raw: unknown): ProjectSettings {
     playbackRate: [0.5, 1, 1.25, 1.5, 2].includes(Number(r.playbackRate))
       ? Number(r.playbackRate)
       : base.playbackRate,
-    // Step C：留白填充模式（非法值回落底色）
-    letterboxFill: r.letterboxFill === 'blur' ? 'blur' : 'base',
+    // Step C：留白填充模式（base/blur/cover，非法值回落底色）
+    letterboxFill: (LETTERBOX_FILLS as readonly string[]).includes(r.letterboxFill as string)
+      ? (r.letterboxFill as ProjectSettings['letterboxFill'])
+      : base.letterboxFill,
+    // 缩放档位：非法/缺失回落 100（与引入前行为一致）
+    wallScale: parseScaleOption(r.wallScale) ?? base.wallScale,
+    htmlScale: parseScaleOption(r.htmlScale) ?? base.htmlScale,
     // 标题格式（全局同步）：对齐非法回落居中；字号非法/越界回落默认
     titleAlign: (TITLE_ALIGNS as readonly string[]).includes(r.titleAlign as string)
       ? (r.titleAlign as ProjectSettings['titleAlign'])
