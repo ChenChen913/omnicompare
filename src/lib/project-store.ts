@@ -205,6 +205,8 @@ function normalizeSettings(raw: unknown): ProjectSettings {
     // 缩放档位：非法/缺失回落 100（与引入前行为一致）
     wallScale: parseScaleOption(r.wallScale) ?? base.wallScale,
     htmlScale: parseScaleOption(r.htmlScale) ?? base.htmlScale,
+    // 自动适配视口：非法/缺失回落开启（整墙超出视口自动缩小同屏）
+    autoFit: typeof r.autoFit === 'boolean' ? r.autoFit : base.autoFit,
     // 标题格式（全局同步）：对齐非法回落居中；字号非法/越界回落默认
     titleAlign: (TITLE_ALIGNS as readonly string[]).includes(r.titleAlign as string)
       ? (r.titleAlign as ProjectSettings['titleAlign'])

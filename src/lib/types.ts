@@ -198,6 +198,9 @@ export interface ManifestSettings {
   wallScale?: number;
   /** 网页页面缩放百分比（全局同步，仅 HTML 卡片生效）：缺省/非法回落 100（v1 行为） */
   htmlScale?: number;
+  /** 自动适配视口（全局同步）：整墙高度超出视口可用空间时自动等比缩小到恰好同屏（截图/录屏全入镜）；
+   *  专注模式恒定生效，不依赖此开关。缺省/非法回落 true（默认开启） */
+  autoFit?: boolean;
   /** 标题对齐（全局同步）：缺省/非法回落 center */
   titleAlign?: TitleAlign;
   /** 标题字号 px（全局同步）：缺省/非法回落 TITLE_FONT_DEFAULT */
@@ -319,6 +322,9 @@ export interface ProjectSettings {
   wallScale: number;
   /** 网页页面缩放百分比（全局同步，仅 HTML 卡片生效）：iframe 以放大视口渲染再等比缩回，页面内容完整可见 */
   htmlScale: number;
+  /** 自动适配视口（全局同步）：开启时整墙高度超出视口可用空间即自动等比缩小到恰好同屏，
+   *  优先于 wallScale 手动档；关闭时回到 wallScale 档位行为。专注模式恒定自动适配 */
+  autoFit: boolean;
   /** 标题对齐（全局同步）：left / center / right */
   titleAlign: TitleAlign;
   /** 标题字号 px（全局同步，TITLE_FONT_MIN~MAX） */
@@ -357,9 +363,11 @@ export function defaultSettings(): ProjectSettings {
     muted: true,
     playbackRate: 1,
     letterboxFill: 'base',
-    // 缩放默认 100%：与引入前行为完全一致（wallScale 管整墙大小，htmlScale 管网页内部视口）
+    // 缩放默认 100%：与引入前行为完全一致（wallScale 管整墙大小，htmlScale 管网页内部视口）；
+    // autoFit 默认开启：整墙超出视口自动缩小同屏（纵向布局截图痛点），未超出时视觉零变化
     wallScale: 100,
     htmlScale: 100,
+    autoFit: true,
     // 标题默认居中 + 16px：比正文更醒目（v1 行为 13px 偏小，用户反馈字体过小且未居中）
     titleAlign: 'center',
     titleFontSize: TITLE_FONT_DEFAULT,

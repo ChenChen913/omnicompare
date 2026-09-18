@@ -1,7 +1,7 @@
 /**
  * 项目设置 API（schema v2）
  * PATCH /api/projects/[id]/settings
- * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, wallScale?, htmlScale?, titleAlign?, titleFontSize?, titlePosition?, titleWeight?, titleColor? }
+ * body: { aspectRatio?, customRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, wallScale?, htmlScale?, autoFit?, titleAlign?, titleFontSize?, titlePosition?, titleWeight?, titleColor? }
  * 全局比例 / 标题与属性信息显隐 / 批量播放设置（只作用于 kind=video 的条目，见 BLUEPRINT §9/§13）
  */
 import { NextRequest, NextResponse } from 'next/server';
@@ -140,6 +140,12 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         );
       }
       s.htmlScale = scale;
+    }
+    if (body.autoFit !== undefined) {
+      if (typeof body.autoFit !== 'boolean') {
+        return NextResponse.json({ error: '自动适配需为布尔值' }, { status: 400, headers: noStore });
+      }
+      s.autoFit = body.autoFit;
     }
     if (body.titleAlign !== undefined) {
       if (

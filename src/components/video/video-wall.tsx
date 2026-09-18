@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignCenter,
   AlignLeft,
@@ -259,6 +259,16 @@ export function VideoWall() {
   const [letterboxFill, setLetterboxFill] = useState<LetterboxFill>('base');
   /** 整墙缩放百分比（SCALE_STEPS 档位）：100 = 原始大小；小档位让纵向多行布局整墙同屏便于截图 */
   const [wallScale, setWallScale] = useState(100);
+  /** 自动适配视口开关（全局同步，存项目 settings）：专注模式恒定生效不依赖此开关 */
+  const [autoFit, setAutoFit] = useState(true);
+  /** 自动适配视口：整墙高度超出视口可用空间时自动等比缩小到恰好同屏（截图/录屏全入镜）。
+   *  开启时优先于 wallScale 手动档；专注模式恒定生效（用户要求：专注下任意数量视频都居中同屏）。
+   *  实现为求解墙宽 px（fitWidth）：纯布局变化，文字保持清晰重排、dnd 拖拽坐标零偏差 */
+  const [fitWidth, setFitWidth] = useState<number | null>(null);
+  /** fitWidth 镜像 ref：测量回调内读写最新值，避免 RO 循环里读到过期闭包 */
+  const fitWidthRef = useRef<number | null>(null);
+  /** 收敛防护：单次布局环境内最多迭代次数（比例法每轮收窄一档，防极端布局震荡） */
+  const fitIterRef = useRef(0);
   /** 网页页面缩放百分比（仅 HTML 卡片生效）：iframe 放大视口渲染再缩回，页面内容完整可见 */
   const [htmlScale, setHtmlScale] = useState(100);
   /** 标题格式（全局同步，存项目 settings）：所有卡片一次调节同时生效 */
@@ -317,6 +327,10 @@ export function VideoWall() {
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const importInputRef = useRef<HTMLInputElement>(null);
   const titleTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  /* 自动适配视口测量锚点：顶栏（扣除其高度）/ 主体（扣除内边距）/ 网格（自然高度） */
+  const headerRef = useRef<HTMLElement | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
+  const wallRef = useRef<HTMLDivElement | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setVideoRef = useCallback((index: number, el: HTMLVideoElement | null) => {
@@ -372,6 +386,7 @@ export function VideoWall() {
     setLetterboxFill(s?.letterboxFill ?? d.letterboxFill);
     setWallScale(s?.wallScale ?? d.wallScale);
     setHtmlScale(s?.htmlScale ?? d.htmlScale);
+    setAutoFit(s?.autoFit ?? d.autoFit);
     setTitleAlign(s?.titleAlign ?? d.titleAlign);
     setTitleFontSize(s?.titleFontSize ?? d.titleFontSize);
     setTitlePosition(s?.titlePosition ?? d.titlePosition);
@@ -638,6 +653,7 @@ export function VideoWall() {
         letterboxFill,
         wallScale,
         htmlScale,
+        autoFit,
         titleAlign,
         titleFontSize,
         titlePosition,
@@ -655,6 +671,7 @@ export function VideoWall() {
       if (partial.letterboxFill !== undefined) setLetterboxFill(partial.letterboxFill);
       if (partial.wallScale !== undefined) setWallScale(partial.wallScale);
       if (partial.htmlScale !== undefined) setHtmlScale(partial.htmlScale);
+      if (partial.autoFit !== undefined) setAutoFit(partial.autoFit);
       if (partial.titleAlign !== undefined) setTitleAlign(partial.titleAlign);
       if (partial.titleFontSize !== undefined) setTitleFontSize(partial.titleFontSize);
       if (partial.titlePosition !== undefined) setTitlePosition(partial.titlePosition);
@@ -681,6 +698,7 @@ export function VideoWall() {
         setLetterboxFill(prev.letterboxFill);
         setWallScale(prev.wallScale);
         setHtmlScale(prev.htmlScale);
+        setAutoFit(prev.autoFit);
         setTitleAlign(prev.titleAlign);
         setTitleFontSize(prev.titleFontSize);
         setTitlePosition(prev.titlePosition);
@@ -689,7 +707,7 @@ export function VideoWall() {
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, applySettings, withPid],
   );
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
@@ -1078,13 +1096,99 @@ export function VideoWall() {
     });
   }, [getActiveVideos]);
 
+  /* ---------- 自动适配视口（autoFit）----------
+     目标：整墙高度超出视口可用空间时等比缩小到恰好同屏（截图/录屏全入镜）。
+     生效条件：专注模式恒定生效（观看/截图是专注模式的核心用途）；工作台跟随 autoFit 设置。
+     实现：求解墙宽 px（fitWidth）。格子高度随宽度单调增长（内容区 aspect-ratio 驱动），
+     每轮按实测高度比例收缩：newW = w × avail/h —— 不动点迭代，线性布局一轮到位，
+     非线性（标题换行/单卡覆盖比例）2-6 轮收敛；步长限制 35% 防过渡态读数过冲，
+     只缩不放（h ≤ avail 即静止，满宽态不放大）。应用 grid width = w*px —— 纯布局变化：
+     文字重新排版保持清晰、dnd 拖拽坐标零偏差、无需外层高度补偿。
+     触发：RO 观察 grid（内容/布局变化）与 main（容器宽变化，如侧栏开合）+ window resize；
+     rAF 合并，每帧最多一次求解；迭代上限 14 防震荡。 */
+  const fitActive = mode === 'focus' || autoFit;
+  useLayoutEffect(() => {
+    const applyFitWidth = (v: number | null) => {
+      if (fitWidthRef.current !== v) {
+        fitWidthRef.current = v;
+        setFitWidth(v);
+      }
+    };
+    if (!fitActive) {
+      applyFitWidth(null);
+      fitIterRef.current = 0;
+      return;
+    }
+    /* 布局环境（模式/行数/比例/挂载时机）变化：重置迭代计数 */
+    fitIterRef.current = 0;
+    let raf = 0;
+    /** 应用一轮求解结果：与当前值相同 = 已收敛/下限钳制，复位迭代预算
+     *  （RO 只在尺寸变化时触发，相同值不会形成循环；复位保证后续环境变化有完整重算预算） */
+    const commit = (next: number | null) => {
+      if (next === fitWidthRef.current) {
+        fitIterRef.current = 0;
+        return;
+      }
+      fitIterRef.current += 1;
+      applyFitWidth(next);
+    };
+    const measure = () => {
+      raf = 0;
+      const wall = wallRef.current;
+      const main = mainRef.current;
+      if (!wall || !wall.isConnected || !main) return;
+      const ms = getComputedStyle(main);
+      const avail =
+        window.innerHeight -
+        (mode === 'studio' ? (headerRef.current?.offsetHeight ?? 0) : 0) -
+        (parseFloat(ms.paddingTop) || 0) -
+        (parseFloat(ms.paddingBottom) || 0) -
+        2;
+      const containerW = main.clientWidth - (parseFloat(ms.paddingLeft) || 0) - (parseFloat(ms.paddingRight) || 0);
+      const rect = wall.getBoundingClientRect();
+      const w = rect.width;
+      const h = rect.height;
+      if (w <= 0 || h <= 0 || containerW <= 0 || avail <= 0) return;
+      /* 迭代上限：连续多轮仍有变化时强制静止（极端布局保护，正常 2-7 轮收敛后自动复位） */
+      if (fitIterRef.current >= 14) return;
+      if (h <= avail + 3) {
+        /* 回弹：视口变大（resize/侧栏收起）后，此前缩窄的墙应放大回满宽——
+           放大量同样受步长限制，分几帧爬升；到达满宽即回 null（100%） */
+        if (fitWidthRef.current === null) return;
+        const up = Math.min(containerW, w * (avail / h));
+        commit(up >= containerW - 1 ? null : Math.min(Math.round(up), w + Math.round(w * 0.25)));
+        return;
+      }
+      /* 比例收缩：高度超出的比例即宽度应缩的比例。步长限制 35%：
+         防过渡态读数（视频重排/字体加载）导致的大幅过冲，每帧最多缩一档 */
+      const raw = (w * avail) / h;
+      const target = Math.max(w * 0.65, Math.min(w, raw));
+      if (!Number.isFinite(target) || target <= 0) return;
+      /* 超过容器宽 = 满宽即可容纳（只缩不放），回到 100%；下限 240 保证可读性 */
+      commit(target >= containerW - 1 ? null : Math.max(240, Math.round(target)));
+    };
+    const schedule = () => {
+      if (raf === 0) raf = window.requestAnimationFrame(measure);
+    };
+    schedule();
+    const ro = new ResizeObserver(schedule);
+    if (wallRef.current) ro.observe(wallRef.current);
+    if (mainRef.current) ro.observe(mainRef.current);
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (raf !== 0) window.cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', schedule);
+    };
+  }, [fitActive, mode, loading, view, filledCount]);
+
   /* 渲染列数：auto 模式窄屏收窄到 2 列竖向堆叠（蓝图 §12）；手动模式保持存储矩阵。
-     整墙缩放（wallScale）：grid 容器宽度按档位缩放并居中，100% 与引入前行为完全一致；
-     格子高度由 aspect-ratio 随宽度等比缩小，纵向多行布局选小档位可整墙同屏（截图场景） */
+     整墙缩放：autoFit 生效时宽度取求解值 fitWidth（null = 满宽 100%），
+     未启用时回落 wallScale 手动档（grid 容器宽度按档位缩放并居中，100% 与引入前行为一致） */
   const gridCols = layoutMode === 'auto' && narrow ? Math.min(layout.cols, 2) : layout.cols;
   const gridStyle = {
     gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
-    width: `${wallScale}%`,
+    width: fitActive ? (fitWidth !== null ? `${fitWidth}px` : '100%') : `${wallScale}%`,
   } as const;
   const padCellCount = Math.max(0, layout.rows * layout.cols - slots.length);
 
@@ -1096,7 +1200,7 @@ export function VideoWall() {
           主体内容不再被顶栏行数变化推动上下跳动。
           专注模式整体隐藏顶栏（零干扰观看），退出入口固定在页面右下角圆形按钮 */}
       {mode === 'studio' && (
-      <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
+      <header ref={headerRef} className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
         <div
           className={cn(
             'mx-auto flex w-full flex-col gap-2 px-3 py-3 sm:px-6',
@@ -1468,21 +1572,55 @@ export function VideoWall() {
                     自定义比例填宽 : 高（如 21 : 9），失焦或回车即保存。
                   </p>
 
-                  {/* 整体大小（全局同步）：整墙宽度按档位缩放并居中，格子高度随之等比缩小。
-                      解决纵向多行布局（如 2×1）每格过大、整墙超出视口无法同屏截图的问题 */}
+                  {/* 自动适配视口（全局同步）：整墙超出视口自动缩小同屏，截图/录屏全入镜。
+                      专注模式恒定生效；开启时优先于下方整体大小手动档 */}
                   <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
+                    自动适配视口
+                    <span className="ml-1 font-normal text-muted-foreground/70">（超出即缩，整墙同屏）</span>
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-1.5">
+                    {([true, false] as const).map((v) => (
+                      <button
+                        key={String(v)}
+                        type="button"
+                        onClick={() => void updateSettings({ autoFit: v })}
+                        aria-pressed={autoFit === v}
+                        className={cn(
+                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                          autoFit === v
+                            ? 'border-primary bg-primary/20 text-primary'
+                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
+                        )}
+                      >
+                        {v ? '开启' : '关闭'}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
+                    {autoFit
+                      ? '整墙高度超出浏览器视口时自动等比缩小到恰好同屏（两视频纵向布局也能一屏截全）；专注模式始终自动适配并居中显示。'
+                      : '已关闭：按下方「整体大小」手动档位缩放整墙。专注模式下仍会自动适配。'}
+                  </p>
+
+                  {/* 整体大小（全局同步）：整墙宽度按档位缩放并居中，格子高度随之等比缩小。
+                      解决纵向多行布局（如 2×1）每格过大、整墙超出视口无法同屏截图的问题。
+                      autoFit 开启时由自动缩放接管，手动档暂停生效 */}
+                  <p className={cn('mt-4 text-xs font-semibold tracking-wide text-muted-foreground', autoFit && 'opacity-50')}>
                     整体大小
-                    <span className="ml-1 font-normal text-muted-foreground/70">（缩放整墙，同屏可见）</span>
+                    <span className="ml-1 font-normal text-muted-foreground/70">
+                      （{autoFit ? '自动适配已接管' : '缩放整墙，同屏可见'}）
+                    </span>
                   </p>
                   <div className="mt-2 grid grid-cols-5 gap-1.5">
                     {SCALE_STEPS.map((s) => (
                       <button
                         key={s}
                         type="button"
+                        disabled={autoFit}
                         onClick={() => void updateSettings({ wallScale: s })}
                         aria-pressed={wallScale === s}
                         className={cn(
-                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-40',
                           wallScale === s
                             ? 'border-primary bg-primary/20 text-primary'
                             : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
@@ -1493,9 +1631,11 @@ export function VideoWall() {
                     ))}
                   </div>
                   <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
-                    {wallScale === 100
-                      ? '100% 为原始大小；纵向多行布局截图时可选 50% / 33% 缩小整墙。'
-                      : `当前整墙缩放至 ${wallScale}%，格子随宽度等比缩小，纵向布局也能一屏截全。`}
+                    {autoFit
+                      ? '自动适配开启中，此档位暂停生效；关闭自动适配后可手动选择缩放比例。'
+                      : wallScale === 100
+                        ? '100% 为原始大小；纵向多行布局截图时可选 50% / 33% 缩小整墙。'
+                        : `当前整墙缩放至 ${wallScale}%，格子随宽度等比缩小，纵向布局也能一屏截全。`}
                   </p>
 
                   {/* 页面缩放（全局同步，仅 HTML 卡片生效）：iframe 以放大视口渲染页面再等比缩回，
@@ -2254,8 +2394,13 @@ export function VideoWall() {
         )}
 
         <main
+          ref={mainRef}
           className={cn(
-            'min-w-0 flex-1 py-4 transition-opacity duration-300 sm:py-7',
+            // focus 下 flex-col：网格 my-auto 垂直居中（内容不足一屏时上下均分留白，
+            // 正好放下时贴边）；studio 保持块级布局零变化。
+            // focus 内边距收窄（py-3/py-4），「正好放下」时上下留白更少
+            'min-w-0 flex-1 transition-opacity duration-300',
+            mode === 'focus' ? 'flex flex-col py-3 sm:py-4' : 'py-4 sm:py-7',
             switching && 'pointer-events-none opacity-45',
           )}
         >
@@ -2371,7 +2516,12 @@ export function VideoWall() {
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
-              <div className="mx-auto grid gap-3 sm:gap-5" style={gridStyle}>
+              {/* ref=自动适配测量锚点；focus 下 my-auto 垂直居中 + shrink-0 防被 flex 压缩 */}
+              <div
+                ref={wallRef}
+                className={cn('mx-auto grid gap-3 sm:gap-5', mode === 'focus' && 'my-auto shrink-0')}
+                style={gridStyle}
+              >
                 {slots.map((slot) => {
                   const isFilled = !!(slot.video || slot.html || slot.image);
                   const cardProps = {

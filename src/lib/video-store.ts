@@ -80,6 +80,8 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       // 缩放档位（整墙/网页页面）：视图携带才能在 PATCH 响应中回显
       wallScale: st.wallScale,
       htmlScale: st.htmlScale,
+      // 自动适配视口：视图携带才能在 PATCH 响应中回显
+      autoFit: st.autoFit,
       // 标题格式（全局同步）：视图携带才能在 PATCH 响应中回显
       titleAlign: st.titleAlign,
       titleFontSize: st.titleFontSize,
@@ -246,6 +248,11 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
   if (s.htmlScale !== undefined) {
     const scale = parseScaleOption(s.htmlScale);
     if (scale !== null) out.htmlScale = scale;
+  }
+  if (s.autoFit !== undefined) {
+    // 自动适配视口：旧客户端不携带时保持原值；携带非法值时回落默认
+    if (typeof s.autoFit === 'boolean') out.autoFit = s.autoFit;
+    else out.autoFit = base.autoFit;
   }
   return out;
 }
