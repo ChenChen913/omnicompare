@@ -6,7 +6,7 @@ OmniCompare: a comparison workspace that puts videos, images, and HTML pages pro
 
 [![OmniCompare demo](docs/demo.gif)](docs/demo.mp4)
 
-> A 10-second looping preview (no audio). Click the image to open the full video.
+> An 11-second looping preview (no audio). Click the image to open the full video.
 
 Real output from a local run:
 
