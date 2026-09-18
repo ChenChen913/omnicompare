@@ -7,9 +7,9 @@ OmniCompare（灵动对比）：把多个 AI 模型产出的视频、图片与 H
 
 **简体中文** | [English](./README_EN.md)
 
-[![OmniCompare 演示](docs/demo.gif)](docs/demo.mp4)
+https://github.com/user-attachments/assets/e83fa951-90e9-41a9-9817-839a56b1044b
 
-> 11 秒循环预览（无声）。点图看完整视频。
+> 11 秒录屏，点开播放（含背景音乐）。
 
 启动后的真实现场（本地实跑输出）：
 
@@ -191,13 +191,13 @@ bun run scripts/find-dead-code.mjs
 
 ### 更新首页演示素材
 
-README 顶部那张会动的预览图是 GIF —— GitHub 的 Markdown 渲染器会直接删掉 `<video>` / `<iframe>` 标签，**README 里没有任何办法内嵌播放 MP4**，能自己动的只有图片格式。录好新的演示视频后：
+README 顶部是 GitHub 附件视频——Markdown 渲染器会直接删掉 `<video>` / `<iframe>` 标签，唯一能内嵌播放的途径是 `user-attachments` 附件链接（≤10MB）。录好新的演示视频后：
 
 ```sh
 node scripts/make-demo-media.mjs 你的录制.mp4 --keep-mp4
 ```
 
-它会按 GitHub 正文宽度（900px）与 12fps 转出 `docs/demo.gif`，两遍调色板保证画质，超过 8MB 会自动降规格重试；同时压一份 `docs/demo.mp4` 供「点图看完整视频」用，以及一份体积约为 GIF 一半的 `docs/demo.webp`——想改用它把 README 里的 `docs/demo.gif` 换成 `docs/demo.webp` 即可，代价是老 Safari 不显示 WebP 动画。不想要的多余产物用 `--no-webp`、`--no-poster` 关掉。
+脚本把原片压成一份体积可控的 `docs/demo.mp4`（900px、H.264、faststart）。然后取附件链接：随便开一个 issue，把这份 MP4 拖进评论框，复制生成的 `https://github.com/user-attachments/assets/…` 链接，替换 README 顶部的链接，草稿 issue 随手删掉（链接依然有效）。附件链接只能在 GitHub 网页端拖拽上传时生成，不受 git 版本控制。
 
 ## 常见问题
 

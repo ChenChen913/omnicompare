@@ -66,7 +66,7 @@
   - 进程内互斥锁**仅单进程有效**，多实例部署会破坏一致性；
   - 上传不支持秒传 / 断点续传；
   - 非静音自动播放会被浏览器拦截，故默认静音。
-- **演示素材路径**：`docs/demo.gif`（README 顶部循环预览）+ `docs/demo.mp4`（点图播放的完整视频）。两者由 `scripts/make-demo-media.mjs` 从一段 MP4 录屏生成；GitHub 的 Markdown 渲染器会删除 `<video>`/`<iframe>` 标签，README 无法内嵌播放 MP4，只能用图片格式承载动图。
+- **演示素材**：README 顶部内嵌 GitHub 附件视频（`user-attachments` 链接，≤10MB，带声音）。原片由 `scripts/make-demo-media.mjs` 压成 `docs/demo.mp4` 后，在 GitHub 网页端（如草稿 issue 评论框）拖拽上传换取附件链接再替换进 README；Markdown 渲染器会删除 `<video>`/`<iframe>` 标签，附件视频是唯一内嵌播放途径，链接不受 git 版本控制。
 - **目标读者画像**：拿到仓库要自己跑起来的使用者，以及要接着改代码的开发者。
 - **期望读者读完能做什么**：用 `bun install && bun run dev` 在本地跑起服务、导入内容开始对比；知道公网部署前必须先加访问控制。
 

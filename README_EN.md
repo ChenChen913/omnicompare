@@ -4,9 +4,9 @@
 
 OmniCompare: a comparison workspace that puts videos, images, and HTML pages produced by multiple AI models into one matrix for side-by-side review.
 
-[![OmniCompare demo](docs/demo.gif)](docs/demo.mp4)
+https://github.com/user-attachments/assets/e83fa951-90e9-41a9-9817-839a56b1044b
 
-> An 11-second looping preview (no audio). Click the image to open the full video.
+> An 11-second screen recording — click to play (with background music).
 
 Real output from a local run:
 
@@ -204,6 +204,21 @@ adversarial suites; they need `curl`, `jq`, and `python3` installed, and fail ou
 
 Read the invariants in [PROJECT.md](./PROJECT.md) §11 before changing code. Add UI components with
 `npx shadcn@latest add <name>` (`components.json` is already configured).
+
+### Update the homepage demo
+
+The top of the README is a GitHub attachment video — the Markdown renderer strips `<video>` / `<iframe>` tags, and
+attachment links (`user-attachments`, ≤10MB) are the only way to embed a playable video. After recording a new demo:
+
+```sh
+node scripts/make-demo-media.mjs your-recording.mp4 --keep-mp4
+```
+
+The script compresses the raw recording into a compact `docs/demo.mp4` (900px, H.264, faststart). To get the
+attachment link, open any issue, drag that MP4 into the comment box, copy the generated
+`https://github.com/user-attachments/assets/…` link, swap it into the top of both READMEs, then delete the draft
+issue (the link keeps working). Attachment links can only be produced by dragging the file onto github.com; they
+are not version-controlled.
 
 ## FAQ
 
