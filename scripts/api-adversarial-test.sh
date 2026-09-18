@@ -254,9 +254,9 @@ echo "== 17. 多项目 v1 隔离（Step 8，蓝图 §8）=="
 R=$(curl -s -X POST "$BASE/api/projects" -H 'Content-Type: application/json' -d '{"name":"对抗测试项目"}')
 PID=$(echo "$R" | jq -r '.id // empty')
 [ -n "$PID" ]; check "新建项目 -> 返回 id" $?
-# v1 视图读取新项目：空清单 + 默认设置
+# v1 视图读取新项目：空清单 + 默认设置（2025-09 起新项目从 1 个空框开始，上传几个扩到几格）
 R=$(curl -s "$BASE/api/videos?project=$PID")
-check "v1 视图读取新项目（count=6 空槽位 默认设置）" "$(expect_json_field "$R" '.count==6 and .slots[0].video==null and .settings.showInfo==true'; echo $?)"
+check "v1 视图读取新项目（count=1 空槽位 默认设置）" "$(expect_json_field "$R" '.count==1 and .slots[0].video==null and .settings.showInfo==true'; echo $?)"
 # 上传到指定项目：默认项目不受影响
 CODE=$(curl -s -o /tmp/pp.json -w "%{http_code}" -X POST "$BASE/api/videos/upload?project=$PID" -F "file=@/home/z/my-project/scripts/test-videos/v01-landscape.mp4" -F "slot=0")
 [ "$CODE" = "200" ]; check "v1 上传到指定项目 -> 200" $?

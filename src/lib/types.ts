@@ -54,10 +54,13 @@ export type TitleAlign = 'left' | 'center' | 'right';
 /** 合法的标题对齐取值（API 校验与前端选项的共同来源） */
 export const TITLE_ALIGNS = ['left', 'center', 'right'] as const;
 
-/** 标题字号范围（px）：全局同步调节的上下限与默认值 */
+/** 标题字号范围（px）：全局同步调节的上下限与默认值（上限 60：用户反馈 28 不够用，大屏/远看场景需要更大字号） */
 export const TITLE_FONT_MIN = 12;
-export const TITLE_FONT_MAX = 28;
+export const TITLE_FONT_MAX = 60;
 export const TITLE_FONT_DEFAULT = 16;
+
+/** 字号快捷档位（含默认与上限）：供菜单一键跳档，避免从 16 连点 44 次才到 60 */
+export const TITLE_FONT_PRESETS = [16, 24, 32, 40, 48, TITLE_FONT_MAX] as const;
 
 /** 标题位置：below = 内容下方（v1 行为，可编辑 textarea）；overlay = 内容内部顶部叠加 */
 export type TitlePosition = 'below' | 'overlay';
@@ -189,6 +192,8 @@ export interface ManifestSettings {
   customRatio?: { w: number; h: number };
   showTitles: boolean;
   showInfo: boolean;
+  /** 位置编号显隐（全局同步）：缺省/非法回落 true（v1 行为，编号常显） */
+  showIndex?: boolean;
   loop: boolean;
   muted: boolean;
   playbackRate: number;
@@ -313,6 +318,8 @@ export interface ProjectSettings {
   showTitles: boolean;
   /** 属性信息显隐：控制标题下方信息行（文件名/大小/比例/操作） */
   showInfo: boolean;
+  /** 位置编号显隐：控制卡片左上角数字角标（兼作拖拽手柄，隐藏后仅视觉消失、拖拽能力保留） */
+  showIndex: boolean;
   loop: boolean;
   muted: boolean;
   playbackRate: number;
@@ -359,6 +366,8 @@ export function defaultSettings(): ProjectSettings {
     aspectRatio: 'original',
     showTitles: true,
     showInfo: true,
+    // 位置编号默认显示（v1 行为不变）：截图/录屏场景可在「标题」菜单一键隐藏
+    showIndex: true,
     loop: false,
     muted: true,
     playbackRate: 1,

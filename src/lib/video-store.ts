@@ -73,6 +73,8 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       customRatio: st.customRatio,
       showTitles: st.showTitles,
       showInfo: st.showInfo,
+      // 位置编号显隐：视图携带才能在 PATCH 响应中回显
+      showIndex: st.showIndex,
       loop: st.loop,
       muted: st.muted,
       playbackRate: st.playbackRate,
@@ -253,6 +255,11 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
     // 自动适配视口：旧客户端不携带时保持原值；携带非法值时回落默认
     if (typeof s.autoFit === 'boolean') out.autoFit = s.autoFit;
     else out.autoFit = base.autoFit;
+  }
+  if (s.showIndex !== undefined) {
+    // 位置编号显隐：旧客户端不携带时保持原值；携带非法值时回落默认（显示）
+    if (typeof s.showIndex === 'boolean') out.showIndex = s.showIndex;
+    else out.showIndex = base.showIndex;
   }
   return out;
 }

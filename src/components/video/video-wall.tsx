@@ -76,6 +76,7 @@ import {
   TITLE_FONT_DEFAULT,
   TITLE_FONT_MAX,
   TITLE_FONT_MIN,
+  TITLE_FONT_PRESETS,
   TITLE_POSITIONS,
   TITLE_WEIGHTS,
   TitleAlign,
@@ -254,6 +255,8 @@ export function VideoWall() {
   const [ratioDraft, setRatioDraft] = useState({ w: '16', h: '9' });
   const [showTitles, setShowTitles] = useState(true);
   const [showInfo, setShowInfo] = useState(true);
+  /** 位置编号显隐（左上角数字角标，兼拖拽手柄；隐藏后仅视觉消失） */
+  const [showIndex, setShowIndex] = useState(true);
   const [rate, setRate] = useState(1);
   /** 留白填充（Step C，扩展 cover）：base = 底色吸收；blur = 模糊填充；cover = 铺满裁切（仅视频/图片生效） */
   const [letterboxFill, setLetterboxFill] = useState<LetterboxFill>('base');
@@ -380,6 +383,7 @@ export function VideoWall() {
     setCustomRatio(s?.customRatio);
     setShowTitles(s?.showTitles ?? d.showTitles);
     setShowInfo(s?.showInfo ?? d.showInfo);
+    setShowIndex(s?.showIndex ?? d.showIndex);
     setLoop(s?.loop ?? d.loop);
     setMutedAll(s?.muted ?? d.muted);
     setRate(s?.playbackRate ?? d.playbackRate);
@@ -647,6 +651,7 @@ export function VideoWall() {
         customRatio,
         showTitles,
         showInfo,
+        showIndex,
         loop,
         muted: mutedAll,
         playbackRate: rate,
@@ -665,6 +670,7 @@ export function VideoWall() {
       if (partial.customRatio !== undefined) setCustomRatio(partial.customRatio);
       if (partial.showTitles !== undefined) setShowTitles(partial.showTitles);
       if (partial.showInfo !== undefined) setShowInfo(partial.showInfo);
+      if (partial.showIndex !== undefined) setShowIndex(partial.showIndex);
       if (partial.loop !== undefined) setLoop(partial.loop);
       if (partial.muted !== undefined) setMutedAll(partial.muted);
       if (partial.playbackRate !== undefined) setRate(partial.playbackRate);
@@ -692,6 +698,7 @@ export function VideoWall() {
         setCustomRatio(prev.customRatio);
         setShowTitles(prev.showTitles);
         setShowInfo(prev.showInfo);
+        setShowIndex(prev.showIndex);
         setLoop(prev.loop);
         setMutedAll(prev.muted);
         setRate(prev.playbackRate);
@@ -707,7 +714,7 @@ export function VideoWall() {
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, customRatio, showTitles, showInfo, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, applySettings, withPid],
   );
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
@@ -925,8 +932,11 @@ export function VideoWall() {
 
   /**
    * 分配一批文件：第一个进入 primarySlot（如果指定），
-   * 其余按「空位优先、已占用靠后」的顺序依次放入。
-   * 智能识别：文件数超过当前位数时自动扩容并换用合适的矩阵。
+   * 其余按「空位优先」的顺序依次放入。
+   * 智能识别（用户预期「上传几个就显示几个」）：
+   * - 空项目（一个内容都没有）：格数直接调整为本次导入数，不再保留默认 6 空框；
+   * - 已有内容：只在空位不够时按缺口扩容——绝不静默替换未被明确指向的已占用卡片
+   *   （拖到具体卡片上=替换该卡片；其余文件全部落新格或报告失败）。
    */
   const distributeFiles = useCallback(
     async (files: File[], primarySlot?: number) => {
@@ -943,30 +953,60 @@ export function VideoWall() {
 
       let targetSlots = slots;
       let primary = primarySlot;
-      let expanded = false;
+      /** 本次导入调整了格数（空项目收缩 / 容量扩容），用于提示文案 */
+      let resized = false;
+      let finalCount = slots.length;
 
-      if (batch.length > slots.length) {
-        const m = await requestLayout(
-          batch.length,
-          layoutMode === 'auto' ? 'auto' : defaultLayoutFor(batch.length),
-        );
-        if (!m) return;
-        targetSlots = m.slots;
-        expanded = true;
+      const filledCount = slots.filter((s) => s.video || s.html || s.image).length;
+      if (filledCount === 0) {
+        // 空项目：格数 = 本次导入数（上传几个显示几个）；格数恰好相等时无需调整
+        if (slots.length !== batch.length) {
+          const m = await requestLayout(
+            batch.length,
+            layoutMode === 'auto' ? 'auto' : defaultLayoutFor(batch.length),
+          );
+          if (!m) return;
+          targetSlots = m.slots;
+          resized = true;
+          finalCount = batch.length;
+        }
+      } else {
+        // 已有内容：可容纳数 = 空位数 +（明确指向某张卡片时可替换该卡片 1 个）；
+        // 超出容量的部分扩新格，不再挤占其它已占用卡片
+        const emptyCount = slots.length - filledCount;
+        const capacity = emptyCount + (primary !== undefined ? 1 : 0);
+        if (batch.length > capacity) {
+          const newCount = Math.min(slots.length + (batch.length - capacity), SLOT_MAX);
+          if (newCount > slots.length) {
+            const m = await requestLayout(
+              newCount,
+              layoutMode === 'auto' ? 'auto' : defaultLayoutFor(newCount),
+            );
+            if (!m) return;
+            targetSlots = m.slots;
+            resized = true;
+            finalCount = newCount;
+          }
+        }
       }
       if (primary !== undefined && !targetSlots.some((s) => s.index === primary)) {
         primary = undefined;
       }
 
-      // 目标位选择：空位（无 video/html/image）优先
+      // 目标位选择：主位置（明确指向的卡片，可为替换）+ 全部空位；
+      // 不再把未被指向的已占用卡片当目标——放不下的文件在结果中如实报告
       const targets: number[] = [];
       if (primary !== undefined) targets.push(primary);
-      targets.push(...targetSlots.filter((s) => !s.video && !s.html && !s.image && s.index !== primary).map((s) => s.index));
-      targets.push(...targetSlots.filter((s) => (s.video || s.html || s.image) && s.index !== primary).map((s) => s.index));
+      targets.push(
+        ...targetSlots
+          .filter((s) => !s.video && !s.html && !s.image && s.index !== primary)
+          .map((s) => s.index),
+      );
 
       setImporting(true);
       try {
         const n = Math.min(targets.length, batch.length);
+        const unplaced = batch.length - n;
         let ok = 0;
         const failures: string[] = [];
         for (let i = 0; i < n; i++) {
@@ -977,14 +1017,17 @@ export function VideoWall() {
         // 单条聚合提示：成功 / 部分失败 / 全部失败都只占一条，附扩位与跳过信息，避免逐文件刷屏
         if (ok > 0) {
           const parts: string[] = [
-            expanded
-              ? `已扩展至 ${batch.length} 位并导入 ${ok} 个内容`
+            resized
+              ? `已调整为 ${finalCount} 位并导入 ${ok} 个内容`
               : batch.length === 1
                 ? '已导入 1 个内容'
                 : `已导入 ${ok} 个内容`,
           ];
           if (failures.length > 0) {
             parts.push(`${failures.length} 个失败（${failures[0]}${failures.length > 1 ? ' 等' : ''}）`);
+          }
+          if (unplaced > 0) {
+            parts.push(`${unplaced} 个未放置（内容位已达上限 ${SLOT_MAX} 个）`);
           }
           if (skipped > 0) parts.push(`${skipped} 个不支持的文件已跳过`);
           if (failures.length > 0) {
@@ -997,6 +1040,11 @@ export function VideoWall() {
             failures.length > 1
               ? `导入失败：${failures.length} 个文件均未成功（${failures[0]}）`
               : `导入失败：${failures[0]}`,
+            { id: 'import', duration: 4500 },
+          );
+        } else if (unplaced > 0) {
+          toast.warning(
+            `${unplaced} 个未放置（内容位已达上限 ${SLOT_MAX} 个）`,
             { id: 'import', duration: 4500 },
           );
         }
@@ -1762,6 +1810,13 @@ export function VideoWall() {
                 >
                   显示属性信息
                 </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={showIndex}
+                  onCheckedChange={(v) => void updateSettings({ showIndex: v === true })}
+                  className="text-[13px]"
+                >
+                  显示位置编号
+                </DropdownMenuCheckboxItem>
                 <DropdownMenuSeparator />
                 {/* 标题格式（全局同步）：一次调节，所有卡片标题同时生效（存项目 settings） */}
                 <DropdownMenuSub>
@@ -1806,7 +1861,28 @@ export function VideoWall() {
                     </span>
                   </DropdownMenuSubTrigger>
                   {/* onSelect preventDefault 保持菜单展开，可连续点按微调 */}
-                  <DropdownMenuSubContent className="min-w-[10rem] border-border bg-card">
+                  <DropdownMenuSubContent className="min-w-[12rem] border-border bg-card">
+                    {/* 常用字号快捷档：一键跳档（16→60 只需一点），避免连点微调过久；
+                        普通按钮不触发 onSelect，点击后菜单保持展开 */}
+                    <div className="grid grid-cols-3 gap-1 px-2 pb-1 pt-1" role="group" aria-label="常用字号快捷档">
+                      {TITLE_FONT_PRESETS.map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => void updateSettings({ titleFontSize: n })}
+                          aria-pressed={titleFontSize === n}
+                          className={cn(
+                            'rounded-md px-1 py-1 text-[12px] font-semibold tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                            titleFontSize === n
+                              ? 'bg-primary/15 text-primary'
+                              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                          )}
+                        >
+                          {n}px
+                        </button>
+                      ))}
+                    </div>
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onSelect={(e) => {
                         e.preventDefault();
@@ -2534,6 +2610,7 @@ export function VideoWall() {
                     globalCustomRatio: customRatio,
                     showTitles,
                     showInfo,
+                    showIndex,
                     letterboxFill,
                     htmlScale,
                     titleAlign,
@@ -2644,54 +2721,115 @@ export function VideoWall() {
         </DialogContent>
       </Dialog>
 
-      {/* 使用须知弹窗（原底部注意事项）：点空白处、Esc 或右上角/底部关闭按钮均可关闭 */}
+      {/* 使用须知弹窗（原底部注意事项）：点空白处、Esc 或右上角/底部关闭按钮均可关闭。
+          编号圆标 + 条目化排版：每个要点一个序号，标题加粗、说明正文两段式，扫读更清晰 */}
       <Dialog open={notesOpen} onOpenChange={setNotesOpen}>
-        <DialogContent className="border-border bg-card text-card-foreground sm:max-w-[30rem]">
+        <DialogContent className="border-border bg-card text-card-foreground sm:max-w-[32rem]">
           <DialogHeader>
             <DialogTitle>使用须知</DialogTitle>
             <DialogDescription>
-              关于布局、导入、播放与多项目的几个要点。
+              关于布局、导入、播放与多项目的 6 个要点。
             </DialogDescription>
           </DialogHeader>
-          <ul className="flex max-h-[60vh] flex-col gap-2.5 overflow-y-auto pr-1 text-[13px] leading-relaxed text-muted-foreground">
-            <li>
-              <strong className="font-semibold text-foreground/90">布局与排序：</strong>
-              矩阵默认自动排列，可在顶栏「布局」中固定行列与内容比例；抓住卡片左上角序号即可
-              <strong className="font-semibold text-foreground/90">拖动排序</strong>
+          <ol className="flex max-h-[60vh] flex-col gap-3.5 overflow-y-auto pr-1 text-[13px] leading-relaxed text-muted-foreground">
+            <li className="flex items-start gap-2.5">
+              <span
+                aria-hidden
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
+              >
+                1
+              </span>
+              <p className="min-w-0 flex-1">
+                <strong className="font-semibold text-foreground/90">布局与排序</strong>
+                <br />
+                矩阵默认自动排列，可在顶栏「布局」中固定行列与内容比例。抓住卡片左上角编号即可
+                <strong className="font-semibold text-foreground/90">拖动排序</strong>
+                ；截图需要干净画面时，可在「标题」菜单中隐藏编号。
+              </p>
             </li>
-            <li>
-              <strong className="font-semibold text-foreground/90">导入内容：</strong>
-              点击空位或把文件拖进页面即可上传，支持
-              <strong className="font-semibold text-foreground/90">视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）、单文件 HTML 与 zip 页面包</strong>
-              ，HTML 页面导入后自动运行；依赖同目录资源的页面请打成 zip 包导入
+            <li className="flex items-start gap-2.5">
+              <span
+                aria-hidden
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
+              >
+                2
+              </span>
+              <p className="min-w-0 flex-1">
+                <strong className="font-semibold text-foreground/90">导入内容</strong>
+                <br />
+                点击空位或把文件拖进页面即可上传，支持
+                <strong className="font-semibold text-foreground/90">
+                  视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）、单文件 HTML 与 zip 页面包
+                </strong>
+                。上传几个就显示几个内容框，超出时自动扩位；依赖同目录资源的页面请打成 zip 包导入。
+              </p>
             </li>
-            <li>
-              <strong className="font-semibold text-foreground/90">播放与展示：</strong>
-              内容下方可填写标题与介绍；顶栏「播放」「标题」「填充」三个按钮分别控制
-              <strong className="font-semibold text-foreground/90">循环/静音/倍速、标题样式与黑边填充</strong>
+            <li className="flex items-start gap-2.5">
+              <span
+                aria-hidden
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
+              >
+                3
+              </span>
+              <p className="min-w-0 flex-1">
+                <strong className="font-semibold text-foreground/90">播放与展示</strong>
+                <br />
+                内容下方可填写标题与介绍；顶栏「播放」「标题」「填充」三个按钮分别控制
+                <strong className="font-semibold text-foreground/90">循环/静音/倍速、标题样式与黑边填充</strong>
+                ，对全部卡片同时生效。
+              </p>
             </li>
-            <li>
-              <strong className="font-semibold text-foreground/90">顶栏随内容自动适配：</strong>
-              <strong className="font-semibold text-foreground/90">含视频的项目</strong>
-              显示「同时播放 / 暂停」；
-              <strong className="font-semibold text-foreground/90">纯网页项目</strong>
-              没有播放概念，主动作变为「刷新全部」；混合项目两者并存（播放仅对视频生效）。无需手动选择模式
+            <li className="flex items-start gap-2.5">
+              <span
+                aria-hidden
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
+              >
+                4
+              </span>
+              <p className="min-w-0 flex-1">
+                <strong className="font-semibold text-foreground/90">顶栏随内容自动适配</strong>
+                <br />
+                <strong className="font-semibold text-foreground/90">含视频的项目</strong>
+                显示「同时播放 / 暂停」；
+                <strong className="font-semibold text-foreground/90">纯网页项目</strong>
+                没有播放概念，主动作变为「刷新全部」；混合项目两者并存（播放仅对视频生效）。无需手动选择模式。
+              </p>
             </li>
-            <li>
-              <strong className="font-semibold text-foreground/90">多项目管理：</strong>
-              顶栏左上角可切换项目（项目名右侧的
-              <strong className="font-semibold text-foreground/90">角标</strong>
-              标明内容构成），支持新建、重命名、归档与删除，各项目的
-              <strong className="font-semibold text-foreground/90">内容、布局与设置互相隔离</strong>
+            <li className="flex items-start gap-2.5">
+              <span
+                aria-hidden
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
+              >
+                5
+              </span>
+              <p className="min-w-0 flex-1">
+                <strong className="font-semibold text-foreground/90">多项目管理</strong>
+                <br />
+                顶栏左上角可切换项目（项目名右侧的
+                <strong className="font-semibold text-foreground/90">角标</strong>
+                标明内容构成），支持新建、重命名、归档与删除；各项目的
+                <strong className="font-semibold text-foreground/90">内容、布局与设置互相隔离</strong>
+                。
+              </p>
             </li>
-            <li>
-              <strong className="font-semibold text-foreground/90">数据安全：</strong>
-              内容与设置均<strong className="font-semibold text-foreground/90">保存在服务器</strong>
-              ，刷新页面或换设备打开都不会丢失；HTML 页面在
-              <strong className="font-semibold text-foreground/90">独立沙箱</strong>
-              中运行，无法访问本站数据
+            <li className="flex items-start gap-2.5">
+              <span
+                aria-hidden
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
+              >
+                6
+              </span>
+              <p className="min-w-0 flex-1">
+                <strong className="font-semibold text-foreground/90">数据安全</strong>
+                <br />
+                内容与设置均
+                <strong className="font-semibold text-foreground/90">保存在服务器</strong>
+                ，刷新页面或换设备打开都不会丢失；HTML 页面在
+                <strong className="font-semibold text-foreground/90">独立沙箱</strong>
+                中运行，无法访问本站数据。
+              </p>
             </li>
-          </ul>
+          </ol>
           <DialogFooter>
             <button
               type="button"

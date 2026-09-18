@@ -41,7 +41,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown }
+    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -75,6 +75,10 @@ export async function PATCH(req: NextRequest) {
   if (body.showInfo !== undefined) {
     if (typeof body.showInfo !== 'boolean') return badRequest('showInfo 需为布尔值');
     patch.showInfo = body.showInfo;
+  }
+  if (body.showIndex !== undefined) {
+    if (typeof body.showIndex !== 'boolean') return badRequest('showIndex 需为布尔值');
+    patch.showIndex = body.showIndex;
   }
   if (body.loop !== undefined) {
     if (typeof body.loop !== 'boolean') return badRequest('loop 需为布尔值');

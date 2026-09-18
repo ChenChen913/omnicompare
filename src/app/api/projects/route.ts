@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { listProjectIds, readProject, writeProject, withProjectLock } from '@/lib/project-store';
-import { SLOT_MAX, SLOT_MIN, defaultLayoutFor, defaultSettings } from '@/lib/types';
+import { SLOT_MIN, defaultLayoutFor, defaultSettings } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +30,9 @@ export async function POST(req: NextRequest) {
 
   const id = randomUUID();
   const now = new Date().toISOString();
-  const slotCount = Math.min(Math.max(6, SLOT_MIN), SLOT_MAX);
+  // 新项目从 1 个空框开始：上传几个内容，前端自动扩到几格（用户预期「上传几个显示几个」，
+  // 不再一上来就摆 6 个空框）；后续上传由前端 distributeFiles 按需扩容
+  const slotCount = SLOT_MIN;
   const project = await withProjectLock(id, async () => {
     const p = {
       id,

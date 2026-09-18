@@ -38,6 +38,8 @@ export interface VideoCardProps {
   showTitles?: boolean;
   /** 全局属性信息显隐：false 时隐藏标题下方信息行（文件名/大小/比例/操作） */
   showInfo?: boolean;
+  /** 全局位置编号显隐：false 时隐藏左上角数字角标（仅视觉隐藏，拖拽手柄能力保留，截图更干净） */
+  showIndex?: boolean;
   /** 留白填充模式（Step C 扩展 cover）：base = 底色吸收；blur = 同内容模糊放大铺底；
    *  cover = 铺满裁切（object-cover，无黑边）；仅视频/图片生效，HTML 豁免 */
   letterboxFill?: LetterboxFill;
@@ -91,6 +93,7 @@ export function VideoCard({
   globalCustomRatio,
   showTitles = true,
   showInfo = true,
+  showIndex = true,
   letterboxFill = 'base',
   htmlScale = 100,
   titleAlign = 'center',
@@ -265,7 +268,8 @@ export function VideoCard({
         isDragging && 'scale-[1.02] border-primary/70 shadow-2xl shadow-primary/25 ring-2 ring-primary/50',
       )}
     >
-      {/* 位置角标：兼作拖拽排序手柄（有 dragHandle 时可抓取，蓝图 §14） */}
+      {/* 位置角标：兼作拖拽排序手柄（有 dragHandle 时可抓取，蓝图 §14）。
+          showIndex=false 时仅视觉隐藏（opacity-0）：拖拽/键盘能力保留，界面与截图更干净 */}
       <span
         {...(dragHandle ?? {})}
         aria-hidden={dragHandle ? undefined : true}
@@ -274,6 +278,7 @@ export function VideoCard({
           'absolute left-2.5 top-2.5 z-20 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm',
           dragHandle &&
             'cursor-grab touch-none select-none hover:border-primary/60 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing',
+          !showIndex && 'opacity-0',
         )}
       >
         {index + 1}
@@ -301,7 +306,13 @@ export function VideoCard({
           <div
             className={cn(
               'pointer-events-none absolute inset-x-0 top-0 z-[15] flex items-start bg-gradient-to-b from-black/70 via-black/35 to-transparent pb-2 pt-1',
-              titleAlign === 'left' ? 'justify-start pl-11 pr-3' : titleAlign === 'right' ? 'justify-end pl-3 pr-3' : 'justify-center px-3',
+              titleAlign === 'left'
+                ? showIndex
+                  ? 'justify-start pl-11 pr-3'
+                  : 'justify-start pl-3 pr-3' // 编号隐藏后不再需要避让角标
+                : titleAlign === 'right'
+                  ? 'justify-end pl-3 pr-3'
+                  : 'justify-center px-3',
             )}
           >
             {overlayEditing ? (
@@ -510,15 +521,21 @@ export function VideoCard({
           </button>
         )}
 
-        {/* HTML / 图片类型角标（内容区左上，位置角标右侧）；overlay 模式顶部让位给标题条，隐藏 */}
+        {/* HTML / 图片类型角标（内容区左上，位置角标右侧；编号隐藏时直接落在左上角） */}
         {isHtml && !overlayMode && (
-          <span className="absolute left-2.5 top-2.5 z-10 ml-9 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm">
+          <span className={cn(
+            'absolute left-2.5 top-2.5 z-10 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm',
+            showIndex && 'ml-9',
+          )}>
             <Code2 className="h-3 w-3" aria-hidden />
             {isBundle ? 'HTML 包' : 'HTML'}
           </span>
         )}
         {isImage && !overlayMode && (
-          <span className="absolute left-2.5 top-2.5 z-10 ml-9 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm">
+          <span className={cn(
+            'absolute left-2.5 top-2.5 z-10 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm',
+            showIndex && 'ml-9',
+          )}>
             <ImageIcon className="h-3 w-3" aria-hidden />
             图片
           </span>

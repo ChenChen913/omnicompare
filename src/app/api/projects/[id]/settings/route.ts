@@ -85,6 +85,12 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       }
       s.showInfo = body.showInfo;
     }
+    if (body.showIndex !== undefined) {
+      if (typeof body.showIndex !== 'boolean') {
+        return NextResponse.json({ error: '编号显隐需为布尔值' }, { status: 400, headers: noStore });
+      }
+      s.showIndex = body.showIndex;
+    }
     if (body.loop !== undefined) {
       if (typeof body.loop !== 'boolean') {
         return NextResponse.json({ error: '循环开关需为布尔值' }, { status: 400, headers: noStore });

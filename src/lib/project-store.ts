@@ -193,6 +193,8 @@ function normalizeSettings(raw: unknown): ProjectSettings {
     customRatio,
     showTitles: typeof r.showTitles === 'boolean' ? r.showTitles : base.showTitles,
     showInfo: typeof r.showInfo === 'boolean' ? r.showInfo : base.showInfo,
+    // 位置编号显隐：非法/缺失回落显示（v1 行为）
+    showIndex: typeof r.showIndex === 'boolean' ? r.showIndex : base.showIndex,
     loop: typeof r.loop === 'boolean' ? r.loop : base.loop,
     muted: typeof r.muted === 'boolean' ? r.muted : base.muted,
     playbackRate: [0.5, 1, 1.25, 1.5, 2].includes(Number(r.playbackRate))
@@ -245,7 +247,8 @@ export async function readProject(id: string): Promise<Project> {
     status: 'active',
     items: [],
     layout: 'auto',
-    slotCount: 6,
+    // 清单缺失/损坏的兑底：空项目从 1 个空框开始（与新建项目一致，上传几个内容就扩到几格）
+    slotCount: 1,
     settings: defaultSettings(),
     createdAt: now,
     updatedAt: now,
@@ -717,9 +720,9 @@ async function migrateV1ToV2(): Promise<void> {
   await fsp.mkdir(filesDir, { recursive: true });
   const now = new Date().toISOString();
 
-  // 读 v1 清单（损坏/缺失则按空项目迁移）
-  let count = 6;
-  let layout: Layout = defaultLayoutFor(6);
+  // 读 v1 清单（损坏/缺失则按空项目迁移：从 1 个空框开始，与新建项目一致）
+  let count = 1;
+  let layout: Layout = defaultLayoutFor(1);
   const v1Slots: { title: string; video: FileMeta | null }[] = [];
   try {
     const v1 = JSON.parse(

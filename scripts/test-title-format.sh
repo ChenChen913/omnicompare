@@ -46,8 +46,8 @@ R=$(req PATCH /api/videos/settings '{"titleAlign":"right","titleFontSize":24}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "PATCH 两字段同发" 200 "$CODE" '"titleAlign":"right".*"titleFontSize":24' "$BODY"
 
-echo "=== C. 边界值 ==="
-for v in 12 28; do
+echo "=== C. 边界值（上限 60：用户反馈 28 不够用） ==="
+for v in 12 60; do
   R=$(req PATCH /api/videos/settings "{\"titleFontSize\":$v}")
   CODE=$(echo "$R" | tail -n 1)
   check "PATCH 字号边界 $v" 200 "$CODE" '"titleFontSize":'$v "$(echo "$R" | head -n -1)"
@@ -55,7 +55,7 @@ done
 
 echo "=== D. 非法值 400 ==="
 declare -a CASES=(
-  '{"titleFontSize":11}'          '{"titleFontSize":29}'
+  '{"titleFontSize":11}'          '{"titleFontSize":61}'
   '{"titleFontSize":"abc"}'       '{"titleFontSize":null}'
   '{"titleAlign":"middle"}'       '{"titleAlign":123}'
   '{"titleAlign":""}'
@@ -70,7 +70,7 @@ echo "=== E. 非法更新不落盘（GET 回读仍为最后一次合法值） ==
 R=$(req GET /api/videos)
 BODY=$(echo "$R" | head -n -1)
 check "回读 titleAlign=right" 0 0 '"titleAlign":"right"' "$BODY"
-check "回读 titleFontSize=28" 0 0 '"titleFontSize":28' "$BODY"
+check "回读 titleFontSize=60" 0 0 '"titleFontSize":60' "$BODY"
 
 echo "=== F. 标题位置/粗细/颜色（overlay 模式三件套） ==="
 R=$(req PATCH /api/videos/settings '{"titlePosition":"overlay","titleWeight":"bold","titleColor":"#facc15"}')
@@ -90,6 +90,23 @@ for b in "${CASES2[@]}"; do
   CODE=$(echo "$R" | tail -n 1)
   check "PATCH 非法 $b → 400" 400 "$CODE" 'error|需为' "$(echo "$R" | head -n -1)"
 done
+
+echo "=== F2. 位置编号显隐（showIndex，全局同步存项目 settings） ==="
+R=$(req PATCH /api/videos/settings '{"showIndex":false}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "PATCH showIndex=false" 200 "$CODE" '"showIndex":false' "$BODY"
+R=$(req PATCH /api/videos/settings '{"showIndex":"yes"}')
+CODE=$(echo "$R" | tail -n 1)
+check "PATCH showIndex 非法 → 400" 400 "$CODE" 'showIndex' "$(echo "$R" | head -n -1)"
+R=$(req PATCH /api/projects/default/settings '{"showIndex":false}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "v2 showIndex 一致" 200 "$CODE" '"showIndex":false' "$BODY"
+R=$(req GET /api/videos)
+BODY=$(echo "$R" | head -n -1)
+check "GET 回读 showIndex=false" 0 0 '"showIndex":false' "$BODY"
+R=$(req PATCH /api/videos/settings '{"showIndex":true}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "恢复 showIndex=true" 200 "$CODE" '"showIndex":true' "$BODY"
 
 echo "=== G. v2 路由一致性 ==="
 R=$(req PATCH /api/projects/default/settings '{"titleAlign":"center","titleFontSize":18}')
