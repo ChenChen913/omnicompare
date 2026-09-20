@@ -33,6 +33,17 @@ import {
   ProjectSettings,
   PROMPT_MAX,
   SLOT_MAX,
+  WATERMARK_FAMILIES,
+  WATERMARK_COLORS,
+  WATERMARK_FONT_MAX,
+  WATERMARK_FONT_MIN,
+  WATERMARK_MAX,
+  WATERMARK_OPACITY_MAX,
+  WATERMARK_OPACITY_MIN,
+  WATERMARK_SPEEDS,
+  WatermarkColor,
+  WatermarkFamily,
+  WatermarkSpeed,
   SLOT_MIN,
   Slot,
   defaultLayoutFor,
@@ -233,6 +244,34 @@ function normalizeSettings(raw: unknown): ProjectSettings {
     showPrompt: typeof r.showPrompt === 'boolean' ? r.showPrompt : base.showPrompt,
     bylineText: typeof r.bylineText === 'string' ? r.bylineText.slice(0, BYLINE_MAX) : base.bylineText,
     showByline: typeof r.showByline === 'boolean' ? r.showByline : base.showByline,
+    // 水印（防伪）：显隐非法/缺失回落隐藏；文字截断；字号/不透明度越界钳制；字体形式/字重枚举校验
+    showWatermark: typeof r.showWatermark === 'boolean' ? r.showWatermark : base.showWatermark,
+    watermarkText: typeof r.watermarkText === 'string' ? r.watermarkText.slice(0, WATERMARK_MAX) : base.watermarkText,
+    watermarkFontSize: clampInt(
+      r.watermarkFontSize,
+      WATERMARK_FONT_MIN,
+      WATERMARK_FONT_MAX,
+      base.watermarkFontSize,
+    ),
+    watermarkFontFamily: WATERMARK_FAMILIES.includes(r.watermarkFontFamily as WatermarkFamily)
+      ? (r.watermarkFontFamily as WatermarkFamily)
+      : base.watermarkFontFamily,
+    watermarkColor: WATERMARK_COLORS.includes(r.watermarkColor as WatermarkColor)
+      ? (r.watermarkColor as WatermarkColor)
+      : base.watermarkColor,
+    watermarkSpeed: WATERMARK_SPEEDS.includes(r.watermarkSpeed as WatermarkSpeed)
+      ? (r.watermarkSpeed as WatermarkSpeed)
+      : base.watermarkSpeed,
+    watermarkFontWeight:
+      r.watermarkFontWeight === 'normal' || r.watermarkFontWeight === 'bold'
+        ? r.watermarkFontWeight
+        : base.watermarkFontWeight,
+    watermarkOpacity: clampInt(
+      r.watermarkOpacity,
+      WATERMARK_OPACITY_MIN,
+      WATERMARK_OPACITY_MAX,
+      base.watermarkOpacity,
+    ),
   };
 }
 

@@ -16,6 +16,17 @@ import {
   ProjectSettings,
   PROMPT_MAX,
   SCALE_STEPS,
+  WATERMARK_FAMILIES,
+  WATERMARK_COLORS,
+  WATERMARK_FONT_MAX,
+  WATERMARK_FONT_MIN,
+  WATERMARK_MAX,
+  WATERMARK_OPACITY_MAX,
+  WATERMARK_OPACITY_MIN,
+  WATERMARK_SPEEDS,
+  WatermarkColor,
+  WatermarkFamily,
+  WatermarkSpeed,
   TITLE_ALIGNS,
   TITLE_FONT_MAX,
   TITLE_FONT_MIN,
@@ -43,7 +54,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown; bgmVolume?: unknown; promptText?: unknown; showPrompt?: unknown; bylineText?: unknown; showByline?: unknown }
+    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown; bgmVolume?: unknown; promptText?: unknown; showPrompt?: unknown; bylineText?: unknown; showByline?: unknown; showWatermark?: unknown; watermarkText?: unknown; watermarkFontSize?: unknown; watermarkFontFamily?: unknown; watermarkColor?: unknown; watermarkSpeed?: unknown; watermarkFontWeight?: unknown; watermarkOpacity?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -192,6 +203,60 @@ export async function PATCH(req: NextRequest) {
   if (body.showByline !== undefined) {
     if (typeof body.showByline !== 'boolean') return badRequest('署名显隐需为布尔值');
     patch.showByline = body.showByline;
+  }
+  if (body.showWatermark !== undefined) {
+    // 水印显隐（防伪标志）
+    if (typeof body.showWatermark !== 'boolean') return badRequest('水印显隐需为布尔值');
+    patch.showWatermark = body.showWatermark;
+  }
+  if (body.watermarkText !== undefined) {
+    // 水印文字：字符串截断到上限
+    if (typeof body.watermarkText !== 'string') return badRequest('水印文字需为字符串');
+    patch.watermarkText = body.watermarkText.slice(0, WATERMARK_MAX);
+  }
+  if (body.watermarkFontSize !== undefined) {
+    // 水印字号（px）：24-160
+    const v = Number(body.watermarkFontSize);
+    if (!Number.isFinite(v) || v < WATERMARK_FONT_MIN || v > WATERMARK_FONT_MAX) {
+      return badRequest(`水印字号需为 ${WATERMARK_FONT_MIN}-${WATERMARK_FONT_MAX} 的数字`);
+    }
+    patch.watermarkFontSize = Math.round(v);
+  }
+  if (body.watermarkFontFamily !== undefined) {
+    // 水印字体形式：default/serif/hand/mono
+    if (typeof body.watermarkFontFamily !== 'string' || !WATERMARK_FAMILIES.includes(body.watermarkFontFamily as WatermarkFamily)) {
+      return badRequest('水印字体形式需为 default / serif / hand / mono 之一');
+    }
+    patch.watermarkFontFamily = body.watermarkFontFamily as WatermarkFamily;
+  }
+  if (body.watermarkColor !== undefined) {
+    // 水印颜色深浅：auto/white/black
+    if (typeof body.watermarkColor !== 'string' || !WATERMARK_COLORS.includes(body.watermarkColor as WatermarkColor)) {
+      return badRequest('水印颜色需为 auto / white / black 之一');
+    }
+    patch.watermarkColor = body.watermarkColor as WatermarkColor;
+  }
+  if (body.watermarkSpeed !== undefined) {
+    // 水印巡游速度：slow/normal/fast
+    if (typeof body.watermarkSpeed !== 'string' || !WATERMARK_SPEEDS.includes(body.watermarkSpeed as WatermarkSpeed)) {
+      return badRequest('水印巡游速度需为 slow / normal / fast 之一');
+    }
+    patch.watermarkSpeed = body.watermarkSpeed as WatermarkSpeed;
+  }
+  if (body.watermarkFontWeight !== undefined) {
+    // 水印字重：normal/bold
+    if (body.watermarkFontWeight !== 'normal' && body.watermarkFontWeight !== 'bold') {
+      return badRequest('水印字重需为 normal 或 bold');
+    }
+    patch.watermarkFontWeight = body.watermarkFontWeight;
+  }
+  if (body.watermarkOpacity !== undefined) {
+    // 水印不透明度（%）：5-80
+    const v = Number(body.watermarkOpacity);
+    if (!Number.isFinite(v) || v < WATERMARK_OPACITY_MIN || v > WATERMARK_OPACITY_MAX) {
+      return badRequest(`水印不透明度需为 ${WATERMARK_OPACITY_MIN}-${WATERMARK_OPACITY_MAX} 的数字`);
+    }
+    patch.watermarkOpacity = Math.round(v);
   }
   if (Object.keys(patch).length === 0 && !clearCustomRatio) {
     return badRequest('至少提供一个待更新字段');

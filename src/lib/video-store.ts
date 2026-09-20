@@ -28,6 +28,17 @@ import {
   TITLE_POSITIONS,
   TITLE_WEIGHTS,
   LETTERBOX_FILLS,
+  WATERMARK_FAMILIES,
+  WATERMARK_COLORS,
+  WATERMARK_FONT_MAX,
+  WATERMARK_FONT_MIN,
+  WATERMARK_MAX,
+  WATERMARK_OPACITY_MAX,
+  WATERMARK_OPACITY_MIN,
+  WATERMARK_SPEEDS,
+  WatermarkColor,
+  WatermarkFamily,
+  WatermarkSpeed,
   autoLayoutFor,
   defaultSettings,
   parseCustomRatio,
@@ -100,6 +111,15 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       showPrompt: st.showPrompt,
       bylineText: st.bylineText,
       showByline: st.showByline,
+      // 水印（显隐 + 外观全量）：视图携带才能在客户端回显
+      showWatermark: st.showWatermark,
+      watermarkText: st.watermarkText,
+      watermarkFontSize: st.watermarkFontSize,
+      watermarkFontFamily: st.watermarkFontFamily,
+      watermarkColor: st.watermarkColor,
+      watermarkSpeed: st.watermarkSpeed,
+      watermarkFontWeight: st.watermarkFontWeight,
+      watermarkOpacity: st.watermarkOpacity,
     },
   };
 }
@@ -294,6 +314,54 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
     // 署名行显隐：旧客户端不携带时保持原值；携带非法值时回落默认（隐藏）
     if (typeof s.showByline === 'boolean') out.showByline = s.showByline;
     else out.showByline = base.showByline;
+  }
+  if (s.showWatermark !== undefined) {
+    // 水印显隐：旧客户端不携带时保持原值；携带非法值时回落默认（隐藏）
+    if (typeof s.showWatermark === 'boolean') out.showWatermark = s.showWatermark;
+    else out.showWatermark = base.showWatermark;
+  }
+  if (s.watermarkText !== undefined) {
+    // 水印文字：旧客户端不携带时保持原值；携带时截断到上限
+    out.watermarkText =
+      typeof s.watermarkText === 'string' ? s.watermarkText.slice(0, WATERMARK_MAX) : base.watermarkText;
+  }
+  if (s.watermarkFontSize !== undefined) {
+    // 水印字号：越界钳制到 24-160，非法回落默认
+    const v = Number(s.watermarkFontSize);
+    if (Number.isFinite(v)) {
+      out.watermarkFontSize = Math.min(WATERMARK_FONT_MAX, Math.max(WATERMARK_FONT_MIN, Math.round(v)));
+    } else out.watermarkFontSize = base.watermarkFontSize;
+  }
+  if (s.watermarkFontFamily !== undefined) {
+    // 水印字体形式：枚举校验，非法回落默认
+    out.watermarkFontFamily = WATERMARK_FAMILIES.includes(s.watermarkFontFamily as WatermarkFamily)
+      ? (s.watermarkFontFamily as WatermarkFamily)
+      : base.watermarkFontFamily;
+  }
+  if (s.watermarkColor !== undefined) {
+    // 水印颜色深浅：枚举校验，非法回落默认
+    out.watermarkColor = WATERMARK_COLORS.includes(s.watermarkColor as WatermarkColor)
+      ? (s.watermarkColor as WatermarkColor)
+      : base.watermarkColor;
+  }
+  if (s.watermarkSpeed !== undefined) {
+    // 水印巡游速度：枚举校验，非法回落默认
+    out.watermarkSpeed = WATERMARK_SPEEDS.includes(s.watermarkSpeed as WatermarkSpeed)
+      ? (s.watermarkSpeed as WatermarkSpeed)
+      : base.watermarkSpeed;
+  }
+  if (s.watermarkFontWeight !== undefined) {
+    // 水印字重：枚举校验，非法回落默认
+    if (s.watermarkFontWeight === 'normal' || s.watermarkFontWeight === 'bold') {
+      out.watermarkFontWeight = s.watermarkFontWeight;
+    } else out.watermarkFontWeight = base.watermarkFontWeight;
+  }
+  if (s.watermarkOpacity !== undefined) {
+    // 水印不透明度：越界钳制到 5-80，非法回落默认
+    const v = Number(s.watermarkOpacity);
+    if (Number.isFinite(v)) {
+      out.watermarkOpacity = Math.min(WATERMARK_OPACITY_MAX, Math.max(WATERMARK_OPACITY_MIN, Math.round(v)));
+    } else out.watermarkOpacity = base.watermarkOpacity;
   }
   // 注意：s.bgm（背景音乐文件）不在 v1 清单写路径受理范围 —— 文件与设置必须在
   // 同一临界区由 /api/videos/bgm 路由变更（先删旧文件再写清单），此处静默忽略，

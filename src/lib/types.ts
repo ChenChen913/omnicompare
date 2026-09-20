@@ -68,6 +68,31 @@ export const PROMPT_MAX = 2000;
 /** 署名文本上限（测评博主 / 账号 / tag 一行） */
 export const BYLINE_MAX = 200;
 
+/** 水印文字上限（防伪水印短语） */
+export const WATERMARK_MAX = 60;
+
+/** 水印字体形式选项：default = 系统默认，serif = 衬线，hand = 手写，mono = 等宽 */
+export type WatermarkFamily = 'default' | 'serif' | 'hand' | 'mono';
+export const WATERMARK_FAMILIES: readonly WatermarkFamily[] = ['default', 'serif', 'hand', 'mono'];
+
+/** 水印颜色深浅：auto = 跟随主题前景色，white = 白（深色画面醒目），black = 黑（浅色画面醒目） */
+export type WatermarkColor = 'auto' | 'white' | 'black';
+export const WATERMARK_COLORS: readonly WatermarkColor[] = ['auto', 'white', 'black'];
+
+/** 水印巡游速度：slow = 慢（45s 一大圈），normal = 标准（30s），fast = 快（15s） */
+export type WatermarkSpeed = 'slow' | 'normal' | 'fast';
+export const WATERMARK_SPEEDS: readonly WatermarkSpeed[] = ['slow', 'normal', 'fast'];
+/** 巡游一圈的秒数：动画 keyframes 固定，仅切 duration；UI 标签「慢 / 标准 / 快」 */
+export const WATERMARK_SPEED_SECONDS: Record<WatermarkSpeed, number> = { slow: 45, normal: 30, fast: 15 };
+
+/** 水印字号范围（px）：最小可辨、最大不独占屏幕 */
+export const WATERMARK_FONT_MIN = 24;
+export const WATERMARK_FONT_MAX = 160;
+
+/** 水印不透明度范围（%）：太实挡内容、太虚失去防伪意义 */
+export const WATERMARK_OPACITY_MIN = 5;
+export const WATERMARK_OPACITY_MAX = 80;
+
 /** 标题对齐方向（全局同步，存项目 settings） */
 export type TitleAlign = 'left' | 'center' | 'right';
 
@@ -248,6 +273,22 @@ export interface ManifestSettings {
   bylineText?: string;
   /** 署名行显隐：缺省/非法回落 false（隐藏） */
   showByline?: boolean;
+  /** 水印显隐（防伪标志，浮动漂移在视频上方）：缺省/非法回落 false（隐藏） */
+  showWatermark?: boolean;
+  /** 水印文字：缺省 = 空 */
+  watermarkText?: string;
+  /** 水印字号（px，24-160）：缺省/非法回落 48 */
+  watermarkFontSize?: number;
+  /** 水印字体形式（default/serif/hand/mono）：缺省/非法回落 default */
+  watermarkFontFamily?: WatermarkFamily;
+  /** 水印颜色深浅（auto/white/black）：缺省/非法回落 auto */
+  watermarkColor?: WatermarkColor;
+  /** 水印巡游速度（slow/normal/fast）：缺省/非法回落 normal */
+  watermarkSpeed?: WatermarkSpeed;
+  /** 水印字重（normal/bold）：缺省/非法回落 bold */
+  watermarkFontWeight?: 'normal' | 'bold';
+  /** 水印不透明度（%，5-80）：缺省/非法回落 30 */
+  watermarkOpacity?: number;
 }
 
 /**
@@ -387,6 +428,22 @@ export interface ProjectSettings {
   bylineText: string;
   /** 署名行显隐 */
   showByline: boolean;
+  /** 水印显隐（防伪标志，浮动漂移在视频上方） */
+  showWatermark: boolean;
+  /** 水印文字 */
+  watermarkText: string;
+  /** 水印字号（px，24-160） */
+  watermarkFontSize: number;
+  /** 水印字体形式（default/serif/hand/mono） */
+  watermarkFontFamily: WatermarkFamily;
+  /** 水印颜色深浅（auto/white/black） */
+  watermarkColor: WatermarkColor;
+  /** 水印巡游速度（slow/normal/fast） */
+  watermarkSpeed: WatermarkSpeed;
+  /** 水印字重（normal/bold） */
+  watermarkFontWeight: 'normal' | 'bold';
+  /** 水印不透明度（%，5-80） */
+  watermarkOpacity: number;
 }
 
 /** 项目（schema v2 顶层）：items 顺序即矩阵填充顺序 */
@@ -437,6 +494,15 @@ export function defaultSettings(): ProjectSettings {
     showPrompt: false,
     bylineText: '',
     showByline: false,
+    // 水印默认关闭：48px 加粗 30% 不透明度是防伪可辨又不喧宾夺主的起点
+    showWatermark: false,
+    watermarkText: '',
+    watermarkFontSize: 48,
+    watermarkFontFamily: 'default',
+    watermarkColor: 'auto',
+    watermarkSpeed: 'normal',
+    watermarkFontWeight: 'bold',
+    watermarkOpacity: 30,
   };
 }
 

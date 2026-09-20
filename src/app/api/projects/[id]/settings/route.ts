@@ -17,6 +17,17 @@ import {
   ProjectSettings,
   PROMPT_MAX,
   SCALE_STEPS,
+  WATERMARK_FAMILIES,
+  WATERMARK_COLORS,
+  WATERMARK_FONT_MAX,
+  WATERMARK_FONT_MIN,
+  WATERMARK_MAX,
+  WATERMARK_OPACITY_MAX,
+  WATERMARK_OPACITY_MIN,
+  WATERMARK_SPEEDS,
+  WatermarkColor,
+  WatermarkFamily,
+  WatermarkSpeed,
   TITLE_ALIGNS,
   TITLE_FONT_MAX,
   TITLE_FONT_MIN,
@@ -247,6 +258,88 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         return NextResponse.json({ error: '署名显隐需为布尔值' }, { status: 400, headers: noStore });
       }
       s.showByline = body.showByline;
+    }
+    if (body.showWatermark !== undefined) {
+      // 水印显隐（防伪标志）
+      if (typeof body.showWatermark !== 'boolean') {
+        return NextResponse.json({ error: '水印显隐需为布尔值' }, { status: 400, headers: noStore });
+      }
+      s.showWatermark = body.showWatermark;
+    }
+    if (body.watermarkText !== undefined) {
+      // 水印文字：字符串截断到上限
+      if (typeof body.watermarkText !== 'string') {
+        return NextResponse.json({ error: '水印文字需为字符串' }, { status: 400, headers: noStore });
+      }
+      s.watermarkText = body.watermarkText.slice(0, WATERMARK_MAX);
+    }
+    if (body.watermarkFontSize !== undefined) {
+      // 水印字号（px）：24-160
+      const v = Number(body.watermarkFontSize);
+      if (!Number.isFinite(v) || v < WATERMARK_FONT_MIN || v > WATERMARK_FONT_MAX) {
+        return NextResponse.json(
+          { error: `水印字号需为 ${WATERMARK_FONT_MIN}-${WATERMARK_FONT_MAX} 的数字` },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.watermarkFontSize = Math.round(v);
+    }
+    if (body.watermarkFontFamily !== undefined) {
+      // 水印字体形式：default/serif/hand/mono
+      if (
+        typeof body.watermarkFontFamily !== 'string'
+        || !WATERMARK_FAMILIES.includes(body.watermarkFontFamily as WatermarkFamily)
+      ) {
+        return NextResponse.json(
+          { error: '水印字体形式需为 default / serif / hand / mono 之一' },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.watermarkFontFamily = body.watermarkFontFamily as WatermarkFamily;
+    }
+    if (body.watermarkColor !== undefined) {
+      // 水印颜色深浅：auto/white/black
+      if (
+        typeof body.watermarkColor !== 'string'
+        || !WATERMARK_COLORS.includes(body.watermarkColor as WatermarkColor)
+      ) {
+        return NextResponse.json(
+          { error: '水印颜色需为 auto / white / black 之一' },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.watermarkColor = body.watermarkColor as WatermarkColor;
+    }
+    if (body.watermarkSpeed !== undefined) {
+      // 水印巡游速度：slow/normal/fast
+      if (
+        typeof body.watermarkSpeed !== 'string'
+        || !WATERMARK_SPEEDS.includes(body.watermarkSpeed as WatermarkSpeed)
+      ) {
+        return NextResponse.json(
+          { error: '水印巡游速度需为 slow / normal / fast 之一' },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.watermarkSpeed = body.watermarkSpeed as WatermarkSpeed;
+    }
+    if (body.watermarkFontWeight !== undefined) {
+      // 水印字重：normal/bold
+      if (body.watermarkFontWeight !== 'normal' && body.watermarkFontWeight !== 'bold') {
+        return NextResponse.json({ error: '水印字重需为 normal 或 bold' }, { status: 400, headers: noStore });
+      }
+      s.watermarkFontWeight = body.watermarkFontWeight;
+    }
+    if (body.watermarkOpacity !== undefined) {
+      // 水印不透明度（%）：5-80
+      const v = Number(body.watermarkOpacity);
+      if (!Number.isFinite(v) || v < WATERMARK_OPACITY_MIN || v > WATERMARK_OPACITY_MAX) {
+        return NextResponse.json(
+          { error: `水印不透明度需为 ${WATERMARK_OPACITY_MIN}-${WATERMARK_OPACITY_MAX} 的数字` },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.watermarkOpacity = Math.round(v);
     }
 
     project.updatedAt = new Date().toISOString();

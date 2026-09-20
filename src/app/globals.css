@@ -170,3 +170,33 @@ html body[data-scroll-locked] {
   margin-right: 0 !important;
   padding-right: 0 !important;
 }
+
+/* 防伪水印「屏保式」巡游：DVD 待机画面那种匀速折线游走，30s 一大圈、linear 匀速，
+   X 位移用自身宽度百分比、Y 位移用字号倍数（em，随字号缩放），任何字号下巡游范围观感一致。
+   微旋转让游走更自然；will-change: transform 提示浏览器走合成层，避免动画触发主线程重排。 */
+@keyframes watermark-screensaver {
+  0% {
+    transform: translate(-38%, 0) rotate(-2.5deg);
+  }
+  25% {
+    transform: translate(38%, 6em) rotate(2deg);
+  }
+  50% {
+    transform: translate(-30%, 14em) rotate(2.5deg);
+  }
+  75% {
+    transform: translate(34%, 4em) rotate(-2deg);
+  }
+  100% {
+    transform: translate(-38%, 0) rotate(-2.5deg);
+  }
+}
+.watermark-screensaver {
+  animation: watermark-screensaver 30s linear infinite;
+  will-change: transform;
+}
+
+/* 水印手写体（字体形式选「手写」时用）：Windows/macOS 各取可得的手写/楷体系，兜底 cursive */
+.font-hand {
+  font-family: 'Segoe Script', 'Bradley Hand', 'Comic Sans MS', KaiTi, STKaiti, cursive;
+}

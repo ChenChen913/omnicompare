@@ -33,6 +33,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Stamp,
   Settings,
   Shrink,
   Sun,
@@ -78,6 +79,17 @@ import {
   Project,
   PROMPT_MAX,
   SCALE_STEPS,
+  WATERMARK_FONT_MAX,
+  WATERMARK_FONT_MIN,
+  WATERMARK_MAX,
+  WATERMARK_COLORS,
+  WATERMARK_SPEEDS,
+  WATERMARK_SPEED_SECONDS,
+  WATERMARK_OPACITY_MAX,
+  WATERMARK_OPACITY_MIN,
+  WatermarkColor,
+  WatermarkFamily,
+  WatermarkSpeed,
   SLOT_MAX,
   Slot,
   TITLE_ALIGNS,
@@ -117,6 +129,8 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -280,6 +294,22 @@ export function VideoWall() {
   /** 最近一次持久化的文本：失焦时对比决定是否 PATCH，避免无变更也发请求 */
   const promptSavedRef = useRef('');
   const bylineSavedRef = useRef('');
+  /* 水印（防伪标志）：文字 + 字号 + 字体形式 + 字重 + 不透明度 + 显隐，全部随项目存服务端 settings */
+  const [wmShow, setWmShow] = useState(false);
+  const [wmText, setWmText] = useState('');
+  const [wmFontSize, setWmFontSize] = useState(48);
+  const [wmFamily, setWmFamily] = useState<WatermarkFamily>('default');
+  const [wmColor, setWmColor] = useState<WatermarkColor>('auto');
+  const [wmSpeed, setWmSpeed] = useState<WatermarkSpeed>('normal');
+  const [wmWeight, setWmWeight] = useState<'normal' | 'bold'>('bold');
+  const [wmOpacity, setWmOpacity] = useState(30);
+  /** 水印文字编辑对话框：open 状态与草稿（确认才提交，取消/Esc 丢弃草稿）；
+   *  enable：本次保存是否连带启用水印（顶栏按钮首次开启路径为 true，纯改文字为 false） */
+  const [wmDialogOpen, setWmDialogOpen] = useState(false);
+  const [wmDraft, setWmDraft] = useState('');
+  const [wmDialogEnable, setWmDialogEnable] = useState(false);
+  /** 水印蒙版层：effect 把它的位置/尺寸实时对齐到视频墙（巡游范围 = 墙的实际区域） */
+  const wmLayerRef = useRef<HTMLDivElement | null>(null);
   /** 留白填充（Step C，扩展 cover）：base = 底色吸收；blur = 模糊填充；cover = 铺满裁切（仅视频/图片生效） */
   const [letterboxFill, setLetterboxFill] = useState<LetterboxFill>('base');
   /** 整墙缩放百分比（SCALE_STEPS 档位）：100 = 原始大小；小档位让纵向多行布局整墙同屏便于截图 */
@@ -431,6 +461,14 @@ export function VideoWall() {
     setShowByline(s?.showByline ?? d.showByline);
     promptSavedRef.current = s?.promptText ?? d.promptText;
     bylineSavedRef.current = s?.bylineText ?? d.bylineText;
+    setWmShow(s?.showWatermark ?? d.showWatermark);
+    setWmText(s?.watermarkText ?? d.watermarkText);
+    setWmFontSize(s?.watermarkFontSize ?? d.watermarkFontSize);
+    setWmFamily(s?.watermarkFontFamily ?? d.watermarkFontFamily);
+    setWmColor(s?.watermarkColor ?? d.watermarkColor);
+    setWmSpeed(s?.watermarkSpeed ?? d.watermarkSpeed);
+    setWmWeight(s?.watermarkFontWeight ?? d.watermarkFontWeight);
+    setWmOpacity(s?.watermarkOpacity ?? d.watermarkOpacity);
   }, []);
 
   /* 自定义比例草稿跟随服务端值同步（首次加载与切换项目后回填） */
@@ -704,6 +742,14 @@ export function VideoWall() {
         showPrompt,
         bylineText,
         showByline,
+        showWatermark: wmShow,
+        watermarkText: wmText,
+        watermarkFontSize: wmFontSize,
+        watermarkFontFamily: wmFamily,
+        watermarkColor: wmColor,
+        watermarkSpeed: wmSpeed,
+        watermarkFontWeight: wmWeight,
+        watermarkOpacity: wmOpacity,
       };
       // 乐观回填
       if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
@@ -734,6 +780,14 @@ export function VideoWall() {
         bylineSavedRef.current = partial.bylineText;
       }
       if (partial.showByline !== undefined) setShowByline(partial.showByline);
+      if (partial.showWatermark !== undefined) setWmShow(partial.showWatermark);
+      if (partial.watermarkText !== undefined) setWmText(partial.watermarkText);
+      if (partial.watermarkFontSize !== undefined) setWmFontSize(partial.watermarkFontSize);
+      if (partial.watermarkFontFamily !== undefined) setWmFamily(partial.watermarkFontFamily);
+      if (partial.watermarkColor !== undefined) setWmColor(partial.watermarkColor);
+      if (partial.watermarkSpeed !== undefined) setWmSpeed(partial.watermarkSpeed);
+      if (partial.watermarkFontWeight !== undefined) setWmWeight(partial.watermarkFontWeight);
+      if (partial.watermarkOpacity !== undefined) setWmOpacity(partial.watermarkOpacity);
       try {
         const res = await fetch(withPid('/api/videos/settings'), {
           method: 'PATCH',
@@ -769,10 +823,18 @@ export function VideoWall() {
         setShowByline(prev.showByline);
         promptSavedRef.current = prev.promptText;
         bylineSavedRef.current = prev.bylineText;
+        setWmShow(prev.showWatermark);
+        setWmText(prev.watermarkText);
+        setWmFontSize(prev.watermarkFontSize);
+        setWmFamily(prev.watermarkFontFamily);
+        setWmColor(prev.watermarkColor);
+        setWmSpeed(prev.watermarkSpeed);
+        setWmWeight(prev.watermarkFontWeight);
+        setWmOpacity(prev.watermarkOpacity);
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, bgmVolume, promptText, showPrompt, bylineText, showByline, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, bgmVolume, promptText, showPrompt, bylineText, showByline, wmShow, wmText, wmFontSize, wmFamily, wmColor, wmSpeed, wmWeight, wmOpacity, applySettings, withPid],
   );
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
@@ -1480,6 +1542,37 @@ export function VideoWall() {
     ro.observe(bar);
     return () => ro.disconnect();
   }, [view, filledCount, showPrompt, showByline]);
+
+  /* 水印蒙版层对齐视频墙：巡游范围 = 墙的实际渲染区域（单视频=单卡、多视频=整墙），
+     而不是整个内容区（避免巡到墙外空白处）。墙尺寸/位置变化（增删内容、autoFit 求解、
+     工作室/专注模式切换、窗口缩放）都通过 RO + resize 重算。
+     坐标换算：墙 rect 视口坐标 − main rect 视口坐标 = 相对 main（水印层的 offsetParent）偏移 */
+  useEffect(() => {
+    const wall = wallRef.current;
+    const layer = wmLayerRef.current;
+    if (!wall || !layer) return;
+    const sync = () => {
+      const wallRect = wall.getBoundingClientRect();
+      const parent = layer.offsetParent;
+      if (!parent) return;
+      const parentRect = parent.getBoundingClientRect();
+      layer.style.top = `${wallRect.top - parentRect.top}px`;
+      layer.style.left = `${wallRect.left - parentRect.left}px`;
+      layer.style.width = `${wallRect.width}px`;
+      layer.style.height = `${wallRect.height}px`;
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(wall);
+    window.addEventListener('resize', sync);
+    // capture=true 捕获内部容器滚动（main/墙滚动时墙的视口位置变化，RO 不触发）
+    window.addEventListener('scroll', sync, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', sync);
+      window.removeEventListener('scroll', sync, true);
+    };
+  }, [wmShow, view, filledCount, mode]);
 
   /* 渲染列数：auto 模式窄屏收窄到 2 列竖向堆叠（蓝图 §12）；手动模式保持存储矩阵。
      整墙缩放：autoFit 生效时宽度取求解值 fitWidth（null = 满宽 100%），
@@ -2430,6 +2523,168 @@ export function VideoWall() {
                   {bgm && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" aria-hidden />}
                 </button>
 
+                {/* 水印（防伪）：完整功能面板挂在顶栏按钮上（与「标题」菜单解耦）：
+                    启用/文字/字号/颜色深浅/不透明度/加粗/字体形式，全部随项目存服务端。
+                    violet 色系与「音乐」琥珀色区分；状态点表示水印开启中 */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(
+                        ctlBtn,
+                        'border-violet-500/40 bg-violet-500/10 text-violet-600 hover:bg-violet-500/20 dark:text-violet-400',
+                      )}
+                      title="水印：防伪标志盖在视频区上方缓慢巡游（点击设置）"
+                      aria-label="水印设置"
+                    >
+                      <Stamp className="h-4 w-4" aria-hidden />
+                      <span>水印</span>
+                      {wmShow && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-violet-500 dark:bg-violet-400" aria-hidden />
+                      )}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-64 border-border bg-card">
+                    <DropdownMenuCheckboxItem
+                      checked={wmShow}
+                      onCheckedChange={(v) => {
+                        const on = v === true;
+                        void updateSettings({ showWatermark: on });
+                        // 首次开启且还没设文字：直接带出文字编辑，避免空水印挂在屏幕上
+                        if (on && !wmText) {
+                          setWmDraft('');
+                          setWmDialogEnable(true);
+                          setWmDialogOpen(true);
+                        }
+                      }}
+                      className="text-[13px]"
+                    >
+                      启用水印
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setWmDraft(wmText);
+                        setWmDialogEnable(false);
+                        setWmDialogOpen(true);
+                      }}
+                      className="text-[13px]"
+                    >
+                      水印文字…
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <div className="px-2 py-2">
+                      <div className="mb-1 flex items-center justify-between text-[12px] text-muted-foreground">
+                        <span>字号</span>
+                        <span className="tabular-nums">{wmFontSize}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={WATERMARK_FONT_MIN}
+                        max={WATERMARK_FONT_MAX}
+                        step={2}
+                        value={wmFontSize}
+                        onChange={(e) => setWmFontSize(Number(e.target.value))}
+                        onPointerUp={() => void updateSettings({ watermarkFontSize: wmFontSize })}
+                        onKeyUp={() => void updateSettings({ watermarkFontSize: wmFontSize })}
+                        aria-label="水印字号"
+                        className="w-full accent-[var(--primary)]"
+                      />
+                      <div className="mb-1 mt-3 flex items-center justify-between text-[12px] text-muted-foreground">
+                        <span>颜色深浅</span>
+                      </div>
+                      <div className="flex gap-1" role="radiogroup" aria-label="水印颜色深浅">
+                        {WATERMARK_COLORS.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            role="radio"
+                            aria-checked={wmColor === c}
+                            onClick={() => void updateSettings({ watermarkColor: c })}
+                            className={cn(
+                              'flex-1 rounded-md border px-1 py-1 text-[12px] transition-colors',
+                              wmColor === c
+                                ? 'border-violet-500/60 bg-violet-500/15 text-violet-600 dark:text-violet-300'
+                                : 'border-border/60 text-muted-foreground hover:bg-muted/60',
+                            )}
+                          >
+                            {c === 'auto' ? '跟随主题' : c === 'white' ? '白' : '黑'}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mb-1 mt-3 flex items-center justify-between text-[12px] text-muted-foreground">
+                        <span>巡游速度</span>
+                      </div>
+                      <div className="flex gap-1" role="radiogroup" aria-label="水印巡游速度">
+                        {WATERMARK_SPEEDS.map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            role="radio"
+                            aria-checked={wmSpeed === s}
+                            onClick={() => void updateSettings({ watermarkSpeed: s })}
+                            className={cn(
+                              'flex-1 rounded-md border px-1 py-1 text-[12px] transition-colors',
+                              wmSpeed === s
+                                ? 'border-violet-500/60 bg-violet-500/15 text-violet-600 dark:text-violet-300'
+                                : 'border-border/60 text-muted-foreground hover:bg-muted/60',
+                            )}
+                          >
+                            {s === 'slow' ? '慢' : s === 'normal' ? '标准' : '快'}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mb-1 mt-3 flex items-center justify-between text-[12px] text-muted-foreground">
+                        <span>不透明度</span>
+                        <span className="tabular-nums">{wmOpacity}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={WATERMARK_OPACITY_MIN}
+                        max={WATERMARK_OPACITY_MAX}
+                        step={1}
+                        value={wmOpacity}
+                        onChange={(e) => setWmOpacity(Number(e.target.value))}
+                        onPointerUp={() => void updateSettings({ watermarkOpacity: wmOpacity })}
+                        onKeyUp={() => void updateSettings({ watermarkOpacity: wmOpacity })}
+                        aria-label="水印不透明度"
+                        className="w-full accent-[var(--primary)]"
+                      />
+                    </div>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuCheckboxItem
+                      checked={wmWeight === 'bold'}
+                      onCheckedChange={(v) =>
+                        void updateSettings({ watermarkFontWeight: v === true ? 'bold' : 'normal' })
+                      }
+                      className="text-[13px]"
+                    >
+                      加粗
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger className="text-[13px]">字体形式</DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="min-w-[9rem] border-border bg-card">
+                        <DropdownMenuRadioGroup
+                          value={wmFamily}
+                          onValueChange={(v) => void updateSettings({ watermarkFontFamily: v as WatermarkFamily })}
+                        >
+                          <DropdownMenuRadioItem value="default" className="text-[13px]">
+                            默认
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="serif" className="text-[13px]">
+                            衬线
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="hand" className="text-[13px]">
+                            手写
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="mono" className="text-[13px]">
+                            等宽
+                          </DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <button
@@ -2844,7 +3099,7 @@ export function VideoWall() {
             // focus 下 flex-col：网格 my-auto 垂直居中（内容不足一屏时上下均分留白，
             // 正好放下时贴边）；studio 保持块级布局零变化。
             // focus 内边距收窄（py-3/py-4），「正好放下」时上下留白更少
-            'min-w-0 flex-1 transition-opacity duration-300',
+            'relative min-w-0 flex-1 transition-opacity duration-300',
             mode === 'focus' ? 'flex flex-col py-3 sm:py-4' : 'py-4 sm:py-7',
             switching && 'pointer-events-none opacity-45',
           )}
@@ -3075,6 +3330,37 @@ export function VideoWall() {
             )}
           </div>
         )}
+
+        {/* 防伪水印：蒙版层由 effect 实时对齐视频墙（巡游范围 = 墙的实际区域：
+            单视频=单卡、多视频=整墙），水印在其上屏保式巡游（防搬运）。
+            z-30 压过所有视频卡片（卡片常态无 z、拖拽时才临时 z-30），水印永远在视频上层；
+            pointer-events-none 不挡视频点击/拖拽；绝对定位不占布局、不干扰 autoFit 测量。
+            全部设置收在顶栏「水印」按钮 */}
+        {view === 'workspace' && filledCount > 0 && wmShow && (
+          <div ref={wmLayerRef} aria-hidden className="pointer-events-none absolute z-30 overflow-hidden">
+            <div className="flex h-full w-full items-start justify-center pt-[4%]">
+              <span
+                className={cn(
+                  'watermark-screensaver max-w-[80%] select-none whitespace-pre-wrap break-words text-center',
+                  wmFamily === 'serif' && 'font-serif',
+                  wmFamily === 'hand' && 'font-hand',
+                  wmFamily === 'mono' && 'font-mono',
+                  wmColor === 'white' ? 'text-white' : wmColor === 'black' ? 'text-black' : 'text-foreground',
+                  wmWeight === 'bold' ? 'font-bold' : 'font-normal',
+                )}
+                style={{
+                  fontSize: `${wmFontSize}px`,
+                  opacity: wmOpacity / 100,
+                  animationDuration: `${WATERMARK_SPEED_SECONDS[wmSpeed]}s`,
+                  /* 双向描影保证明暗视频上都可辨 */
+                  textShadow: '0 1px 3px rgb(0 0 0 / 0.25), 0 0 1px rgb(255 255 255 / 0.18)',
+                }}
+              >
+                {wmText}
+              </span>
+            </div>
+          </div>
+        )}
       </main>
       </div>
 
@@ -3302,6 +3588,45 @@ export function VideoWall() {
       {/* 背景音乐元素：loop 恒开（循环由元素自身保证）；src 跟随项目 settings.bgm，
           未设置时不渲染音源；音量/倍速由上方 effect 同步 */}
       <audio ref={audioRef} loop preload="auto" src={bgm ? `/api/files/${bgm.filename}` : undefined} className="hidden" />
+
+      {/* 水印文字编辑：确认才提交（取消/Esc 丢弃草稿）；顶栏按钮首次启用时保存会连带开启水印 */}
+      <AlertDialog
+        open={wmDialogOpen}
+        onOpenChange={(open) => {
+          setWmDialogOpen(open);
+          if (!open) setWmDialogEnable(false);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>水印文字</AlertDialogTitle>
+            <AlertDialogDescription>
+              显示在视频区上方的防伪标志，屏保式缓慢巡游、随当前项目保存，最长 60 字。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            value={wmDraft}
+            onChange={(e) => setWmDraft(e.target.value)}
+            maxLength={WATERMARK_MAX}
+            placeholder="例如：@你的频道名 · 未经授权禁止搬运"
+            aria-label="水印文字"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const text = wmDraft.trim();
+                setWmText(text);
+                void updateSettings(
+                  wmDialogEnable && text ? { watermarkText: text, showWatermark: true } : { watermarkText: text },
+                );
+              }}
+            >
+              保存
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
