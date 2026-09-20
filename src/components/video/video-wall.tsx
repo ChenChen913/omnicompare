@@ -1458,6 +1458,29 @@ export function VideoWall() {
     };
   }, [fitActive, mode, loading, view, filledCount]);
 
+  /* 提示词/署名区域宽度跟随视频墙实际渲染宽度（录屏观感）：墙是内容自适应宽度
+     （窄视频窄墙、宽视频宽墙，autoFit 求解的 fitWidth 也是布局宽度），
+     区域与墙同宽居中才上下对齐。RO 监听墙与区域自身：
+     - 墙尺寸变化 → 同步宽度；
+     - 提示词内容增高（field-sizing 自适应）→ 区域自身 RO 触发并派发 resize，
+       让 autoFit 重测 avail（main 高度被 flex 约束，自身增高不会触发 main 的 RO）。 */
+  useEffect(() => {
+    const wall = wallRef.current;
+    const bar = promptBarRef.current;
+    if (!wall || !bar) return;
+    const sync = () => {
+      const w = Math.round(wall.getBoundingClientRect().width);
+      if (w > 0) bar.style.width = `${w}px`;
+      // 区域/墙尺寸变化都可能改变 autoFit 的可用空间，通知重测（无 autoFit 时 measure 不挂载，事件无人监听，零成本）
+      window.dispatchEvent(new Event('resize'));
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(wall);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [view, filledCount, showPrompt, showByline]);
+
   /* 渲染列数：auto 模式窄屏收窄到 2 列竖向堆叠（蓝图 §12）；手动模式保持存储矩阵。
      整墙缩放：autoFit 生效时宽度取求解值 fitWidth（null = 满宽 100%），
      未启用时回落 wallScale 手动档（grid 容器宽度按档位缩放并居中，100% 与引入前行为一致） */
@@ -2995,14 +3018,11 @@ export function VideoWall() {
         )}
 
         {/* 提示词与署名（录屏入镜用）：显隐开关在顶栏「标题」菜单，文本点击即编辑、失焦自动保存，
-            随项目存服务端；专注模式下贴在网格下方一并入镜（自动适配会为它让出空间） */}
+            随项目存服务端；宽度由 effect 同步为视频墙实际渲染宽度（窄墙窄、宽墙宽），高度随内容自适应 */}
         {view === 'workspace' && filledCount > 0 && (showPrompt || showByline) && (
           <div
             ref={promptBarRef}
-            className={cn(
-              'mx-auto w-full max-w-[1400px] shrink-0 px-1 sm:px-2',
-              mode === 'focus' ? 'mt-3' : 'mt-4',
-            )}
+            className={cn('mx-auto shrink-0', mode === 'focus' ? 'mt-3' : 'mt-4')}
           >
             {showPrompt && (
               <div className="rounded-xl border border-border/70 bg-card/60 px-4 py-3">
@@ -3023,7 +3043,9 @@ export function VideoWall() {
                   maxLength={PROMPT_MAX}
                   placeholder="粘贴本次对比使用的提示词（录屏时可一并入镜）…"
                   aria-label="提示词"
-                  className="w-full resize-y bg-transparent text-[13px] leading-relaxed text-foreground/90 outline-none placeholder:text-muted-foreground/40"
+                  /* field-sizing-content：高度随内容自适应（Chrome/Edge 123+）；rows=2 为不支持浏览器的兜底，
+                     45vh 封顶防止超长提示词独占屏幕 */
+                  className="w-full resize-none field-sizing-content max-h-[45vh] overflow-y-auto bg-transparent text-[13px] leading-relaxed text-foreground/90 outline-none placeholder:text-muted-foreground/40"
                 />
               </div>
             )}
