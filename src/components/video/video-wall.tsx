@@ -22,14 +22,17 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   Library,
+  MessageSquareQuote,
   Minus,
   Moon,
   Music,
   Pause,
   Palette,
+  PenLine,
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Settings,
   Shrink,
   Sun,
@@ -68,10 +71,12 @@ import {
   Layout,
   LetterboxFill,
   LETTERBOX_FILLS,
+  BYLINE_MAX,
   MAX_AUDIO_SIZE,
   Manifest,
   ManifestSettings,
   Project,
+  PROMPT_MAX,
   SCALE_STEPS,
   SLOT_MAX,
   Slot,
@@ -267,6 +272,14 @@ export function VideoWall() {
   const [bgm, setBgm] = useState<FileMeta | null>(null);
   const [bgmVolume, setBgmVolume] = useState(100);
   const [bgmUploading, setBgmUploading] = useState(false);
+  /* 提示词与署名（矩阵下方，录屏入镜用）：文本与显隐都随项目存服务端 settings */
+  const [promptText, setPromptText] = useState('');
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [bylineText, setBylineText] = useState('');
+  const [showByline, setShowByline] = useState(false);
+  /** 最近一次持久化的文本：失焦时对比决定是否 PATCH，避免无变更也发请求 */
+  const promptSavedRef = useRef('');
+  const bylineSavedRef = useRef('');
   /** 留白填充（Step C，扩展 cover）：base = 底色吸收；blur = 模糊填充；cover = 铺满裁切（仅视频/图片生效） */
   const [letterboxFill, setLetterboxFill] = useState<LetterboxFill>('base');
   /** 整墙缩放百分比（SCALE_STEPS 档位）：100 = 原始大小；小档位让纵向多行布局整墙同屏便于截图 */
@@ -346,6 +359,8 @@ export function VideoWall() {
   const headerRef = useRef<HTMLElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const wallRef = useRef<HTMLDivElement | null>(null);
+  /** 提示词/署名区域（网格下方）：autoFit 求解时预留其高度，避免专注模式下溢出视口 */
+  const promptBarRef = useRef<HTMLDivElement | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setVideoRef = useCallback((index: number, el: HTMLVideoElement | null) => {
@@ -410,6 +425,12 @@ export function VideoWall() {
     setTitleColor(s?.titleColor ?? d.titleColor);
     setBgm(s?.bgm ?? null);
     setBgmVolume(s?.bgmVolume ?? d.bgmVolume);
+    setPromptText(s?.promptText ?? d.promptText);
+    setShowPrompt(s?.showPrompt ?? d.showPrompt);
+    setBylineText(s?.bylineText ?? d.bylineText);
+    setShowByline(s?.showByline ?? d.showByline);
+    promptSavedRef.current = s?.promptText ?? d.promptText;
+    bylineSavedRef.current = s?.bylineText ?? d.bylineText;
   }, []);
 
   /* 自定义比例草稿跟随服务端值同步（首次加载与切换项目后回填） */
@@ -679,6 +700,10 @@ export function VideoWall() {
         titleWeight,
         titleColor,
         bgmVolume,
+        promptText,
+        showPrompt,
+        bylineText,
+        showByline,
       };
       // 乐观回填
       if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
@@ -699,6 +724,16 @@ export function VideoWall() {
       if (partial.titleWeight !== undefined) setTitleWeight(partial.titleWeight);
       if (partial.titleColor !== undefined) setTitleColor(partial.titleColor);
       if (partial.bgmVolume !== undefined) setBgmVolume(partial.bgmVolume);
+      if (partial.promptText !== undefined) {
+        setPromptText(partial.promptText);
+        promptSavedRef.current = partial.promptText;
+      }
+      if (partial.showPrompt !== undefined) setShowPrompt(partial.showPrompt);
+      if (partial.bylineText !== undefined) {
+        setBylineText(partial.bylineText);
+        bylineSavedRef.current = partial.bylineText;
+      }
+      if (partial.showByline !== undefined) setShowByline(partial.showByline);
       try {
         const res = await fetch(withPid('/api/videos/settings'), {
           method: 'PATCH',
@@ -728,10 +763,16 @@ export function VideoWall() {
         setTitleWeight(prev.titleWeight);
         setTitleColor(prev.titleColor);
         setBgmVolume(prev.bgmVolume);
+        setPromptText(prev.promptText);
+        setShowPrompt(prev.showPrompt);
+        setBylineText(prev.bylineText);
+        setShowByline(prev.showByline);
+        promptSavedRef.current = prev.promptText;
+        bylineSavedRef.current = prev.bylineText;
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, bgmVolume, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, bgmVolume, promptText, showPrompt, bylineText, showByline, applySettings, withPid],
   );
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
@@ -1175,6 +1216,47 @@ export function VideoWall() {
     } catch {}
   }, [getActiveVideos, bgm]);
 
+  /** 一键重置（录屏备场）：全部视频归零、网页 iframe 重载（从头运行）、背景音乐归零；
+   *  play=true 时归零后立即同步起播（等价专注模式圆形按钮），false 时保持暂停 */
+  const handleResetAll = useCallback(
+    (play: boolean) => {
+      const active = getActiveVideos();
+      if (active.length === 0 && !bgm && !hasHtml) {
+        toast.error('还没有可重置的内容，请先上传', { id: 'reset' });
+        return;
+      }
+      active.forEach((v) => {
+        try {
+          v.pause();
+          v.currentTime = 0;
+        } catch {
+          /* 未加载元数据时设置进度可能抛错，忽略 */
+        }
+      });
+      try {
+        audioRef.current?.pause();
+        if (audioRef.current) audioRef.current.currentTime = 0;
+      } catch {}
+      // 网页"从头开始" = 重载 iframe（与「刷新全部页面」同一信号）
+      setHtmlRefreshTick((n) => n + 1);
+      if (!play) return;
+      window.setTimeout(() => {
+        const attempts = active.map((v) => v.play());
+        if (bgm && audioRef.current) {
+          try {
+            void audioRef.current.play().catch(() => {});
+          } catch {}
+        }
+        Promise.allSettled(attempts).then((results) => {
+          if (results.length > 0 && results.every((r) => r.status === 'rejected')) {
+            toast.error('播放被浏览器拦截，请再点一次', { id: 'reset' });
+          }
+        });
+      }, 80);
+    },
+    [getActiveVideos, bgm, hasHtml],
+  );
+
   /* ---------- 背景音乐（BGM）----------
      全局唯一一轨：文件经 /api/videos/bgm 上传/移除，音量经 settings PATCH 持久化。
      <audio loop> 恒开（循环由元素自身保证），音量/倍速由下方 effect 同步到元素。 */
@@ -1221,17 +1303,23 @@ export function VideoWall() {
     }, 80);
   }, [getActiveVideos, bgm]);
 
-  /** 专注模式键盘快捷键：空格 / F = 播放 ⇄ 暂停（一键全开/全停，录屏时鼠标不必入镜）。
+  /** 专注模式键盘快捷键：空格 / F = 播放 ⇄ 暂停（一键全开/全停，录屏时鼠标不必入镜）；
+   *  R = 全部归零并保持暂停（备场重置）。
    *  正在播放（任一视频或背景音乐）→ 全部暂停；否则从头同步播放（等价右下角圆形按钮）。
-   *  标题输入框等聚焦时不抢键；空格默认滚动页面，需 preventDefault */
+   *  标题/提示词输入框等聚焦时不抢键；空格默认滚动页面，需 preventDefault */
   useEffect(() => {
     if (mode !== 'focus') return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (e.code !== 'Space' && e.key !== 'f' && e.key !== 'F') return;
+      const isReset = e.code === 'KeyR';
+      if (!isReset && e.code !== 'Space' && e.key !== 'f' && e.key !== 'F') return;
       e.preventDefault();
+      if (isReset) {
+        handleResetAll(false);
+        return;
+      }
       const anyPlaying =
         getActiveVideos().some((v) => !v.paused)
         || (!!bgm && !!audioRef.current && !audioRef.current.paused);
@@ -1240,7 +1328,7 @@ export function VideoWall() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mode, getActiveVideos, handleLoopShow, handlePauseAll, bgm]);
+  }, [mode, getActiveVideos, handleLoopShow, handlePauseAll, handleResetAll, bgm]);
 
   /** 上传/更换背景音乐：POST FormData → 响应清单回填（服务端同临界区删除旧文件） */
   const handleBgmFile = useCallback(
@@ -1327,6 +1415,10 @@ export function VideoWall() {
         (mode === 'studio' ? (headerRef.current?.offsetHeight ?? 0) : 0) -
         (parseFloat(ms.paddingTop) || 0) -
         (parseFloat(ms.paddingBottom) || 0) -
+        // 网格下方提示词/署名区域（含上边距）：可见时为它预留空间，保证一并入镜
+        ((promptBarRef.current?.offsetHeight ?? 0) > 0
+          ? (promptBarRef.current?.offsetHeight ?? 0) + 16
+          : 0) -
         2;
       const containerW = main.clientWidth - (parseFloat(ms.paddingLeft) || 0) - (parseFloat(ms.paddingRight) || 0);
       const rect = wall.getBoundingClientRect();
@@ -1890,6 +1982,17 @@ export function VideoWall() {
                 >
                   全部静音
                 </DropdownMenuCheckboxItem>
+                {/* 一键重置：视频归零、网页重载、背景音乐归零；录屏前备场用 */}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => handleResetAll(false)} className="text-[13px]">
+                  <RotateCcw className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                  全部归零并暂停
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleResetAll(true)} className="text-[13px]">
+                  <Play className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                  全部归零并播放
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger className="text-[13px]">
                     <Gauge className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
@@ -2014,6 +2117,22 @@ export function VideoWall() {
                   className="text-[13px]"
                 >
                   显示位置编号
+                </DropdownMenuCheckboxItem>
+                {/* 提示词与署名（矩阵下方，录屏入镜用）：显隐随项目存服务端 */}
+                <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={showPrompt}
+                  onCheckedChange={(v) => void updateSettings({ showPrompt: v === true })}
+                  className="text-[13px]"
+                >
+                  显示提示词
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuCheckboxItem
+                  checked={showByline}
+                  onCheckedChange={(v) => void updateSettings({ showByline: v === true })}
+                  className="text-[13px]"
+                >
+                  显示署名
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuSeparator />
                 {/* 标题格式（全局同步）：一次调节，所有卡片标题同时生效（存项目 settings） */}
@@ -2873,6 +2992,66 @@ export function VideoWall() {
               </div>
             </SortableContext>
           </DndContext>
+        )}
+
+        {/* 提示词与署名（录屏入镜用）：显隐开关在顶栏「标题」菜单，文本点击即编辑、失焦自动保存，
+            随项目存服务端；专注模式下贴在网格下方一并入镜（自动适配会为它让出空间） */}
+        {view === 'workspace' && filledCount > 0 && (showPrompt || showByline) && (
+          <div
+            ref={promptBarRef}
+            className={cn(
+              'mx-auto w-full max-w-[1400px] shrink-0 px-1 sm:px-2',
+              mode === 'focus' ? 'mt-3' : 'mt-4',
+            )}
+          >
+            {showPrompt && (
+              <div className="rounded-xl border border-border/70 bg-card/60 px-4 py-3">
+                <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <MessageSquareQuote className="h-3 w-3" aria-hidden />
+                  提示词
+                </p>
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  onBlur={() => {
+                    if (promptText !== promptSavedRef.current) {
+                      promptSavedRef.current = promptText;
+                      void updateSettings({ promptText });
+                    }
+                  }}
+                  rows={2}
+                  maxLength={PROMPT_MAX}
+                  placeholder="粘贴本次对比使用的提示词（录屏时可一并入镜）…"
+                  aria-label="提示词"
+                  className="w-full resize-y bg-transparent text-[13px] leading-relaxed text-foreground/90 outline-none placeholder:text-muted-foreground/40"
+                />
+              </div>
+            )}
+            {showByline && (
+              <div
+                className={cn(
+                  'flex items-center gap-2 rounded-xl border border-border/70 bg-card/60 px-4 py-2',
+                  showPrompt && 'mt-2',
+                )}
+              >
+                <PenLine className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                <input
+                  value={bylineText}
+                  onChange={(e) => setBylineText(e.target.value)}
+                  onBlur={() => {
+                    if (bylineText !== bylineSavedRef.current) {
+                      bylineSavedRef.current = bylineText;
+                      void updateSettings({ bylineText });
+                    }
+                  }}
+                  maxLength={BYLINE_MAX}
+                  placeholder="署名：测评博主 @账号 #标签 …"
+                  aria-label="署名"
+                  className="w-full bg-transparent text-[12px] text-foreground/80 outline-none placeholder:text-muted-foreground/40"
+                />
+              </div>
+            )}
+          </div>
         )}
       </main>
       </div>

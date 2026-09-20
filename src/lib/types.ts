@@ -62,6 +62,12 @@ export function isAudioFile(name: string, mimeType?: string): boolean {
 /** 标题最大长度 */
 export const TITLE_MAX = 100;
 
+/** 提示词文本上限（录屏入镜用的提示词框，textarea 输入与 API 校验共用） */
+export const PROMPT_MAX = 2000;
+
+/** 署名文本上限（测评博主 / 账号 / tag 一行） */
+export const BYLINE_MAX = 200;
+
 /** 标题对齐方向（全局同步，存项目 settings） */
 export type TitleAlign = 'left' | 'center' | 'right';
 
@@ -234,6 +240,14 @@ export interface ManifestSettings {
   bgm?: FileMeta | null;
   /** 背景音乐音量（0-100）：缺省/非法回落 100 */
   bgmVolume?: number;
+  /** 提示词文本（矩阵下方提示词框内容，录屏入镜用）：缺省 = 空 */
+  promptText?: string;
+  /** 提示词框显隐：缺省/非法回落 false（隐藏） */
+  showPrompt?: boolean;
+  /** 署名文本（测评博主 / 账号 / tag）：缺省 = 空 */
+  bylineText?: string;
+  /** 署名行显隐：缺省/非法回落 false（隐藏） */
+  showByline?: boolean;
 }
 
 /**
@@ -365,6 +379,14 @@ export interface ProjectSettings {
   bgm: FileMeta | null;
   /** 背景音乐音量（0-100） */
   bgmVolume: number;
+  /** 提示词文本（矩阵下方提示词框内容，录屏入镜用） */
+  promptText: string;
+  /** 提示词框显隐（录屏时开启，录完可关） */
+  showPrompt: boolean;
+  /** 署名文本（测评博主 / 账号 / tag） */
+  bylineText: string;
+  /** 署名行显隐 */
+  showByline: boolean;
 }
 
 /** 项目（schema v2 顶层）：items 顺序即矩阵填充顺序 */
@@ -410,6 +432,11 @@ export function defaultSettings(): ProjectSettings {
     // 背景音乐默认未设置；音量默认 100%（配合全局静音可做"只留 BGM"的录屏预设）
     bgm: null,
     bgmVolume: 100,
+    // 提示词与署名默认空文本 + 隐藏：录屏前在「标题」菜单按需开启
+    promptText: '',
+    showPrompt: false,
+    bylineText: '',
+    showByline: false,
   };
 }
 

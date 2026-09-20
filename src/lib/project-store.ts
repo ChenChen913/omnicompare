@@ -15,6 +15,7 @@ import { Unzip, UnzipInflate } from 'fflate';
 import {
   BUNDLE_ASSET_EXTS,
   BUNDLE_ENTRY,
+  BYLINE_MAX,
   ContentItem,
   ContentKind,
   DEFAULT_PROJECT_ID,
@@ -30,6 +31,7 @@ import {
   MAX_IMAGE_SIZE,
   Project,
   ProjectSettings,
+  PROMPT_MAX,
   SLOT_MAX,
   SLOT_MIN,
   Slot,
@@ -226,6 +228,11 @@ function normalizeSettings(raw: unknown): ProjectSettings {
     bgm: normalizeFileMeta(r.bgm),
     // 背景音乐音量：非法/越界回落 100
     bgmVolume: clampInt(r.bgmVolume, 0, 100, base.bgmVolume),
+    // 提示词与署名（录屏入镜）：非字符串回落空文本，字符串截断到上限；显隐非法/缺失回落隐藏
+    promptText: typeof r.promptText === 'string' ? r.promptText.slice(0, PROMPT_MAX) : base.promptText,
+    showPrompt: typeof r.showPrompt === 'boolean' ? r.showPrompt : base.showPrompt,
+    bylineText: typeof r.bylineText === 'string' ? r.bylineText.slice(0, BYLINE_MAX) : base.bylineText,
+    showByline: typeof r.showByline === 'boolean' ? r.showByline : base.showByline,
   };
 }
 

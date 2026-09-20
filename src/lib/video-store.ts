@@ -11,6 +11,7 @@
 import { randomUUID } from 'crypto';
 import {
   ASPECT_RATIOS,
+  BYLINE_MAX,
   ContentItem,
   ContentKind,
   DEFAULT_PROJECT_ID,
@@ -20,6 +21,7 @@ import {
   ManifestSettings,
   PLAYBACK_RATES,
   ProjectSettings,
+  PROMPT_MAX,
   Slot,
   SLOT_MAX,
   TITLE_ALIGNS,
@@ -93,6 +95,11 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       // 背景音乐（文件元数据 + 音量）：视图携带才能在客户端回显与播放
       bgm: st.bgm,
       bgmVolume: st.bgmVolume,
+      // 提示词与署名（文本 + 显隐）：视图携带才能在 PATCH 响应中回显
+      promptText: st.promptText,
+      showPrompt: st.showPrompt,
+      bylineText: st.bylineText,
+      showByline: st.showByline,
     },
   };
 }
@@ -269,6 +276,24 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
     const v = Number(s.bgmVolume);
     if (Number.isFinite(v) && v >= 0 && v <= 100) out.bgmVolume = Math.round(v);
     else out.bgmVolume = base.bgmVolume;
+  }
+  if (s.promptText !== undefined) {
+    // 提示词文本：旧客户端不携带时保持原值；携带时截断到上限
+    out.promptText = typeof s.promptText === 'string' ? s.promptText.slice(0, PROMPT_MAX) : base.promptText;
+  }
+  if (s.showPrompt !== undefined) {
+    // 提示词框显隐：旧客户端不携带时保持原值；携带非法值时回落默认（隐藏）
+    if (typeof s.showPrompt === 'boolean') out.showPrompt = s.showPrompt;
+    else out.showPrompt = base.showPrompt;
+  }
+  if (s.bylineText !== undefined) {
+    // 署名文本：旧客户端不携带时保持原值；携带时截断到上限
+    out.bylineText = typeof s.bylineText === 'string' ? s.bylineText.slice(0, BYLINE_MAX) : base.bylineText;
+  }
+  if (s.showByline !== undefined) {
+    // 署名行显隐：旧客户端不携带时保持原值；携带非法值时回落默认（隐藏）
+    if (typeof s.showByline === 'boolean') out.showByline = s.showByline;
+    else out.showByline = base.showByline;
   }
   // 注意：s.bgm（背景音乐文件）不在 v1 清单写路径受理范围 —— 文件与设置必须在
   // 同一临界区由 /api/videos/bgm 路由变更（先删旧文件再写清单），此处静默忽略，

@@ -9,11 +9,13 @@ import { readProject, withProjectLock, writeProject } from '@/lib/project-store'
 import { resolveProjectId } from '@/lib/v2-project-param';
 import {
   ASPECT_RATIOS,
+  BYLINE_MAX,
   CUSTOM_RATIO_MAX,
   LETTERBOX_FILLS,
   PLAYBACK_RATES,
   AspectRatio,
   ProjectSettings,
+  PROMPT_MAX,
   SCALE_STEPS,
   TITLE_ALIGNS,
   TITLE_FONT_MAX,
@@ -219,6 +221,32 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         );
       }
       s.bgmVolume = Math.round(v);
+    }
+    if (body.promptText !== undefined) {
+      // 提示词文本（矩阵下方提示词框，录屏入镜用）：字符串截断到上限
+      if (typeof body.promptText !== 'string') {
+        return NextResponse.json({ error: '提示词需为字符串' }, { status: 400, headers: noStore });
+      }
+      s.promptText = body.promptText.slice(0, PROMPT_MAX);
+    }
+    if (body.showPrompt !== undefined) {
+      if (typeof body.showPrompt !== 'boolean') {
+        return NextResponse.json({ error: '提示词显隐需为布尔值' }, { status: 400, headers: noStore });
+      }
+      s.showPrompt = body.showPrompt;
+    }
+    if (body.bylineText !== undefined) {
+      // 署名文本（测评博主 / 账号 / tag）：字符串截断到上限
+      if (typeof body.bylineText !== 'string') {
+        return NextResponse.json({ error: '署名需为字符串' }, { status: 400, headers: noStore });
+      }
+      s.bylineText = body.bylineText.slice(0, BYLINE_MAX);
+    }
+    if (body.showByline !== undefined) {
+      if (typeof body.showByline !== 'boolean') {
+        return NextResponse.json({ error: '署名显隐需为布尔值' }, { status: 400, headers: noStore });
+      }
+      s.showByline = body.showByline;
     }
 
     project.updatedAt = new Date().toISOString();

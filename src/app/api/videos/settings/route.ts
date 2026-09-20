@@ -9,10 +9,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   ASPECT_RATIOS,
   AspectRatio,
+  BYLINE_MAX,
   CUSTOM_RATIO_MAX,
   LETTERBOX_FILLS,
   PLAYBACK_RATES,
   ProjectSettings,
+  PROMPT_MAX,
   SCALE_STEPS,
   TITLE_ALIGNS,
   TITLE_FONT_MAX,
@@ -41,7 +43,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown; bgmVolume?: unknown }
+    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown; bgmVolume?: unknown; promptText?: unknown; showPrompt?: unknown; bylineText?: unknown; showByline?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -172,6 +174,24 @@ export async function PATCH(req: NextRequest) {
       return badRequest('背景音乐音量需为 0-100 的数字');
     }
     patch.bgmVolume = Math.round(v);
+  }
+  if (body.promptText !== undefined) {
+    // 提示词文本（矩阵下方提示词框，录屏入镜用）：字符串截断到上限
+    if (typeof body.promptText !== 'string') return badRequest('提示词需为字符串');
+    patch.promptText = body.promptText.slice(0, PROMPT_MAX);
+  }
+  if (body.showPrompt !== undefined) {
+    if (typeof body.showPrompt !== 'boolean') return badRequest('提示词显隐需为布尔值');
+    patch.showPrompt = body.showPrompt;
+  }
+  if (body.bylineText !== undefined) {
+    // 署名文本（测评博主 / 账号 / tag）：字符串截断到上限
+    if (typeof body.bylineText !== 'string') return badRequest('署名需为字符串');
+    patch.bylineText = body.bylineText.slice(0, BYLINE_MAX);
+  }
+  if (body.showByline !== undefined) {
+    if (typeof body.showByline !== 'boolean') return badRequest('署名显隐需为布尔值');
+    patch.showByline = body.showByline;
   }
   if (Object.keys(patch).length === 0 && !clearCustomRatio) {
     return badRequest('至少提供一个待更新字段');
