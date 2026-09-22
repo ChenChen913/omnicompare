@@ -323,6 +323,16 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       }
       s.watermarkSpeed = body.watermarkSpeed as WatermarkSpeed;
     }
+    if (body.lockControls !== undefined) {
+      // 锁定视频控件（录屏模式）：专注模式下悬停不再显示控件
+      if (typeof body.lockControls !== 'boolean') {
+        return NextResponse.json(
+          { error: '锁定控件需为布尔值' },
+          { status: 400, headers: noStore },
+        );
+      }
+      s.lockControls = body.lockControls;
+    }
     if (body.watermarkFontWeight !== undefined) {
       // 水印字重：normal/bold
       if (body.watermarkFontWeight !== 'normal' && body.watermarkFontWeight !== 'bold') {

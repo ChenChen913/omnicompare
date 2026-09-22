@@ -285,6 +285,8 @@ export interface ManifestSettings {
   watermarkColor?: WatermarkColor;
   /** 水印巡游速度（slow/normal/fast）：缺省/非法回落 normal */
   watermarkSpeed?: WatermarkSpeed;
+  /** 锁定视频控件（录屏模式）：true 时专注模式下悬停不再显示进度条/播放键 */
+  lockControls?: boolean;
   /** 水印字重（normal/bold）：缺省/非法回落 bold */
   watermarkFontWeight?: 'normal' | 'bold';
   /** 水印不透明度（%，5-80）：缺省/非法回落 30 */
@@ -440,6 +442,8 @@ export interface ProjectSettings {
   watermarkColor: WatermarkColor;
   /** 水印巡游速度（slow/normal/fast） */
   watermarkSpeed: WatermarkSpeed;
+  /** 锁定视频控件（录屏模式） */
+  lockControls: boolean;
   /** 水印字重（normal/bold） */
   watermarkFontWeight: 'normal' | 'bold';
   /** 水印不透明度（%，5-80） */
@@ -501,6 +505,7 @@ export function defaultSettings(): ProjectSettings {
     watermarkFontFamily: 'default',
     watermarkColor: 'auto',
     watermarkSpeed: 'normal',
+    lockControls: false,
     watermarkFontWeight: 'bold',
     watermarkOpacity: 30,
   };

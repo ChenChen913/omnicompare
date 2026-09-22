@@ -118,6 +118,7 @@ export async function readManifest(projectId: string = DEFAULT_PROJECT_ID): Prom
       watermarkFontFamily: st.watermarkFontFamily,
       watermarkColor: st.watermarkColor,
       watermarkSpeed: st.watermarkSpeed,
+      lockControls: st.lockControls,
       watermarkFontWeight: st.watermarkFontWeight,
       watermarkOpacity: st.watermarkOpacity,
     },
@@ -349,6 +350,11 @@ function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings
     out.watermarkSpeed = WATERMARK_SPEEDS.includes(s.watermarkSpeed as WatermarkSpeed)
       ? (s.watermarkSpeed as WatermarkSpeed)
       : base.watermarkSpeed;
+  }
+  if (s.lockControls !== undefined) {
+    // 锁定视频控件（录屏模式）：旧客户端不携带时保持原值；携带非法值时回落默认（不锁定）
+    if (typeof s.lockControls === 'boolean') out.lockControls = s.lockControls;
+    else out.lockControls = base.lockControls;
   }
   if (s.watermarkFontWeight !== undefined) {
     // 水印字重：枚举校验，非法回落默认

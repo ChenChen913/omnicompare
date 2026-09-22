@@ -43,6 +43,8 @@ export interface VideoCardProps {
   /** 专注模式（studio/focus）：本卡视频播放中永不显示原生控件（录屏画面干净）；
    *  暂停时仍可 hover 调出操作。工作室模式不受限：hover 即显示 */
   focusMode?: boolean;
+  /** 锁定视频控件（录屏模式，顶栏「录屏」按钮）：true 时专注模式下 hover 也不显示控件 */
+  lockControls?: boolean;
   /** 留白填充模式（Step C 扩展 cover）：base = 底色吸收；blur = 同内容模糊放大铺底；
    *  cover = 铺满裁切（object-cover，无黑边）；仅视频/图片生效，HTML 豁免 */
   letterboxFill?: LetterboxFill;
@@ -100,6 +102,7 @@ export function VideoCard({
   showInfo = true,
   showIndex = true,
   focusMode = false,
+  lockControls = false,
   letterboxFill = 'base',
   htmlScale = 100,
   titleAlign = 'center',
@@ -404,8 +407,9 @@ export function VideoCard({
                 setVideoRef(index, el);
               }}
               src={src}
-              // 原生控件默认不挂载（录屏干净）；hover 才显示，专注模式播放中永不显示
-              controls={hovered && !(focusMode && selfPlaying)}
+              // 原生控件默认不挂载（录屏干净）；hover 才显示，专注模式播放中永不显示；
+              // 顶栏「录屏」开启（lockControls）后专注模式下悬停也锁定
+              controls={hovered && !lockControls && !(focusMode && selfPlaying)}
               playsInline
               preload="auto"
               loop={loop}

@@ -262,6 +262,7 @@ function normalizeSettings(raw: unknown): ProjectSettings {
     watermarkSpeed: WATERMARK_SPEEDS.includes(r.watermarkSpeed as WatermarkSpeed)
       ? (r.watermarkSpeed as WatermarkSpeed)
       : base.watermarkSpeed,
+    lockControls: typeof r.lockControls === 'boolean' ? r.lockControls : base.lockControls,
     watermarkFontWeight:
       r.watermarkFontWeight === 'normal' || r.watermarkFontWeight === 'bold'
         ? r.watermarkFontWeight

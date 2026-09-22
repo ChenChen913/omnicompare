@@ -40,6 +40,7 @@ import {
   Trash2,
   Type,
   UploadCloud,
+  Video,
   Volume2,
   Wand2,
 } from 'lucide-react';
@@ -303,6 +304,8 @@ export function VideoWall() {
   const [wmSpeed, setWmSpeed] = useState<WatermarkSpeed>('normal');
   const [wmWeight, setWmWeight] = useState<'normal' | 'bold'>('bold');
   const [wmOpacity, setWmOpacity] = useState(30);
+  /** 录屏模式（锁定控件）：开启后专注模式下悬停不再显示视频控件，随项目保存 */
+  const [lockControls, setLockControls] = useState(false);
   /** 水印文字编辑对话框：open 状态与草稿（确认才提交，取消/Esc 丢弃草稿）；
    *  enable：本次保存是否连带启用水印（顶栏按钮首次开启路径为 true，纯改文字为 false） */
   const [wmDialogOpen, setWmDialogOpen] = useState(false);
@@ -467,6 +470,7 @@ export function VideoWall() {
     setWmFamily(s?.watermarkFontFamily ?? d.watermarkFontFamily);
     setWmColor(s?.watermarkColor ?? d.watermarkColor);
     setWmSpeed(s?.watermarkSpeed ?? d.watermarkSpeed);
+    setLockControls(s?.lockControls ?? d.lockControls);
     setWmWeight(s?.watermarkFontWeight ?? d.watermarkFontWeight);
     setWmOpacity(s?.watermarkOpacity ?? d.watermarkOpacity);
   }, []);
@@ -748,6 +752,7 @@ export function VideoWall() {
         watermarkFontFamily: wmFamily,
         watermarkColor: wmColor,
         watermarkSpeed: wmSpeed,
+        lockControls,
         watermarkFontWeight: wmWeight,
         watermarkOpacity: wmOpacity,
       };
@@ -786,6 +791,7 @@ export function VideoWall() {
       if (partial.watermarkFontFamily !== undefined) setWmFamily(partial.watermarkFontFamily);
       if (partial.watermarkColor !== undefined) setWmColor(partial.watermarkColor);
       if (partial.watermarkSpeed !== undefined) setWmSpeed(partial.watermarkSpeed);
+      if (partial.lockControls !== undefined) setLockControls(partial.lockControls);
       if (partial.watermarkFontWeight !== undefined) setWmWeight(partial.watermarkFontWeight);
       if (partial.watermarkOpacity !== undefined) setWmOpacity(partial.watermarkOpacity);
       try {
@@ -829,12 +835,13 @@ export function VideoWall() {
         setWmFamily(prev.watermarkFontFamily);
         setWmColor(prev.watermarkColor);
         setWmSpeed(prev.watermarkSpeed);
+        setLockControls(prev.lockControls);
         setWmWeight(prev.watermarkFontWeight);
         setWmOpacity(prev.watermarkOpacity);
         toast.error('设置保存失败，请重试', { id: 'settings' });
       }
     },
-    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, bgmVolume, promptText, showPrompt, bylineText, showByline, wmShow, wmText, wmFontSize, wmFamily, wmColor, wmSpeed, wmWeight, wmOpacity, applySettings, withPid],
+    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, bgmVolume, promptText, showPrompt, bylineText, showByline, wmShow, wmText, wmFontSize, wmFamily, wmColor, wmSpeed, lockControls, wmWeight, wmOpacity, applySettings, withPid],
   );
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
@@ -2685,6 +2692,31 @@ export function VideoWall() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
+                {/* 录屏模式（锁定控件）：开启后专注模式下无论鼠标怎么悬停都不显示视频控件，
+                    录屏画面干净；工作室模式不受影响（仍可 hover 操作）。随项目保存。
+                    cyan 青色系与「音乐」琥珀、「水印」紫区分；状态点表示开启中 */}
+                <button
+                  type="button"
+                  onClick={() => void updateSettings({ lockControls: !lockControls })}
+                  className={cn(
+                    ctlBtn,
+                    'border-cyan-500/40 bg-cyan-500/10 text-cyan-600 hover:bg-cyan-500/20 dark:text-cyan-400',
+                  )}
+                  title={
+                    lockControls
+                      ? '录屏模式已开：专注模式下视频控件锁定，悬停不再显示（点击关闭）'
+                      : '录屏模式：专注模式下锁定视频控件，鼠标悬停不再显示进度条'
+                  }
+                  aria-label="录屏模式"
+                  aria-pressed={lockControls}
+                >
+                  <Video className="h-4 w-4" aria-hidden />
+                  <span>录屏</span>
+                  {lockControls && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 dark:bg-cyan-400" aria-hidden />
+                  )}
+                </button>
+
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <button
@@ -3229,6 +3261,7 @@ export function VideoWall() {
                     loop,
                     muted: mutedAll,
                     focusMode: mode === 'focus',
+                    lockControls,
                     highlighted: highlight === slot.index,
                     dragActive: gridDrag,
                     globalAspect: aspect,

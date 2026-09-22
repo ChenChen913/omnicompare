@@ -54,7 +54,7 @@ function badRequest(message: string) {
 
 export async function PATCH(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown; bgmVolume?: unknown; promptText?: unknown; showPrompt?: unknown; bylineText?: unknown; showByline?: unknown; showWatermark?: unknown; watermarkText?: unknown; watermarkFontSize?: unknown; watermarkFontFamily?: unknown; watermarkColor?: unknown; watermarkSpeed?: unknown; watermarkFontWeight?: unknown; watermarkOpacity?: unknown }
+    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown; bgmVolume?: unknown; promptText?: unknown; showPrompt?: unknown; bylineText?: unknown; showByline?: unknown; showWatermark?: unknown; watermarkText?: unknown; watermarkFontSize?: unknown; watermarkFontFamily?: unknown; watermarkColor?: unknown; watermarkSpeed?: unknown; lockControls?: unknown; watermarkFontWeight?: unknown; watermarkOpacity?: unknown }
     | null;
   if (!body) return badRequest('请求体格式错误');
 
@@ -242,6 +242,11 @@ export async function PATCH(req: NextRequest) {
       return badRequest('水印巡游速度需为 slow / normal / fast 之一');
     }
     patch.watermarkSpeed = body.watermarkSpeed as WatermarkSpeed;
+  }
+  if (body.lockControls !== undefined) {
+    // 锁定视频控件（录屏模式）：专注模式下悬停不再显示控件
+    if (typeof body.lockControls !== 'boolean') return badRequest('锁定控件需为布尔值');
+    patch.lockControls = body.lockControls;
   }
   if (body.watermarkFontWeight !== undefined) {
     // 水印字重：normal/bold
