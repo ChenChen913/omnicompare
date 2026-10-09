@@ -400,10 +400,12 @@ export const VideoCard = memo(function VideoCard({
               {index + 1}
             </span>
 
-            {/* 内容头像/图标：圆角矩形自适应框——高度随标题字号（48~96px），宽度按图片原始宽高比
-                自动伸展 + object-contain 完整显示不裁切（各元素偏大的图/宽幅 logo 不再被圆形裁掉），
-                超宽图由 max-width（208px 且不超标题带一半）封顶让位标题；未设置时显示方形上传占位，
-                下拉菜单提供 上传/替换/移除。图标依附内容（空位不显示头像），替换内容不清除图标（模型头像跨视频保留） */}
+            {/* 内容头像/图标：高度随标题字号（48~96px），宽度按图片原始宽高比自动伸展 +
+                object-contain 完整显示不裁切（各元素偏大的图/宽幅 logo 不再被裁掉），超宽图由
+                max-width（208px 且不超标题带一半）封顶让位标题；
+                有图时无底色/无描边/无裁切——与卡片背景融为一体（外表零线条约束，用户明确要求）；
+                未上传时才显示带框占位（保留可点击的上传可供性），下拉菜单提供 上传/替换/移除。
+                图标依附内容（空位不显示头像），替换内容不清除图标（模型头像跨视频保留） */}
             {(video || htmlFile || imageFile) && onIconFiles && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -412,7 +414,15 @@ export const VideoCard = memo(function VideoCard({
                     disabled={uploading}
                     title={iconFile ? '内容图标：点击替换或移除' : '上传内容图标/头像（展示在标题左侧）'}
                     aria-label={`位置 ${index + 1} 的图标，${iconFile ? '点击替换或移除' : '点击上传'}`}
-                    className="group relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted ring-1 ring-border transition-shadow hover:ring-2 hover:ring-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 dark:ring-white/15 dark:hover:ring-primary/70"
+                    className={cn(
+                      'group relative flex shrink-0 items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50',
+                      iconRenderable
+                        ? // 有图：透明底、零描边、零裁切——与背景融为一体；hover 以降不透明度作
+                          // 可点提示（非线条反馈）；rounded-lg 仅为键盘焦点环形状，不裁图
+                          'rounded-lg bg-transparent transition-opacity hover:opacity-75'
+                        : // 占位（未上传）：带底色+细描边的实体占位，保留可点击可供性
+                          'overflow-hidden rounded-xl bg-muted ring-1 ring-border transition-shadow hover:ring-2 hover:ring-primary/60 dark:ring-white/15 dark:hover:ring-primary/70',
+                    )}
                     style={{
                       height: iconBoxSize,
                       maxWidth: `min(${ICON_BOX_MAX_W}px, 50%)`,

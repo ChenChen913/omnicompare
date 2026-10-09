@@ -75,6 +75,26 @@ fi
 agent-browser wait --load networkidle > /dev/null 2>&1
 agent-browser wait 1500 > /dev/null 2>&1
 
+# 2.1 应用就绪轮询（dev 冷编译竞态防线）：样式表生效 + 头像按钮出现的时刻才算就绪。
+#     此前仅靠 networkidle+固定等待，冷编译时断言会在 CSS/水合落地前执行——
+#     内联样式断言（字号/字重/尺寸）恰好全过、样式表断言（ring 阴影）与菜单点击全挂
+READY=0
+for i in $(seq 1 30); do
+  V=$(agent-browser eval "(() => {
+    const a = document.querySelector('article');
+    const btn = document.querySelector('article button[aria-label*=\\\"图标\\\"]');
+    if (!a || !btn) return 'no';
+    const ok = getComputedStyle(a).borderRadius !== '0px' && getComputedStyle(btn).boxShadow !== 'none';
+    return ok ? 'ready' : 'no';
+  })()" 2>/dev/null | tr -d '"' | tr -d '\\')
+  if [ "$V" = "ready" ]; then READY=1; break; fi
+  sleep 1
+done
+if [ "$READY" != "1" ]; then
+  echo "[e2e] 应用就绪轮询超时（样式表未生效）"; agent-browser errors 2>/dev/null | head -5
+fi
+echo "[e2e] app ready=$READY (polled ${i}s)"
+
 # ---------- 3. premium bar 结构断言（eval 返回 JSON-in-string，先去转义再匹配）----------
 RAW=$(agent-browser eval "(() => {
   const card = document.querySelector('article');
@@ -82,6 +102,7 @@ RAW=$(agent-browser eval "(() => {
   const ta = card.querySelector('textarea');
   const barTa = bar ? bar.querySelector('textarea') : null;
   const avatarBtn = bar ? bar.querySelector('button[aria-label*=\"图标\"]') : null;
+  const abs = avatarBtn ? getComputedStyle(avatarBtn) : null;
   const inlineBadge = bar ? bar.querySelector('span.rounded-md') : null;
   const absBadge = card.querySelector('span.absolute.left-2\\\\.5');
   const content = card.querySelector('div[style*=\"aspect-ratio\"]');
@@ -93,6 +114,7 @@ RAW=$(agent-browser eval "(() => {
     textareaInBar: !!barTa,
     avatarPlaceholder: !!avatarBtn,
     avatarSize: avatarBtn ? avatarBtn.getBoundingClientRect().width : null,
+    placeholderFramed: abs ? abs.boxShadow !== 'none' : null,
     inlineBadgeInBar: !!inlineBadge,
     noAbsBadge: !absBadge,
     fontWeight: st ? st.fontWeight : null,
@@ -106,6 +128,7 @@ echo "$R" | grep -q '"barExists":true'          && ok "高级标题带存在"   
 echo "$R" | grep -q '"textareaInBar":true'       && ok "标题输入框在带内"               || bad "标题输入框在带内"
 echo "$R" | grep -q '"avatarPlaceholder":true'  && ok "头像占位按钮存在"               || bad "头像占位按钮存在"
 echo "$R" | grep -q '"avatarSize":48'           && ok "头像占位 48px（自适应下限）"      || bad "头像占位 48px ($R)"
+echo "$R" | grep -q '"placeholderFramed":true'  && ok "占位态保留可点击边框"             || bad "占位态保留可点击边框 ($R)"
 echo "$R" | grep -q '"inlineBadgeInBar":true'   && ok "编号角标内联在带内"             || bad "编号角标内联在带内"
 echo "$R" | grep -q '"noAbsBadge":true'         && ok "绝对定位角标已隐藏"             || bad "绝对定位角标已隐藏"
 echo "$R" | grep -q '"fontWeight":"800"'        && ok "字重 800 生效"                  || bad "字重 800 生效 ($R)"
@@ -154,13 +177,18 @@ R=$(agent-browser eval "(() => {
   const r = img ? img.getBoundingClientRect() : null;
   return JSON.stringify({ iconImg: !!img, src: img ? img.src : null, w: r ? r.width : null,
     h: r ? r.height : null, fit: st ? st.objectFit : null, radius: bst ? bst.borderRadius : null,
-    isCircle: bst ? (bst.borderRadius === '9999px' || bst.borderRadius === '50%') : null });
+    isCircle: bst ? (bst.borderRadius === '9999px' || bst.borderRadius === '50%') : null,
+    noShadow: bst ? bst.boxShadow : null,
+    noBg: bst ? bst.backgroundColor : null,
+    noFrame: bst ? (bst.boxShadow === 'none' && (bst.backgroundColor === 'rgba(0, 0, 0, 0)' || bst.backgroundColor === 'transparent')) : null });
 })()" 2>/dev/null | sed 's/\\//g')
 echo "  $R"
 echo "$R" | grep -q '"iconImg":true'       && ok "头像图片已渲染（UI 上传链路通）"   || bad "头像图片已渲染 ($R)"
 echo "$R" | grep -q '/api/files/'         && ok "头像 src 指向 /api/files"           || bad "头像 src 指向 /api/files"
 echo "$R" | grep -q '"fit":"contain"'    && ok "object-contain 完整显示不裁切"     || bad "object-contain 完整显示 ($R)"
-echo "$R" | grep -q '"isCircle":false'   && ok "圆角矩形展示（非圆形裁切）"         || bad "圆角矩形展示 ($R)"
+echo "$R" | grep -q '"isCircle":false'   && ok "非圆形裁切（无圆形约束）"           || bad "非圆形裁切 ($R)"
+echo "$R" | grep -q '"noShadow":"none"' && ok "无阴影环/描边（零线条包围）"       || bad "无阴影环/描边 ($R)"
+echo "$R" | grep -q '"noFrame":true'    && ok "有图态零边框（无描边+透明底）"     || bad "有图态零边框 ($R)"
 # 宽高比断言：素材 200x120（5:3 ≈ 1.667），渲染应保持原始比例（高度 48、宽度 ≈ 80）
 IMG_W=$(echo "$R" | grep -o '"w":[0-9.]*' | cut -d: -f2)
 IMG_H=$(echo "$R" | grep -o '"h":[0-9.]*' | cut -d: -f2)
