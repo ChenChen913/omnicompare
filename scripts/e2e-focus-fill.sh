@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# 专注模式满幅与 autoFit 回涨端到端验证（单次调用内完成 server + 浏览器操作）
-# 背景（用户实测 2026-10-09）：6 视频 2×3 在专注模式「聚在中间没有展开」。两个根因——
-#   A. 主区容器 max-w-[1800px] 在专注模式未解除：大屏（>1850px）墙被卡在 1752px 居中留大边
-#   B. autoFit 求解器「只缩不放」：视口变小收缩后，再放大视口墙永久卡死在旧收缩值
-# 覆盖：满幅断言（1920 / 2560 大屏）/ 恰好同屏（无纵向溢出）/ 矮窗收缩仍然生效 /
-#       resize 回涨（旧版卡死处）/ studio 容器上限不受影响 / 控制台零错误 / 恢复默认布局
+# 专注模式全面适配端到端验证 v2（单次调用内完成 server + 素材 + 浏览器操作）
+# 背景：满幅修复后视频墙与右下角两个悬浮按钮（从头循环/退出）重叠；
+#       且适配须覆盖任意视频数量，不能只针对 6 个。
+# 覆盖矩阵（全部断言：墙与按钮区无重叠 / 全入镜无纵向溢出 / 高利用 ≥0.85）：
+#   A. 数量矩阵 12/9/8/6(2×3 与 3×2)/5/4(2×2 与 1×4)/3/2(1×2 与 2×1)/1 @1920×1080 16:9
+#   B. 比例矩阵 9:16 / 1:1 @6 视频 2×3 @1920×1080
+#   C. 视口矩阵 2560×1440 / 1366×768 / 矮窗 1280×600 收缩 / 回涨 1920（防「只缩不放」回归）
+#      + 2560 满宽 ≥2400（防 max-w 上限回归）+ studio 退出后上限不泄漏
+#   D. 控制台零错误 + 测试项目隔离（自建自删，不碰用户项目）+ default 完好性核验
 set -u
 cd "$(dirname "$0")/.."
 BASE="http://127.0.0.1:3000"
 PASS=0; FAIL=0
+SHOTS=/home/z/my-project/download
 
-ok()   { PASS=$((PASS+1)); echo "PASS  $1"; }
-bad()  { FAIL=$((FAIL+1)); echo "FAIL  $1"; }
+ok()  { PASS=$((PASS+1)); echo "PASS  $1"; }
+bad() { FAIL=$((FAIL+1)); echo "FAIL  $1"; }
 
 # ---------- 0. server ----------
 pkill -f "next dev" 2>/dev/null
@@ -39,17 +43,50 @@ cleanup_server() {
 trap cleanup_server EXIT
 echo "[e2e] server ready (own=$OWN)"
 
-# ---------- 1. 还原被测项目的原始终态并布置用户场景：6 内容位 2×3（当前项目视频少于 6 也成立——
-#     空位卡片渲染同尺寸 aspect 盒，墙几何与实卡一致）----------
-curl -s -X PATCH -H 'Content-Type: application/json' \
-  -d '{"count":2,"rows":1,"cols":2}' $BASE/api/videos/layout -o /dev/null
-curl -s -X PATCH -H 'Content-Type: application/json' \
-  -d '{"count":6,"rows":2,"cols":3}' $BASE/api/videos/layout -o /dev/null
-curl -s -X PATCH -H 'Content-Type: application/json' \
-  -d '{"autoFit":true}' $BASE/api/videos/settings -o /dev/null
-echo "[e2e] 已布置 6 位 2×3 + autoFit"
+# ---------- 0.5 素材：ffmpeg 自包含生成 12 个 1s 小视频 ----------
+TMPD=.tmp-focus
+rm -rf $TMPD && mkdir -p $TMPD
+for i in $(seq 0 11); do
+  ffmpeg -y -f lavfi -i "testsrc2=size=320x180:rate=24:duration=1" \
+    -pix_fmt yuv420p "$TMPD/v$i.mp4" > /dev/null 2>&1
+done
+[ -s "$TMPD/v0.mp4" ] || { echo "[e2e] ffmpeg 素材生成失败"; exit 1; }
+echo "[e2e] 12 个测试视频已生成"
 
-# ---------- 2. 打开页面（关旧实例防跨重启陈旧标签；open 后校验 URL，最多 5 次）----------
+# ---------- 1. 专属测试项目（幂等清理历史孤儿；不碰用户项目）----------
+for OLD in $(curl -s $BASE/api/projects | python3 -c "
+import json,sys
+for p in json.load(sys.stdin):
+    if p.get('name') == 'e2e-focus-fill': print(p['id'])
+" 2>/dev/null); do
+  curl -s -X DELETE "$BASE/api/projects/$OLD" -o /dev/null
+done
+EID=$(curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"e2e-focus-fill"}' $BASE/api/projects \
+  | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+[ -n "$EID" ] || { echo "[e2e] 测试项目创建失败"; exit 1; }
+echo "[e2e] 测试项目 $EID"
+
+# ---------- 2. 先扩位到 12 再上传（单次上传严格校验 slot < slotCount，
+#     不先扩位则 slot≥1 全部 400）+ 设置 16:9 / autoFit ----------
+curl -s -X PATCH -H 'Content-Type: application/json' \
+  -d '{"count":12,"rows":3,"cols":4}' \
+  "$BASE/api/videos/layout?project=$EID" -o /dev/null
+for i in $(seq 0 11); do
+  curl -s -X POST -F "file=@$TMPD/v$i.mp4;type=video/mp4" -F "slot=$i" \
+    "$BASE/api/videos/upload?project=$EID" -o /dev/null
+done
+curl -s -X PATCH -H 'Content-Type: application/json' \
+  -d '{"aspectRatio":"16:9","autoFit":true,"showTitles":true,"showInfo":true}' \
+  "$BASE/api/videos/settings?project=$EID" -o /dev/null
+N=$(curl -s "$BASE/api/videos?project=$EID" | python3 -c "
+import json,sys
+m = json.load(sys.stdin)
+print(sum(1 for s in m['slots'] if s.get('video') or s.get('html') or s.get('image')))" 2>/dev/null)
+echo "[e2e] 已上传 $N/12 个视频"
+[ "$N" = "12" ] && ok "12 个测试视频全部上传成功" || bad "测试视频上传 ($N/12)"
+
+# ---------- 3. 打开页面 + localStorage 切到测试项目 ----------
 agent-browser close > /dev/null 2>&1
 OPENED=0
 for i in 1 2 3 4 5; do
@@ -58,43 +95,37 @@ for i in 1 2 3 4 5; do
   U=$(agent-browser get url 2>/dev/null)
   if echo "$U" | grep -q "127.0.0.1:3000"; then OPENED=1; break; fi
 done
-if [ "$OPENED" != "1" ]; then
-  echo "[e2e] 页面未能打开"; cleanup_server; exit 1
-fi
+[ "$OPENED" = "1" ] || { echo "[e2e] 页面未能打开"; exit 1; }
 agent-browser wait --load networkidle > /dev/null 2>&1
 agent-browser wait 1500 > /dev/null 2>&1
+agent-browser eval "localStorage.setItem('omnicompare:project', '$EID'); localStorage.setItem('omnicompare:mode', 'studio'); 'set'" > /dev/null 2>&1
+agent-browser reload > /dev/null 2>&1
+agent-browser wait --load networkidle > /dev/null 2>&1
+agent-browser wait 2000 > /dev/null 2>&1
 
-# 2.1 就绪轮询（dev 冷编译竞态防线）：网格 + 6 张卡片 + 专注按钮都在才算就绪；
-#     超时整页重开再试三轮（next build 覆盖 .next 后 dev 冷启动可能 >30s）
-READY=0
-for ATTEMPT in 1 2 3; do
-  for i in $(seq 1 25); do
-    V=$(agent-browser eval "(() => {
-      const grid = document.querySelector('main .grid');
-      const cards = document.querySelectorAll('article');
-      const btn = document.querySelector('button[aria-label=\"进入专注模式\"]');
-      return (grid && cards.length >= 6 && btn) ? 'ready' : 'no';
-    })()" 2>/dev/null | tr -d '"' | tr -d '\\')
-    if [ "$V" = "ready" ]; then READY=1; break; fi
-    sleep 1
+# ---------- 通用工具 ----------
+# 应用就绪轮询（dev 冷编译竞态防线）：卡片数到位 + 顶栏专注按钮在
+wait_ready() {
+  local WANT=$1
+  for ATTEMPT in 1 2 3; do
+    for i in $(seq 1 25); do
+      V=$(agent-browser eval "(() => {
+        const cards = document.querySelectorAll('article').length;
+        const btn = document.querySelector('button[aria-label=\"进入专注模式\"]');
+        return (cards === $WANT && btn) ? 'ready' : 'no';
+      })()" 2>/dev/null | tr -d '"\\')
+      [ "$V" = "ready" ] && return 0
+      sleep 1
+    done
+    agent-browser reload > /dev/null 2>&1
+    agent-browser wait --load networkidle > /dev/null 2>&1
+    agent-browser wait 2000 > /dev/null 2>&1
   done
-  [ "$READY" = "1" ] && break
-  echo "[e2e] 就绪轮询超时（第 ${ATTEMPT} 轮），重开页面重试…"
-  agent-browser close > /dev/null 2>&1
-  agent-browser open $BASE/ > /dev/null 2>&1
-  sleep 2
-  agent-browser wait --load networkidle > /dev/null 2>&1
-  agent-browser wait 1500 > /dev/null 2>&1
-done
-if [ "$READY" != "1" ]; then
-  echo "[e2e] 三轮重开后仍未就绪，继续执行（后续断言预计失败）"
-fi
-echo "[e2e] app ready=$READY"
-
-# 等待 autoFit 求解器收敛（rAF 多轮迭代）：初始 1s 让 resize/RO 先落地，
-# 再连续两次读数一致或 6s 超时
+  return 1
+}
+# autoFit 收敛等待：初始 1.2s 让 resize/RO 落地，随后连续两次读数一致
 wait_settle() {
-  sleep 1
+  sleep 1.2
   for i in $(seq 1 12); do
     W1=$(agent-browser eval "Math.round(document.querySelector('main .grid').getBoundingClientRect().width)" 2>/dev/null | tr -d '"\\')
     sleep 0.5
@@ -103,109 +134,172 @@ wait_settle() {
   done
   return 0
 }
+enter_focus() { agent-browser eval "document.querySelector('button[aria-label=\"进入专注模式\"]').click(); 'ok'" > /dev/null 2>&1; }
+exit_focus()  { agent-browser eval "document.querySelector('button[aria-label=\"退出专注模式\"]').click(); 'ok'" > /dev/null 2>&1; }
 
-# 采集墙体几何（视口宽/主区宽/墙宽高/左右边距/纵向溢出/满宽标记）
+# 采集专注态几何（含按钮区重叠判定与利用率）
+# 返回字段：cards/overlap/gapR/gapB/wallW/wallH/utilW/utilH/vOverflow/fullyVisible
 probe() {
   agent-browser eval "(() => {
     const wall = document.querySelector('main .grid');
+    const zone = document.querySelector('[data-focus-buttons]');
     const main = document.querySelector('main');
-    if (!wall || !main) return JSON.stringify({ error: 'no-wall' });
+    const exitBtn = document.querySelector('button[aria-label=\"退出专注模式\"]');
+    if (!wall || !zone || !main || !exitBtn) return JSON.stringify({ error: 'missing' });
     const wr = wall.getBoundingClientRect();
+    const zr = zone.getBoundingClientRect();
     const mr = main.getBoundingClientRect();
     const ms = getComputedStyle(main);
-    const inner = mr.width - (parseFloat(ms.paddingLeft)||0) - (parseFloat(ms.paddingRight)||0);
+    const padT = parseFloat(ms.paddingTop)||0, padB = parseFloat(ms.paddingBottom)||0;
+    const padL = parseFloat(ms.paddingLeft)||0, padR = parseFloat(ms.paddingRight)||0;
+    const innerW = mr.width - padL - padR, innerH = mr.height - padT - padB;
+    const M = 8;
+    const overlap = wr.right > zr.left - M && wr.left < zr.right + M && wr.bottom > zr.top - M && wr.top < zr.bottom + M;
     return JSON.stringify({
-      vp: innerWidth, vpH: innerHeight,
-      mainW: Math.round(mr.width),
+      cards: document.querySelectorAll('article').length,
+      overlap,
+      gapR: Math.round(zr.left - wr.right), gapB: Math.round(zr.top - wr.bottom),
       wallW: Math.round(wr.width), wallH: Math.round(wr.height),
-      leftGap: Math.round(wr.left - mr.left), rightGap: Math.round(mr.right - wr.right),
-      fillRatio: inner > 0 ? +(wr.width / inner).toFixed(3) : null,
-      styleW: wall.style.width || '(none)',
+      utilW: +(wr.width / innerW).toFixed(3), utilH: +(wr.height / innerH).toFixed(3),
       vOverflow: document.documentElement.scrollHeight - innerHeight,
-      bottomInView: wr.bottom <= innerHeight
+      fullyVisible: wr.bottom <= innerHeight && wr.top >= 0
     });
   })()" 2>/dev/null | sed 's/\\//g'
 }
+parse() { echo "$1" | grep -o "\"$2\":[^,}]*" | cut -d: -f2- | tr -d '"'; }
 
-enter_focus() {
-  agent-browser eval "document.querySelector('button[aria-label=\"进入专注模式\"]').click(); 'ok'" > /dev/null 2>&1
+# 布局 + 重载 + 进专注 + 采集 + 四项断言 + 可选截图
+# 参数：COUNT ROWS COLS LABEL [SHOT]
+run_case() {
+  local COUNT=$1 ROWS=$2 COLS=$3 LABEL=$4 SHOT=$5
+  curl -s -X PATCH -H 'Content-Type: application/json' \
+    -d "{\"count\":$COUNT,\"rows\":$ROWS,\"cols\":$COLS}" \
+    "$BASE/api/videos/layout?project=$EID" -o /dev/null
+  # 模式规范化：应用会持久化 UI 偏好（含专注态）到 localStorage，上一用例
+  # 结束时留在 focus → 刷新后直接以专注态启动（无「进入专注模式」按钮，
+  # 就绪轮询假失败）——刷新前写回 studio 保证以工作台态启动
+  agent-browser eval "localStorage.setItem('omnicompare:mode', 'studio'); 'ok'" > /dev/null 2>&1
+  agent-browser reload > /dev/null 2>&1
+  agent-browser wait --load networkidle > /dev/null 2>&1
+  agent-browser wait 1200 > /dev/null 2>&1
+  wait_ready "$COUNT" || bad "[$LABEL] 应用就绪"
+  agent-browser set viewport 1920 1080 > /dev/null 2>&1
+  enter_focus
+  wait_settle
+  local R; R=$(probe)
+  local CARDS OV VIS VO UW UH
+  CARDS=$(parse "$R" cards); OV=$(parse "$R" overlap)
+  VIS=$(parse "$R" fullyVisible); VO=$(parse "$R" vOverflow)
+  UW=$(parse "$R" utilW); UH=$(parse "$R" utilH)
+  echo "  [$LABEL] $R"
+  [ "$CARDS" = "$COUNT" ] && ok "[$LABEL] 卡片数 $COUNT" || bad "[$LABEL] 卡片数 ($CARDS≠$COUNT)"
+  [ "$OV" = "false" ] && ok "[$LABEL] 墙与按钮区无重叠" || bad "[$LABEL] 墙与按钮区无重叠 ($R)"
+  { [ "$VIS" = "true" ] && [ "$VO" = "0" ]; } && ok "[$LABEL] 全入镜无纵向溢出" || bad "[$LABEL] 全入镜 ($R)"
+  if [ -n "$UW" ] && awk "BEGIN{exit !($UW >= 0.85 || $UH >= 0.85)}" 2>/dev/null; then
+    ok "[$LABEL] 高利用（utilW=$UW utilH=$UH）"
+  else
+    bad "[$LABEL] 高利用 (utilW=$UW utilH=$UH)"
+  fi
+  [ -n "$SHOT" ] && agent-browser screenshot "$SHOTS/$SHOT.png" > /dev/null 2>&1
 }
-exit_focus() {
-  agent-browser eval "document.querySelector('button[aria-label=\"退出专注模式\"]').click(); 'ok'" > /dev/null 2>&1
-}
 
-# ---------- 3. 1920×1080 常见全屏：进入专注 → 墙满幅 + 全入镜 ----------
-agent-browser set viewport 1920 1080 > /dev/null 2>&1
-enter_focus; wait_settle
-R=$(probe); echo "  1920 focus: $R"
-FR=$(echo "$R" | grep -o '"fillRatio":[0-9.]*' | cut -d: -f2)
-[ -n "$FR" ] && awk "BEGIN{exit !($FR >= 0.95)}" && ok "1920 满幅（墙 ≥95% 主区宽）" || bad "1920 满幅 (fillRatio=$FR)"
-L=$(echo "$R" | grep -o '"leftGap":[0-9-]*' | cut -d: -f2)
-[ -n "$L" ] && [ "$L" -le 24 ] 2>/dev/null && ok "1920 左侧无大空白（≤24px）" || bad "1920 左侧无大空白 (leftGap=$L)"
-echo "$R" | grep -q '"vOverflow":0' && ok "1920 恰好同屏（无纵向溢出）" || bad "1920 恰好同屏 ($R)"
-echo "$R" | grep -q '"bottomInView":true' && ok "1920 墙底全入镜" || bad "1920 墙底全入镜 ($R)"
+# ---------- 4. Phase A：数量矩阵（降序，缩减只删本测试项目的视频）----------
+echo "[e2e] Phase A 数量矩阵 @1920×1080 16:9"
+run_case 12 3 4 "N12"   focus-N12
+run_case 9  3 3 "N9"    focus-N9
+run_case 8  2 4 "N8"    ""
+run_case 6  2 3 "N6-23" focus-N6-23
+run_case 6  3 2 "N6-32" focus-N6-32
+run_case 5  2 3 "N5"    ""
+run_case 4  2 2 "N4-22" ""
+run_case 4  1 4 "N4-14" ""
+run_case 3  1 3 "N3"    ""
+run_case 2  1 2 "N2-12" ""
+run_case 2  2 1 "N2-21" ""
+run_case 1  1 1 "N1"    focus-N1
 
-# ---------- 4. 2560×1440 大屏（用户复现场景）：满幅不被 1800 上限卡住 ----------
+# ---------- 5. Phase B：比例矩阵（先扩回 6 位再补传，2×3）----------
+echo "[e2e] Phase B 比例矩阵 @6 视频 2×3 @1920×1080"
+curl -s -X PATCH -H 'Content-Type: application/json' \
+  -d '{"count":6,"rows":2,"cols":3}' \
+  "$BASE/api/videos/layout?project=$EID" -o /dev/null
+for i in $(seq 1 5); do
+  curl -s -X POST -F "file=@$TMPD/v$i.mp4;type=video/mp4" -F "slot=$i" \
+    "$BASE/api/videos/upload?project=$EID" -o /dev/null
+done
+run_case 6 2 3 "A916-pre" ""
+curl -s -X PATCH -H 'Content-Type: application/json' \
+  -d '{"aspectRatio":"9:16"}' "$BASE/api/videos/settings?project=$EID" -o /dev/null
+run_case 6 2 3 "A916" focus-A916
+curl -s -X PATCH -H 'Content-Type: application/json' \
+  -d '{"aspectRatio":"1:1"}' "$BASE/api/videos/settings?project=$EID" -o /dev/null
+run_case 6 2 3 "A11" focus-A11
+curl -s -X PATCH -H 'Content-Type: application/json' \
+  -d '{"aspectRatio":"16:9"}' "$BASE/api/videos/settings?project=$EID" -o /dev/null
+run_case 6 2 3 "C16x9" ""
+
+# ---------- 6. Phase C：视口矩阵（16:9 6×2×3，resize 触发 RO 无需重载）----------
+echo "[e2e] Phase C 视口矩阵"
 agent-browser set viewport 2560 1440 > /dev/null 2>&1
 wait_settle
-R=$(probe); echo "  2560 focus: $R"
-W=$(echo "$R" | grep -o '"wallW":[0-9]*' | cut -d: -f2)
-[ -n "$W" ] && [ "$W" -ge 2400 ] 2>/dev/null && ok "2560 墙宽 ≥2400（解除 1800 上限）" || bad "2560 墙宽 ≥2400 (wallW=$W)"
-L=$(echo "$R" | grep -o '"leftGap":[0-9-]*' | cut -d: -f2)
-[ -n "$L" ] && [ "$L" -le 24 ] 2>/dev/null && ok "2560 左侧无大空白（≤24px）" || bad "2560 左侧无大空白 (leftGap=$L)"
-echo "$R" | grep -q '"vOverflow":0' && ok "2560 恰好同屏（无纵向溢出）" || bad "2560 恰好同屏 ($R)"
+R=$(probe); echo "  [V2560] $R"
+W=$(parse "$R" wallW); OV=$(parse "$R" overlap); VO=$(parse "$R" vOverflow)
+[ -n "$W" ] && [ "$W" -ge 2400 ] 2>/dev/null && ok "2560 满宽 ≥2400（max-w 上限无回归）" || bad "2560 满宽 (wallW=$W)"
+[ "$OV" = "false" ] && ok "2560 无重叠" || bad "2560 无重叠 ($R)"
+[ "$VO" = "0" ] && ok "2560 全入镜" || bad "2560 全入镜 ($R)"
+agent-browser screenshot "$SHOTS/focus-V2560.png" > /dev/null 2>&1
 
-# ---------- 5. 矮窗 1280×600：高度溢出 → 收缩到恰好同屏（收缩行为保持）----------
+agent-browser set viewport 1366 768 > /dev/null 2>&1
+wait_settle
+R=$(probe); echo "  [V1366] $R"
+OV=$(parse "$R" overlap); VO=$(parse "$R" vOverflow)
+[ "$OV" = "false" ] && ok "1366 无重叠" || bad "1366 无重叠 ($R)"
+[ "$VO" = "0" ] && ok "1366 全入镜" || bad "1366 全入镜 ($R)"
+
 agent-browser set viewport 1280 600 > /dev/null 2>&1
 wait_settle
-R=$(probe); echo "  1280x600 focus: $R"
-FR=$(echo "$R" | grep -o '"fillRatio":[0-9.]*' | cut -d: -f2)
-[ -n "$FR" ] && awk "BEGIN{exit !($FR < 1.0)}" && ok "矮窗收缩生效（fillRatio<1，autoFit 求解）" || bad "矮窗收缩生效 (fillRatio=$FR)"
-echo "$R" | grep -q '"vOverflow":0' && ok "矮窗恰好同屏（无纵向溢出）" || bad "矮窗恰好同屏 ($R)"
-SHRUNK_W=$(echo "$R" | grep -o '"wallW":[0-9]*' | cut -d: -f2)
-SHRUNK_H=$(echo "$R" | grep -o '"wallH":[0-9]*' | cut -d: -f2)
+R=$(probe); echo "  [V1280x600] $R"
+OV=$(parse "$R" overlap); VO=$(parse "$R" vOverflow); UW=$(parse "$R" utilW); SW=$(parse "$R" wallW)
+[ "$OV" = "false" ] && ok "矮窗无重叠" || bad "矮窗无重叠 ($R)"
+[ "$VO" = "0" ] && ok "矮窗恰好同屏" || bad "矮窗恰好同屏 ($R)"
+[ -n "$UW" ] && awk "BEGIN{exit !($UW < 1.0)}" && ok "矮窗收缩生效（utilW<1）" || bad "矮窗收缩 (utilW=$UW)"
+agent-browser screenshot "$SHOTS/focus-V1280x600.png" > /dev/null 2>&1
 
-# ---------- 6. resize 回涨（旧版「只缩不放」卡死处）：矮窗 → 大屏，墙必须长回满幅 ----------
-agent-browser set viewport 2560 1440 > /dev/null 2>&1
+agent-browser set viewport 1920 1080 > /dev/null 2>&1
 wait_settle
-R=$(probe); echo "  regrow 2560 focus: $R"
-W=$(echo "$R" | grep -o '"wallW":[0-9]*' | cut -d: -f2)
-[ -n "$W" ] && [ "$W" -ge 2400 ] 2>/dev/null && ok "resize 回涨：墙长回 ≥2400（不再卡死在 $SHRUNK_W）" || bad "resize 回涨 (wallW=$W, 收缩态=$SHRUNK_W)"
-H=$(echo "$R" | grep -o '"wallH":[0-9]*' | cut -d: -f2)
-[ -n "$H" ] && [ "$H" -gt "$SHRUNK_H" ] 2>/dev/null && ok "回涨后墙高随之放大（$SHRUNK_H → $H）" || bad "回涨后墙高放大 ($SHRUNK_H → $H)"
+R=$(probe); echo "  [V1920-regrow] $R"
+W=$(parse "$R" wallW); OV=$(parse "$R" overlap)
+[ -n "$W" ] && [ -n "$SW" ] && [ "$W" -gt "$SW" ] 2>/dev/null \
+  && ok "resize 回涨（$SW → $W，无「只缩不放」回归）" || bad "resize 回涨 ($SW → $W)"
+[ "$OV" = "false" ] && ok "回涨后无重叠" || bad "回涨后无重叠 ($R)"
 
-# ---------- 7. 退出专注 → studio 容器上限不受影响（max-w 未泄漏到工作台）----------
+# ---------- 7. studio 上限不泄漏（2560 退出专注）----------
+agent-browser set viewport 2560 1440 > /dev/null 2>&1
 exit_focus
 agent-browser wait 1500 > /dev/null 2>&1
 R=$(agent-browser eval "(() => {
   const main = document.querySelector('main');
-  const wall = document.querySelector('main .grid');
-  const mr = main.getBoundingClientRect();
-  const wr = wall ? wall.getBoundingClientRect() : null;
-  return JSON.stringify({ mainW: Math.round(mr.width), wallW: wr ? Math.round(wr.width) : null, vp: innerWidth });
+  return JSON.stringify({ mainW: Math.round(main.getBoundingClientRect().width), vp: innerWidth });
 })()" 2>/dev/null | sed 's/\\//g')
-echo "  studio 2560: $R"
-MW=$(echo "$R" | grep -o '"mainW":[0-9]*' | cut -d: -f2)
-[ -n "$MW" ] && [ "$MW" -le 1850 ] 2>/dev/null && ok "studio 主区仍受 max-w 约束（≤1850，无满幅泄漏）" || bad "studio 主区 max-w (mainW=$MW)"
+MW=$(parse "$R" mainW)
+echo "  [studio] $R"
+[ -n "$MW" ] && [ "$MW" -le 1850 ] 2>/dev/null && ok "studio 主区仍受 max-w 约束（无满幅泄漏）" || bad "studio 主区 max-w (mainW=$MW)"
 
-# ---------- 8. 视觉截图（修复后大屏专注满幅）----------
-mkdir -p /home/z/my-project/download
-enter_focus; agent-browser wait 1200 > /dev/null 2>&1
-agent-browser set viewport 1920 1080 > /dev/null 2>&1
-wait_settle
-agent-browser screenshot /home/z/my-project/download/focus-fill-fixed.png > /dev/null 2>&1
-echo "[e2e] 截图已保存 download/focus-fill-fixed.png"
-
-# ---------- 9. 浏览器控制台零错误 ----------
+# ---------- 8. 浏览器控制台零错误 ----------
 ERRS=$(agent-browser errors 2>/dev/null | rg -c "error|Error" || echo 0)
 [ "$ERRS" = "0" ] && ok "浏览器零控制台错误" || bad "浏览器控制台错误 ($ERRS)"
 
-# ---------- 10. 恢复默认布局 + 关闭 ----------
-exit_focus
-agent-browser wait 800 > /dev/null 2>&1
-curl -s -X PATCH -H 'Content-Type: application/json' \
-  -d '{"count":2,"rows":1,"cols":2}' $BASE/api/videos/layout -o /dev/null
+# ---------- 9. 清理：还原 default + 删测试项目 + 完好性核验 ----------
+agent-browser eval "localStorage.setItem('omnicompare:project', 'default'); localStorage.setItem('omnicompare:mode', 'studio'); 'set'" > /dev/null 2>&1
 agent-browser close > /dev/null 2>&1
+curl -s -X DELETE "$BASE/api/projects/$EID" -o /dev/null
+R=$(curl -s "$BASE/api/videos" | python3 -c "
+import json,sys
+m = json.load(sys.stdin)
+filled = sum(1 for s in m['slots'] if s.get('video') or s.get('html') or s.get('image'))
+print(f\"{len(m['slots'])}:{filled}\")" 2>/dev/null)
+[ "$R" = "2:2" ] && ok "default 项目完好（2 位 2 内容，零污染）" || bad "default 项目完好 ($R)"
+rm -rf $TMPD
 if [ "${OWN:-0}" = "1" ]; then kill $SERVER_PID 2>/dev/null; fi
 
 echo

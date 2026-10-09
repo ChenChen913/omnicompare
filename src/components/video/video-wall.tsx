@@ -118,16 +118,18 @@ export function VideoWall() {
  *  URL 快照携带编辑时刻的项目 id——防抖窗口内切换项目后，正常提交与卸载补提交
  *  （keepalive）都写回编辑它时所属的项目，而不是卸载时的当前项目 */
   const titlePending = useRef<Map<number, { title: string; url: string }>>(new Map());
-  /* 自动适配视口测量锚点：顶栏 / 主体 / 网格 / 提示词栏 / 水印层 */
+  /* 自动适配视口测量锚点：顶栏 / 主体 / 网格 / 提示词栏 / 水印层 / 专注模式按钮区 */
   const headerRef = useRef<HTMLElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const wallRef = useRef<HTMLDivElement | null>(null);
   const promptBarRef = useRef<HTMLDivElement | null>(null);
   const wmLayerRef = useRef<HTMLDivElement | null>(null);
+  /** 专注模式右下角悬浮按钮区（autoFit 为其预留空间，防视频墙重叠遮挡） */
+  const focusBtnsRef = useRef<HTMLDivElement | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** refs 聚合为稳定对象（useAutoFit 的 effect 依赖） */
   const fitRefs = useMemo(
-    () => ({ headerRef, mainRef, wallRef, promptBarRef, wmLayerRef }),
+    () => ({ headerRef, mainRef, wallRef, promptBarRef, wmLayerRef, focusBtnsRef }),
     [],
   );
 
@@ -1088,28 +1090,35 @@ export function VideoWall() {
         />
       )}
 
-      {/* 专注模式操作区：右下角竖排圆形按钮（从头循环播放在上，退出在下） */}
+      {/* 专注模式操作区：右下角竖排圆形按钮（从头循环播放在上，退出在下）。
+          容器化 + data-focus-buttons：autoFit 求解器测量其包围盒，为按钮预留空间
+          （墙的可用宽/高在按钮区方向退让，防重叠遮挡）；pointer-events-none 容器
+          不拦截两按钮间隙处的点击（透传给下方视频），按钮自身恢复 auto */}
       {mode === 'focus' && (
-        <button
-          type="button"
-          onClick={handleLoopShow}
-          title="从头循环播放：视频与背景音乐同步开始并循环"
-          aria-label="从头循环播放"
-          className="fixed bottom-[4.75rem] right-5 z-50 flex h-11 w-11 items-center justify-center rounded-full border border-primary/40 bg-primary/15 text-primary opacity-40 shadow-lg backdrop-blur transition-all hover:bg-primary/25 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        <div
+          ref={focusBtnsRef}
+          data-focus-buttons
+          className="pointer-events-none fixed bottom-5 right-5 z-50 flex flex-col gap-3"
         >
-          <Play className="h-[18px] w-[18px] fill-current" aria-hidden />
-        </button>
-      )}
-      {mode === 'focus' && (
-        <button
-          type="button"
-          onClick={() => setMode('studio')}
-          title="退出专注模式，返回工作台"
-          aria-label="退出专注模式"
-          className="fixed bottom-5 right-5 z-50 flex h-11 w-11 items-center justify-center rounded-full border border-border/60 bg-card/70 text-muted-foreground opacity-40 shadow-lg backdrop-blur transition-all hover:bg-card hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-        >
-          <Shrink className="h-[18px] w-[18px]" aria-hidden />
-        </button>
+          <button
+            type="button"
+            onClick={handleLoopShow}
+            title="从头循环播放：视频与背景音乐同步开始并循环"
+            aria-label="从头循环播放"
+            className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border border-primary/40 bg-primary/15 text-primary opacity-40 shadow-lg backdrop-blur transition-all hover:bg-primary/25 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
+            <Play className="h-[18px] w-[18px] fill-current" aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('studio')}
+            title="退出专注模式，返回工作台"
+            aria-label="退出专注模式"
+            className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border border-border/60 bg-card/70 text-muted-foreground opacity-40 shadow-lg backdrop-blur transition-all hover:bg-card hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
+            <Shrink className="h-[18px] w-[18px]" aria-hidden />
+          </button>
+        </div>
       )}
 
       {/* 拖拽导入的浮动提示（专注模式下顶栏已隐藏，提示贴近页顶） */}

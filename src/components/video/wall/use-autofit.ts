@@ -9,6 +9,7 @@
  * 非线性（标题换行/单卡覆盖比例）2-6 轮收敛；步长限制 ±35% 防过渡态读数过冲，
  * 目标上限 = 容器宽：墙比容器矮即满宽（100%），比视口高则缩到恰好同屏；
  * 视口变大时允许逐轮回涨（防历史收缩值卡死在屏幕中间）。
+ * 专注模式另为右下角悬浮按钮区预留空间（右侧/底部两条避让路径取优，详见 measure 内注释）。
  * 应用 grid width = w*px —— 纯布局变化：
  * 文字重新排版保持清晰、dnd 拖拽坐标零偏差、无需外层高度补偿。
  * 触发：RO 观察 grid（内容/布局变化）与 main（容器宽变化，如侧栏开合）+ window resize；
@@ -48,6 +49,8 @@ export interface AutoFitRefs {
   promptBarRef: React.RefObject<HTMLDivElement | null>;
   /** 水印蒙版层 */
   wmLayerRef: React.RefObject<HTMLDivElement | null>;
+  /** 专注模式右下角悬浮按钮区（focus 模式为其预留空间，防视频墙重叠遮挡） */
+  focusBtnsRef: React.RefObject<HTMLDivElement | null>;
 }
 
 export function useAutoFit(args: {
@@ -72,7 +75,7 @@ export function useAutoFit(args: {
   const fitIterRef = useRef(0);
 
   useLayoutEffect(() => {
-    const { headerRef, mainRef, wallRef, promptBarRef } = refs;
+    const { headerRef, mainRef, wallRef, promptBarRef, focusBtnsRef } = refs;
     const applyFitWidth = (v: number | null) => {
       if (fitWidthRef.current !== v) {
         fitWidthRef.current = v;
@@ -118,19 +121,54 @@ export function useAutoFit(args: {
       const w = rect.width;
       const h = rect.height;
       if (w <= 0 || h <= 0 || containerW <= 0 || avail <= 0) return;
+      /* 专注模式按钮区预留：墙的包围盒不得与右下角悬浮按钮（从头循环/退出）相交。
+       * 两条避让路径各转成一个「宽度上限」，取较宽者（代价更小、墙更大）：
+       * - 右侧避让（宽/横版墙更优）：墙右缘退到按钮区左缘外——高向不受限，
+       *   横版 2×3 实测仅让出 ~5% 宽；
+       * - 底部避让（矮墙更优）：墙底缘退到按钮区顶缘外（换算成宽度上限，
+       *   经当前实测宽高比投影）——短墙本来就够不到按钮区，此上限自然放宽到不生效。
+       * 墙始终垂直居中（my-auto），两条路径都以内容盒中心为锚换算，确定性收敛不震荡。
+       * studio 模式无按钮（ref 空）不生效，效果与旧版一致 */
+      let containerWEff = containerW;
+      if (mode === 'focus') {
+        const zone = focusBtnsRef.current?.getBoundingClientRect();
+        if (zone && zone.width > 0 && zone.height > 0) {
+          const mainRect = main.getBoundingClientRect();
+          const padT = parseFloat(ms.paddingTop) || 0;
+          const padB = parseFloat(ms.paddingBottom) || 0;
+          const padL = parseFloat(ms.paddingLeft) || 0;
+          const padR = parseFloat(ms.paddingRight) || 0;
+          const centerX = mainRect.left + padL + (mainRect.width - padL - padR) / 2;
+          const centerY = mainRect.top + padT + (mainRect.height - padT - padB) / 2;
+          const CLEAR = 16;
+          /* 右侧避让：墙右缘 ≤ 按钮左缘 - CLEAR（垂直居中：宽 = 2×(右缘上限-中心)） */
+          const wRightCap = 2 * (zone.left - CLEAR - centerX);
+          /* 底部避让：墙高 ≤ 2×(按钮顶缘 - CLEAR - 中心)，按当前实测宽高比换算宽度上限 */
+          const hMax = 2 * (zone.top - CLEAR - centerY);
+          const wBottomCap = h > 0 ? w * (hMax / h) : Number.POSITIVE_INFINITY;
+          containerWEff = Math.min(containerW, Math.max(wRightCap, wBottomCap));
+          /* 极窄视口保护：预留后上限不坠归零，至少保留 240 下限的求解空间 */
+          if (containerWEff <= 0) containerWEff = Math.min(containerW, 240);
+        }
+      }
       /* 迭代上限：连续多轮仍有变化时强制静止（极端布局保护，正常 2-7 轮收敛后自动复位） */
       if (fitIterRef.current >= FIT_MAX_ITERATIONS) return;
       const raw = w * (avail / h);
       /* 步长限制 ±35%：防过渡态（字体加载中/图片占位）读数过冲导致来回震荡。
-       * 目标 = 恰好同屏的等比宽度，上限钳到容器宽（满宽即自然上限）。
+       * 目标 = 恰好同屏的等比宽度，上限钳到有效容器宽（满宽/按钮预留后的上限）；
        * 允许放大（w*1.35 每轮）：视口变大（拉高窗口 / 换大屏 / 进入专注模式腾出
        * 顶栏侧栏空间）后墙能重新长回满宽——此前「只缩不放」会把历史收缩值
        * 永久卡死在屏幕中间（用户实测：小窗收缩 1012px → 拉大窗口仍停 1012px） */
-      const target = Math.min(containerW, Math.max(w * 0.65, raw));
+      const target = Math.min(containerWEff, Math.max(w * 0.65, raw));
       const stepped = Math.min(target, w * 1.35);
       if (!Number.isFinite(stepped) || stepped <= 0) return;
-      /* 达到容器宽 = 满宽即可容纳，回到 100%；下限 240 保证可读性 */
-      commit(stepped >= containerW - 1 ? null : Math.max(240, Math.round(stepped)));
+      /* 达到真实容器宽 = 无预留、满宽即可容纳，回到 100%；有按钮预留时提交
+       * 具体像素宽（提交 null 会退回满宽，下一轮重叠→再收缩，形成震荡）；下限 240 保证可读性 */
+      commit(
+        stepped >= containerW - 1 && containerWEff >= containerW - 1
+          ? null
+          : Math.max(240, Math.round(stepped)),
+      );
     };
     const schedule = () => {
       if (raf === 0) raf = window.requestAnimationFrame(measure);
