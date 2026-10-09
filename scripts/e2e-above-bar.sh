@@ -75,39 +75,54 @@ fi
 agent-browser wait --load networkidle > /dev/null 2>&1
 agent-browser wait 1500 > /dev/null 2>&1
 
-# 2.1 应用就绪轮询（dev 冷编译竞态防线）：样式表生效 + 头像按钮出现的时刻才算就绪。
-#     此前仅靠 networkidle+固定等待，冷编译时断言会在 CSS/水合落地前执行——
-#     内联样式断言（字号/字重/尺寸）恰好全过、样式表断言（ring 阴影）与菜单点击全挂
+# 2.1 应用就绪轮询（dev 冷编译竞态防线）：样式表生效才算就绪。
+#     判据用编号角标（bg-black/60）而非头像按钮——头像有图态无 ring，残留图标会让
+#     轮询永远失败；角标在任意图标状态下都存在且依赖样式表。
+#     轮询超时则整页重开再试（next build 覆盖 .next 后 dev 冷启动可能 >30s，
+#     半加载页面上断言全是假失败：尺寸漂移、Radix 未水合菜单点不开）
 READY=0
-for i in $(seq 1 30); do
-  V=$(agent-browser eval "(() => {
-    const a = document.querySelector('article');
-    const btn = document.querySelector('article button[aria-label*=\\\"图标\\\"]');
-    if (!a || !btn) return 'no';
-    const ok = getComputedStyle(a).borderRadius !== '0px' && getComputedStyle(btn).boxShadow !== 'none';
-    return ok ? 'ready' : 'no';
-  })()" 2>/dev/null | tr -d '"' | tr -d '\\')
-  if [ "$V" = "ready" ]; then READY=1; break; fi
-  sleep 1
+for ATTEMPT in 1 2 3; do
+  for i in $(seq 1 25); do
+    V=$(agent-browser eval "(() => {
+      const a = document.querySelector('article');
+      const badge = document.querySelector('article [data-above-title-bar] span.rounded-md');
+      if (!a || !badge) return 'no';
+      const bg = getComputedStyle(badge).backgroundColor;
+      const ok = getComputedStyle(a).borderRadius !== '0px' && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent';
+      return ok ? 'ready' : 'no';
+    })()" 2>/dev/null | tr -d '"' | tr -d '\\')
+    if [ "$V" = "ready" ]; then READY=1; break; fi
+    sleep 1
+  done
+  [ "$READY" = "1" ] && break
+  echo "[e2e] 就绪轮询超时（第 ${ATTEMPT} 轮），重开页面重试…"
+  agent-browser errors 2>/dev/null | head -3
+  agent-browser close > /dev/null 2>&1
+  agent-browser open $BASE/ > /dev/null 2>&1
+  sleep 2
+  agent-browser wait --load networkidle > /dev/null 2>&1
+  agent-browser wait 1500 > /dev/null 2>&1
 done
 if [ "$READY" != "1" ]; then
-  echo "[e2e] 应用就绪轮询超时（样式表未生效）"; agent-browser errors 2>/dev/null | head -5
+  echo "[e2e] 三轮重开后仍未就绪，继续执行（后续断言预计失败）"
 fi
-echo "[e2e] app ready=$READY (polled ${i}s)"
+echo "[e2e] app ready=$READY"
 
 # ---------- 3. premium bar 结构断言（eval 返回 JSON-in-string，先去转义再匹配）----------
 RAW=$(agent-browser eval "(() => {
   const card = document.querySelector('article');
-  const bar = card.querySelector('.rounded-xl');
+  const bar = card.querySelector('[data-above-title-bar]');
   const ta = card.querySelector('textarea');
   const barTa = bar ? bar.querySelector('textarea') : null;
   const avatarBtn = bar ? bar.querySelector('button[aria-label*=\"图标\"]') : null;
   const abs = avatarBtn ? getComputedStyle(avatarBtn) : null;
+  const bst = bar ? getComputedStyle(bar) : null;
   const inlineBadge = bar ? bar.querySelector('span.rounded-md') : null;
   const absBadge = card.querySelector('span.absolute.left-2\\\\.5');
   const content = card.querySelector('div[style*=\"aspect-ratio\"]');
   const st = ta ? getComputedStyle(ta) : null;
   const barRect = bar ? bar.getBoundingClientRect() : null;
+  const cardRect = card ? card.getBoundingClientRect() : null;
   const cRect = content ? content.getBoundingClientRect() : null;
   return JSON.stringify({
     barExists: !!bar,
@@ -115,6 +130,10 @@ RAW=$(agent-browser eval "(() => {
     avatarPlaceholder: !!avatarBtn,
     avatarSize: avatarBtn ? avatarBtn.getBoundingClientRect().width : null,
     placeholderFramed: abs ? abs.boxShadow !== 'none' : null,
+    barNoFrame: bst ? ((bst.borderStyle === 'none' || parseFloat(bst.borderTopWidth) === 0) && (bst.backgroundColor === 'rgba(0, 0, 0, 0)' || bst.backgroundColor === 'transparent')) : null,
+    barFlushLeft: barRect && cardRect ? (barRect.left - cardRect.left) <= 8 : null,
+    barFlushTop: barRect && cardRect ? (barRect.top - cardRect.top) <= 8 : null,
+    gapTight: barRect && cRect ? (cRect.top - barRect.bottom) <= 12 : null,
     inlineBadgeInBar: !!inlineBadge,
     noAbsBadge: !absBadge,
     fontWeight: st ? st.fontWeight : null,
@@ -124,8 +143,12 @@ RAW=$(agent-browser eval "(() => {
 })()" 2>/dev/null)
 R=$(echo "$RAW" | sed 's/\\//g')
 echo "  $R"
-echo "$R" | grep -q '"barExists":true'          && ok "高级标题带存在"                 || bad "高级标题带存在"
-echo "$R" | grep -q '"textareaInBar":true'       && ok "标题输入框在带内"               || bad "标题输入框在带内"
+echo "$R" | grep -q '"barExists":true'          && ok "above 标题行存在"                 || bad "above 标题行存在"
+echo "$R" | grep -q '"textareaInBar":true'       && ok "标题输入框在行内"               || bad "标题输入框在行内"
+echo "$R" | grep -q '"barNoFrame":true'          && ok "标题行零边框（融入卡片背景）"     || bad "标题行零边框 ($R)"
+echo "$R" | grep -q '"barFlushLeft":true'        && ok "左缘贴边（≤8px 微边距）"         || bad "左缘贴边 ($R)"
+echo "$R" | grep -q '"barFlushTop":true'         && ok "顶缘贴边（≤8px 微边距）"         || bad "顶缘贴边 ($R)"
+echo "$R" | grep -q '"gapTight":true'            && ok "与内容区间距紧凑（≤12px）"       || bad "与内容区间距紧凑 ($R)"
 echo "$R" | grep -q '"avatarPlaceholder":true'  && ok "头像占位按钮存在"               || bad "头像占位按钮存在"
 echo "$R" | grep -q '"avatarSize":48'           && ok "头像占位 48px（自适应下限）"      || bad "头像占位 48px ($R)"
 echo "$R" | grep -q '"placeholderFramed":true'  && ok "占位态保留可点击边框"             || bad "占位态保留可点击边框 ($R)"
@@ -133,7 +156,7 @@ echo "$R" | grep -q '"inlineBadgeInBar":true'   && ok "编号角标内联在带�
 echo "$R" | grep -q '"noAbsBadge":true'         && ok "绝对定位角标已隐藏"             || bad "绝对定位角标已隐藏"
 echo "$R" | grep -q '"fontWeight":"800"'        && ok "字重 800 生效"                  || bad "字重 800 生效 ($R)"
 echo "$R" | grep -q '"fontSize":"32px"'         && ok "字号 32px 生效"                 || bad "字号 32px 生效 ($R)"
-echo "$R" | grep -q '"barAboveContent":true'    && ok "标题带位于内容上方"             || bad "标题带位于内容上方"
+echo "$R" | grep -q '"barAboveContent":true'    && ok "标题行位于内容上方"             || bad "标题行位于内容上方"
 
 # ---------- 4. 头像菜单（上传/替换/移除选项存在；首轮点击偶发竞态未展开时重试）----------
 AV_REF=$(agent-browser snapshot -i 2>/dev/null | grep "的图标" | grep -o 'ref=e[0-9]*' | cut -d= -f2 | head -1)
@@ -170,7 +193,7 @@ R=$(agent-browser eval "(async () => {
 echo "  set: $R"
 agent-browser wait 2500 > /dev/null 2>&1
 R=$(agent-browser eval "(() => {
-  const img = document.querySelector('article .rounded-xl button img');
+  const img = document.querySelector('article [data-above-title-bar] button img');
   const btn = img ? img.closest('button') : null;
   const st = img ? getComputedStyle(img) : null;
   const bst = btn ? getComputedStyle(btn) : null;

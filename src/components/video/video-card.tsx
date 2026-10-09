@@ -373,18 +373,15 @@ export const VideoCard = memo(function VideoCard({
         </span>
       )}
 
-      {/* above 高级标题带（titlePosition='above'）：内容上方独立标题区，不遮内容、不占内容比例。
+      {/* above 标题行（titlePosition='above'）：内容上方独立标题区，不遮内容、不占内容比例。
           排行榜式布局：内联序号角标（兼拖拽手柄）+ 内容头像（可上传/替换/移除）+ 标题输入区；
-          视觉：圆角卡片式条体（渐变底 + 细描边 + 暗色内高光），深浅主题各自成立。
+          视觉：无框贴边——不做卡片式条体（无底色/描边/圆角/阴影），整行与卡片背景融为
+          一体；外缘仅留 6px 微边距（再小会被卡片 rounded-2xl 圆角裁切角标，用户要求
+          边缘距离尽量小、视觉与内容区对齐）。data-above-title-bar 为 e2e 稳定选择钩子。
           头像仅在有内容时展示（图标依附于内容，空位隐藏）；标题空位也渲染（与 below 一致的编辑可供性） */}
       {aboveMode && (
-        <div className="w-full shrink-0 px-2.5 pt-2.5 sm:px-3 sm:pt-3">
-          <div
-            className={cn(
-              'flex w-full items-center gap-2.5 rounded-xl border border-border/80 bg-gradient-to-b from-muted/70 to-muted/10 px-2.5 py-2 shadow-sm',
-              'dark:border-white/10 dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.07),0_2px_10px_-2px_rgba(0,0,0,0.4)]',
-            )}
-          >
+        <div className="w-full shrink-0 px-1.5 pb-1 pt-1.5">
+          <div data-above-title-bar className="flex w-full items-center gap-2">
             {/* 内联序号角标（above 模式专用）：兼作拖拽排序手柄，样式与非 above 的绝对定位角标一致 */}
             <span
               {...(dragHandle ?? {})}
