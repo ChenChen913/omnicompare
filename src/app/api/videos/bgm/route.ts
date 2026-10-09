@@ -3,7 +3,9 @@
  * POST /api/videos/bgm[?project=id]  multipart: file —— 上传/替换背景音乐（每项目一轨）
  * DELETE /api/videos/bgm[?project=id] —— 移除背景音乐（连同文件一起删除）
  *
- * 文件与设置必须在同一互斥临界区内变更（先删旧文件再写清单），杜绝磁盘孤儿文件；
+ * 文件与设置必须在同一互斥临界区内变更，并遵守「先写清单、后删文件」铁律
+ * （与其余全部写路径一致）：写清单失败时磁盘上文件未删，最坏情况是可被
+ * 清理的孤儿，而不是引用已删文件的死链音轨；上传失败时新落盘文件回滚删除。
  * 音频不进内容条目（items），只作为项目级全局音轨存于 settings.bgm。
  * 文件本体存 data/projects/[id]/files/，经既有 /api/files/[name] 路由流式服务（支持 Range）。
  */
@@ -54,7 +56,8 @@ export async function POST(req: NextRequest) {
 
   return withProjectLock(p.id, async () => {
     const project = await readProject(p.id);
-    // 替换即删旧：新文件落盘成功后才删（saveFile 失败会抛出，旧文件得以保留）
+    // 新文件先落盘（uuid 不碰撞）；随后「先写清单、后删旧文件」：
+    // 写清单失败时旧文件仍在（重试时再次清理），新文件回滚删除，不留死链
     let meta;
     try {
       meta = await saveFile(p.id, file, 'audio');
@@ -62,10 +65,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '音频保存失败，请重试' }, { status: 500, headers: noStore });
     }
     const previous = project.settings.bgm;
-    if (previous) await deleteFile(p.id, previous.filename);
     project.settings.bgm = meta;
     project.updatedAt = new Date().toISOString();
-    await writeProject(project);
+    try {
+      await writeProject(project);
+    } catch (err) {
+      // 清单写失败：回滚新文件，旧文件与旧清单保持一致
+      await deleteFile(p.id, meta.filename).catch(() => {});
+      throw err;
+    }
+    if (previous) await deleteFile(p.id, previous.filename).catch(() => {});
     return NextResponse.json(await readManifest(p.id), { status: 201, headers: noStore });
   });
 }
@@ -78,10 +87,11 @@ export async function DELETE(req: NextRequest) {
     const project = await readProject(p.id);
     const previous = project.settings.bgm;
     if (previous) {
-      await deleteFile(p.id, previous.filename);
+      // 先写清单、后删文件：写清单失败时文件未删，最多是可清理的孤儿而非死链
       project.settings.bgm = null;
       project.updatedAt = new Date().toISOString();
       await writeProject(project);
+      await deleteFile(p.id, previous.filename).catch(() => {});
     }
     return NextResponse.json(await readManifest(p.id), { headers: noStore });
   });

@@ -92,6 +92,14 @@ export async function GET(
 
   const rangeHeader = _req.headers.get('range');
   if (rangeHeader) {
+    // 多范围请求（bytes=0-1,5-6）：RFC 9110 允许服务器不逐段满足，回退 200 全量
+    // （视频 seek 只发单范围，多范围来自罕见客户端）；单范围解析失败仍是 416
+    if (rangeHeader.includes(',')) {
+      return new NextResponse(toWebStream(createReadStream(resolved.absolutePath)), {
+        status: 200,
+        headers: { ...baseHeaders, 'Content-Length': String(size) },
+      });
+    }
     const parsed = parseRange(rangeHeader, size);
     if (parsed === 'invalid') {
       return new NextResponse(null, {

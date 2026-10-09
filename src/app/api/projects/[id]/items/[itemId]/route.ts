@@ -31,15 +31,18 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
     if (typeof body.title === 'string') {
       item.title = body.title.trim().slice(0, TITLE_MAX);
+      item.updatedAt = new Date().toISOString();
     }
     if (body.aspectRatio !== undefined) {
       if (body.aspectRatio === null) {
         item.aspectRatio = null;
+        item.updatedAt = new Date().toISOString();
       } else if (
         typeof body.aspectRatio === 'string' &&
         (ASPECT_RATIOS as readonly string[]).includes(body.aspectRatio)
       ) {
         item.aspectRatio = body.aspectRatio as AspectRatio;
+        item.updatedAt = new Date().toISOString();
       } else {
         return NextResponse.json({ error: '无效的比例值' }, { status: 400, headers: noStore });
       }
@@ -56,8 +59,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       const others = project.items.filter((it) => it.id !== itemId);
       others.splice(body.order, 0, item);
       project.items = others.map((it, i) => (it.order === i ? it : { ...it, order: i }));
-    } else {
-      item.updatedAt = new Date().toISOString();
+      /* 纯位置调整不刷新 updatedAt（重排是布局意图，不是内容修改） */
     }
 
     project.updatedAt = new Date().toISOString();
