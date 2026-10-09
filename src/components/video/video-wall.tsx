@@ -113,8 +113,10 @@ export function VideoWall() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const bgmInputRef = useRef<HTMLInputElement>(null);
   const titleTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-  /** 在途未提交的标题（slot → 最新文本）：卸载时用 keepalive 补提交，避免最后一次编辑丢失 */
-  const titlePending = useRef<Map<number, string>>(new Map());
+  /** 在途未提交的标题（slot → 最新文本 + 编辑时刻的提交 URL）：
+ *  URL 快照携带编辑时刻的项目 id——防抖窗口内切换项目后，正常提交与卸载补提交
+ *  （keepalive）都写回编辑它时所属的项目，而不是卸载时的当前项目 */
+  const titlePending = useRef<Map<number, { title: string; url: string }>>(new Map());
   /* 自动适配视口测量锚点：顶栏 / 主体 / 网格 / 提示词栏 / 水印层 */
   const headerRef = useRef<HTMLElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
@@ -183,9 +185,6 @@ export function VideoWall() {
         : `${url}${url.includes('?') ? '&' : '?'}project=${encodeURIComponent(projectId)}`,
     [projectId],
   );
-  /** withPid 镜像 ref：卸载 cleanup 里读最新项目 id（闭包会捕获首渲染的 DEFAULT） */
-  const withPidRef = useRef(withPid);
-  withPidRef.current = withPid;
 
   /* ---------- 设置域（服务端 Project.settings 为唯一事实源，蓝图 §7/§15） ---------- */
   const { settings, applySettings, patchLocal, updateSettings, savePromptIfChanged, saveBylineIfChanged } =
@@ -361,7 +360,9 @@ export function VideoWall() {
     });
   }, [settings.loop, settings.mutedAll, settings.rate, slots]);
 
-  /* 卸载时清理计时器；在途标题用 keepalive 补提交（防抖窗口内关页会丢最后一次编辑） */
+  /* 卸载时清理计时器；在途标题用 keepalive 补提交（防抖窗口内关页会丢最后一次编辑）。
+     提交 URL 用 pending 里存的编辑时刻快照：卸载前哪怕已切到其他项目，
+     标题仍写回编辑它时所属的项目（与防抖提交同一语义） */
   useEffect(() => {
     const timers = titleTimers.current;
     const pending = titlePending.current;
@@ -369,8 +370,8 @@ export function VideoWall() {
     return () => {
       timers.forEach((t) => clearTimeout(t));
       if (hlTimer) clearTimeout(hlTimer);
-      pending.forEach((title, index) => {
-        fetch(withPidRef.current('/api/videos'), {
+      pending.forEach(({ title, url }, index) => {
+        fetch(url, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ slot: index, title }),
@@ -665,14 +666,15 @@ export function VideoWall() {
       setSlots((prev) => prev.map((s) => (s.index === index ? { ...s, title } : s)));
       const timer = titleTimers.current.get(index);
       if (timer) clearTimeout(timer);
-      titlePending.current.set(index, title);
+      // 提交 URL 随文本一并快照：防抖提交与卸载补提交走同一 URL
+      // （防抖窗口内切换项目后，标题仍写进编辑它时所属的项目，而不是新项目）
+      const url = withPid('/api/videos');
+      titlePending.current.set(index, { title, url });
       titleTimers.current.set(
         index,
         setTimeout(() => {
           titlePending.current.delete(index);
-          // 闭包捕获提交时刻的 withPid（项目 id）：防抖窗口内切换项目后，
-          // 标题仍会写进编辑它时所属的项目，而不是新项目
-          fetch(withPid('/api/videos'), {
+          fetch(url, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ slot: index, title }),
@@ -928,7 +930,11 @@ export function VideoWall() {
   const setVideoRef = useCallback((index: number, el: HTMLVideoElement | null) => {
     videoRefs.current[index] = el;
   }, []);
-  /** 所有卡片共享的 props（与具体槽位无关）：useMemo 保证引用稳定 */
+  /** 所有卡片共享的 props（与具体槽位无关）：useMemo 保证引用稳定。
+   *  依赖按字段细化而非整个 settings 对象：水印（wm 前缀各字段）、提示词/署名
+   *  （prompt/byline）、BGM（bgm/bgmVolume）、墙缩放（wallScale/autoFit）等
+   *  不影响卡片渲染的字段变化不再重建本对象 → memo 后全部卡片跳过重渲
+   *  （水印不透明度拖动是高频路径）。 */
   const sharedCardProps = useMemo(
     () => ({
       loop: settings.loop,
@@ -956,7 +962,11 @@ export function VideoWall() {
       setVideoRef,
     }),
     [
-      settings, mode, gridDrag, htmlRefreshTick,
+      settings.loop, settings.mutedAll, settings.lockControls, settings.aspect,
+      settings.customRatio, settings.showTitles, settings.showInfo, settings.showIndex,
+      settings.letterboxFill, settings.htmlScale, settings.titleAlign, settings.titleFontSize,
+      settings.titlePosition, settings.titleWeight, settings.titleColor,
+      mode, gridDrag, htmlRefreshTick,
       handleSlotAspect, handleCardFiles, handleTitleChange, handleClearSlot, setVideoRef,
     ],
   );
