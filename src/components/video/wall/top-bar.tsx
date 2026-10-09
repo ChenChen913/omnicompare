@@ -352,7 +352,7 @@ export function TopBar(props: TopBarProps) {
 
           {/* 标题下拉（拆分按钮 2/3）：显隐 + 位置/对齐/字号/粗细/颜色五组全局格式 */}
           {view === 'workspace' && (
-            <TitleMenu s={s} updateSettings={updateSettings} />
+            <TitleMenu s={s} updateSettings={updateSettings} patchLocal={patchLocal} />
           )}
 
           {/* 黑边填充下拉（拆分按钮 3/3）：仅视频/图片项目显示 */}

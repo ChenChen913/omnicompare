@@ -120,7 +120,11 @@ export async function writeManifest(
 ): Promise<void> {
   const project = await readProject(projectId);
   const previousItems = project.items;
+  // 孤儿清理基准集合：内容文件 + 卡片图标文件（替换/删除同样可能只动其中一种）
   const previousFiles = new Set(previousItems.map((it) => it.file.filename));
+  previousItems.forEach((it) => {
+    if (it.icon?.filename) previousFiles.add(it.icon.filename);
+  });
 
   project.slotCount = manifest.count;
   // Step 6 起 v1 视图支持 auto 模式：layoutMode='auto' 时存 'auto'，
@@ -140,11 +144,16 @@ export async function writeManifest(
   const items: ContentItem[] = [];
   manifest.slots.forEach((slot: Slot, order: number) => {
     const existing = project.items[order];
+    // 卡片图标携带语义：undefined = 视图未携带（旧客户端，保留原值）；
+    // null = 显式清除（/api/videos/icon DELETE）；对象 = 新值/原值透传。
+    // 空位不生成条目 → 连带 icon 一并消亡（移除内容即移除图标，孤儿清理扫走文件）
+    const icon = slot.icon !== undefined ? slot.icon : (existing?.icon ?? null);
     const base = {
       id: existing?.id ?? randomUUID(),
       title: slot.title,
       order,
       aspectRatio: slot.aspectRatio !== undefined ? slot.aspectRatio ?? null : existing?.aspectRatio ?? null,
+      ...(icon ? { icon } : {}),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -184,8 +193,12 @@ export async function writeManifest(
   }
 
   // 集中式孤儿清理：被移除/被替换条目的文件统一在此删除（含 v1 视图 video=null 看不见的
-  // HTML 文件），保证任意 v1 写路径（上传替换/删除/清空/缩容/改标题）后清单与磁盘 1:1
+  // HTML 文件与卡片图标文件），保证任意 v1 写路径（上传替换/删除/清空/缩容/改标题/换图标）
+  // 后清单与磁盘 1:1
   const keptFiles = new Set(project.items.map((it) => it.file.filename));
+  project.items.forEach((it) => {
+    if (it.icon?.filename) keptFiles.add(it.icon.filename);
+  });
   const removed = [...previousFiles].filter((f) => !keptFiles.has(f));
 
   project.updatedAt = now;
@@ -226,6 +239,8 @@ export function applyCountAndLayout(
     if (old?.video) removedFilenames.push(old.video.filename);
     else if (old?.html) removedFilenames.push(old.html.filename);
     else if (old?.image) removedFilenames.push(old.image.filename);
+    // 卡片图标随条目一起下线（图标依附于内容，内容没了图标失去意义）
+    if (old?.icon) removedFilenames.push(old.icon.filename);
   }
   while (nextSlots.length < count) {
     nextSlots.push({ index: nextSlots.length, title: '', video: null, html: null });

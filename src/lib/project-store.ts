@@ -149,6 +149,8 @@ function normalizeItem(raw: unknown, order: number): ContentItem | null {
   const kind: ContentKind =
     r.kind === 'html' ? 'html' : r.kind === 'image' ? 'image' : 'video';
   const now = new Date().toISOString();
+  // 卡片图标（above 标题带）：非法/缺省省略键，落库保持精简
+  const icon = normalizeFileMeta(r.icon);
   const base = {
     id: typeof r.id === 'string' && r.id.length > 0 ? r.id : randomUUID(),
     kind,
@@ -161,6 +163,8 @@ function normalizeItem(raw: unknown, order: number): ContentItem | null {
         : ['16:9', '9:16', '1:1', 'original', 'custom'].includes(r.aspectRatio as string)
           ? (r.aspectRatio as ContentItem['aspectRatio'])
           : null,
+    // 卡片图标（above 标题带）：非法/缺省省略键，落库保持精简
+    ...(icon ? { icon } : {}),
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : now,
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : now,
   };
@@ -323,8 +327,10 @@ export function toSlots(project: Project): Slot[] {
   return Array.from({ length: project.slotCount }, (_, i) => {
     const item = project.items[i];
     if (!item) return { index: i, title: '', video: null, html: null, image: null };
-    // Step 7：单卡比例覆盖随视图透传（null = 跟随全局，蓝图 §13）
+    // Step 7：单卡比例覆盖随视图透传（null = 跟随全局，蓝图 §13）；
+    // 卡片图标随视图透传（above 标题带展示，undefined = 未设置）
     const aspect = item.aspectRatio ?? null;
+    const icon = item.icon ?? null;
     if (item.kind === 'html') {
       return {
         index: i,
@@ -333,14 +339,33 @@ export function toSlots(project: Project): Slot[] {
         kind: 'html' as const,
         html: item.file,
         image: null,
+        ...(icon ? { icon } : {}),
         ...(item.bundle ? { bundle: true as const } : {}),
         aspectRatio: aspect,
       };
     }
     if (item.kind === 'image') {
-      return { index: i, title: item.title, video: null, kind: 'image' as const, html: null, image: item.file, aspectRatio: aspect };
+      return {
+        index: i,
+        title: item.title,
+        video: null,
+        kind: 'image' as const,
+        html: null,
+        image: item.file,
+        ...(icon ? { icon } : {}),
+        aspectRatio: aspect,
+      };
     }
-    return { index: i, title: item.title, video: item.file, kind: 'video' as const, html: null, image: null, aspectRatio: aspect };
+    return {
+      index: i,
+      title: item.title,
+      video: item.file,
+      kind: 'video' as const,
+      html: null,
+      image: null,
+      ...(icon ? { icon } : {}),
+      aspectRatio: aspect,
+    };
   });
 }
 

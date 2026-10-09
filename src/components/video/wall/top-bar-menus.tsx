@@ -42,7 +42,10 @@ import {
   TITLE_FONT_MIN,
   TITLE_FONT_PRESETS,
   TITLE_POSITIONS,
-  TITLE_WEIGHTS,
+  TITLE_WEIGHT_MAX,
+  TITLE_WEIGHT_MIN,
+  TITLE_WEIGHT_PRESETS,
+  TITLE_WEIGHT_STEP,
   WATERMARK_COLORS,
   WATERMARK_FONT_MAX,
   WATERMARK_FONT_MIN,
@@ -208,9 +211,29 @@ export function PlaybackMenu({
   );
 }
 
+/** 字重档位的中文名（菜单展示用）：步进 100 的标准 CSS font-weight 档 */
+const WEIGHT_LABELS: Record<number, string> = {
+  100: '纤细',
+  200: '特细',
+  300: '细体',
+  400: '常规',
+  500: '中等',
+  600: '半粗',
+  700: '粗体',
+  800: '特粗',
+  900: '黑体',
+};
+
+function weightLabel(w: number): string {
+  return WEIGHT_LABELS[w] ?? `${w}`;
+}
+
 /* ============================== 标题下拉 ============================== */
 
-export function TitleMenu({ s, updateSettings }: MenuBase) {
+export function TitleMenu({ s, updateSettings, patchLocal }: MenuBase & {
+  /** 本地即时更新（不发请求）：字重滑块拖动预览、松手才提交 */
+  patchLocal: (partial: Partial<WallSettings>) => void;
+}) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -300,9 +323,9 @@ export function TitleMenu({ s, updateSettings }: MenuBase) {
             </span>
           </DropdownMenuSubTrigger>
           {/* onSelect preventDefault 保持菜单展开，可连续点按微调 */}
-          <DropdownMenuSubContent className="min-w-[12rem] border-border bg-card">
-            {/* 常用字号快捷档：一键跳档（16→60 只需一点） */}
-            <div className="grid grid-cols-3 gap-1 px-2 pb-1 pt-1" role="group" aria-label="常用字号快捷档">
+          <DropdownMenuSubContent className="min-w-[13rem] border-border bg-card">
+            {/* 常用字号快捷档：一键跳档（16→96 只需一点） */}
+            <div className="grid grid-cols-4 gap-1 px-2 pb-1 pt-1" role="group" aria-label="常用字号快捷档">
               {TITLE_FONT_PRESETS.map((n) => (
                 <button
                   key={n}
@@ -387,23 +410,63 @@ export function TitleMenu({ s, updateSettings }: MenuBase) {
           <DropdownMenuSubTrigger disabled={!s.showTitles} className="text-[13px]">
             <Bold className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
             标题粗细
-            <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
-              {s.titleWeight === 'bold' ? '加粗' : s.titleWeight === 'medium' ? '中等' : '正常'}
+            <span className="ml-auto pl-2 text-[11px] tabular-nums text-muted-foreground">
+              {s.titleWeight} {weightLabel(s.titleWeight)}
             </span>
           </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="min-w-[8rem] border-border bg-card">
-            {TITLE_WEIGHTS.map((w) => (
-              <DropdownMenuItem
-                key={w}
-                onClick={() => void updateSettings({ titleWeight: w })}
-                className={cn('text-[13px]', w === s.titleWeight && 'font-semibold text-primary')}
-              >
-                <span className="mr-1" style={{ fontWeight: w === 'bold' ? 700 : w === 'medium' ? 500 : 400 }}>
-                  Aa
+          {/* 字重自由调节（100-900 步进 100）：滑杆拖动本地预览、松手才提交（与水印不透明度同交互）；
+              快捷档一键跳档 + 恢复默认，旧三档枚举已迁移为数值 */}
+          <DropdownMenuSubContent className="min-w-[13rem] border-border bg-card">
+            <div className="px-2 py-2">
+              <div className="mb-1 flex items-center justify-between text-[12px] text-muted-foreground">
+                <span>字重</span>
+                <span className="tabular-nums" style={{ fontWeight: s.titleWeight }}>
+                  {s.titleWeight} · {weightLabel(s.titleWeight)}
                 </span>
-                {w === 'bold' ? '加粗' : w === 'medium' ? '中等' : '正常'}
-              </DropdownMenuItem>
-            ))}
+              </div>
+              <input
+                type="range"
+                min={TITLE_WEIGHT_MIN}
+                max={TITLE_WEIGHT_MAX}
+                step={TITLE_WEIGHT_STEP}
+                value={s.titleWeight}
+                onChange={(e) => patchLocal({ titleWeight: Number(e.target.value) })}
+                onPointerUp={() => void updateSettings({ titleWeight: s.titleWeight })}
+                onKeyUp={() => void updateSettings({ titleWeight: s.titleWeight })}
+                aria-label="标题字重"
+                className="w-full accent-[var(--primary)]"
+              />
+              <div className="mt-2 grid grid-cols-5 gap-1" role="group" aria-label="常用字重快捷档">
+                {TITLE_WEIGHT_PRESETS.map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => void updateSettings({ titleWeight: w })}
+                    aria-pressed={s.titleWeight === w}
+                    style={{ fontWeight: w }}
+                    className={cn(
+                      'rounded-md px-1 py-1 text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                      s.titleWeight === w
+                        ? 'bg-primary/15 text-primary'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                    )}
+                  >
+                    {weightLabel(w)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault();
+                void updateSettings({ titleWeight: 400 });
+              }}
+              disabled={s.titleWeight === 400}
+              className="text-[13px]"
+            >
+              恢复默认（400 常规）
+            </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
         <DropdownMenuSub>

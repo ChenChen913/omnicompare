@@ -87,6 +87,10 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
 
     // 清单已落盘后再删文件：即便删除失败也不产生死链（下次写入自会校正）
     await deleteFile(id, removed.file.filename);
+    // 卡片图标随条目一起清理（图标依附于内容）
+    if (removed.icon?.filename) {
+      await deleteFile(id, removed.icon.filename).catch(() => {});
+    }
     return NextResponse.json({ items: project.items }, { headers: noStore });
   });
 }

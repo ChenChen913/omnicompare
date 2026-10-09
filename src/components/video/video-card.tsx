@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Code2, Image as ImageIcon, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
+import { Code2, Image as ImageIcon, ImagePlus, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   AspectRatio,
@@ -12,6 +12,7 @@ import {
   TitleWeight,
   TITLE_COLOR_DEFAULT,
   TITLE_FONT_DEFAULT,
+  TITLE_WEIGHT_DEFAULT,
   aspectCss,
   aspectLabel,
   formatBytes,
@@ -55,7 +56,7 @@ export interface VideoCardProps {
   /** 全局标题位置（同步所有卡片）：below = 内容下方（v1 行为）；above = 内容上方独立标题带（不遮内容）；
    *  overlay = 内容内部顶部叠加（三者排他） */
   titlePosition?: TitlePosition;
-  /** 全局标题字重（同步所有卡片）：normal / medium / bold */
+  /** 全局标题字重（同步所有卡片）：CSS font-weight 数值 100-900（步进 100） */
   titleWeight?: TitleWeight;
   /** 全局标题颜色（同步所有卡片）：'default' 或色板 hex；overlay 的 default 用白色+投影保可读 */
   titleColor?: string;
@@ -79,6 +80,10 @@ export interface VideoCardProps {
    *  替换已有内容请使用卡片信息行的「替换」按钮 */
   onFiles: (files: File[], primarySlot?: number) => void;
   onTitleChange: (slotIndex: number, title: string) => void;
+  /** 上传/替换卡片图标（above 标题带头像）：单个小图片文件；未传则头像不可设置 */
+  onIconFiles?: (file: File, slotIndex: number) => void;
+  /** 移除卡片图标（连同服务端文件）：未传则头像不可移除 */
+  onIconRemove?: (slotIndex: number) => void;
   onClear: (slotIndex: number) => void;
   setVideoRef: (index: number, el: HTMLVideoElement | null) => void;
 }
@@ -115,12 +120,14 @@ export const VideoCard = memo(function VideoCard({
   titleAlign = 'center',
   titleFontSize = TITLE_FONT_DEFAULT,
   titlePosition = 'below',
-  titleWeight = 'normal',
+  titleWeight = TITLE_WEIGHT_DEFAULT,
   titleColor = TITLE_COLOR_DEFAULT,
   refreshSignal = 0,
   onAspectOverride,
   onFiles,
   onTitleChange,
+  onIconFiles,
+  onIconRemove,
   onClear,
   setVideoRef,
 }: VideoCardProps) {
@@ -129,17 +136,24 @@ export const VideoCard = memo(function VideoCard({
   const htmlFile = slot.html ?? null;
   const isImage = slot.kind === 'image' && !!slot.image;
   const imageFile = slot.image ?? null;
+  /** 卡片图标（above 标题带头像）：空位/未设置为 null */
+  const iconFile = slot.icon ?? null;
   const [dragOver, setDragOver] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [imageError, setImageError] = useState(false);
+  /** 图标加载失败（文件缺失/损坏）：回落到上传占位，不挂死图 */
+  const [iconError, setIconError] = useState(false);
   /** 鼠标是否悬停在内容区上：原生控件（进度条/播放键等）仅在悬停时挂载，默认隐式 */
   const [hovered, setHovered] = useState(false);
   /** 本卡视频是否正在播放（play/pause 事件驱动）：配合 focusMode 决定控件显隐 */
   const [selfPlaying, setSelfPlaying] = useState(false);
   const [prevFilename, setPrevFilename] = useState(video?.filename);
   const [prevImageName, setPrevImageName] = useState(imageFile?.filename);
+  const [prevIconName, setPrevIconName] = useState(iconFile?.filename);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** 图标选择框（与内容选择框独立：accept 收窄到图片） */
+  const iconInputRef = useRef<HTMLInputElement>(null);
   /** overlay 标题条：展示态（点击进入编辑）⇄ 编辑态（失焦退出）；below/above/overlay 三态排他，textareaRef 复用 */
   const [overlayEditing, setOverlayEditing] = useState(false);
   /** 主视频本地引用（父级 setVideoRef 之外的副本，用于同步模糊背景层，Step C） */
@@ -150,7 +164,6 @@ export const VideoCard = memo(function VideoCard({
   const overlayMode = showTitles && titlePosition === 'overlay';
   const aboveMode = showTitles && titlePosition === 'above';
   const belowMode = showTitles && titlePosition === 'below';
-  const titleFontWeight = titleWeight === 'bold' ? 700 : titleWeight === 'medium' ? 500 : 400;
   const titleColorCss = titleColor !== TITLE_COLOR_DEFAULT ? titleColor : undefined;
 
   /** 把主视频的播放态镜像到模糊背景层（播放/暂停/拖动/倍速/换源）；失败静默。
@@ -210,7 +223,7 @@ export const VideoCard = memo(function VideoCard({
     }
   }
 
-  /* ---------- 视频/图片错误状态：切换文件时重置 ---------- */
+  /* ---------- 视频/图片/图标错误状态：切换文件时重置 ---------- */
   if (prevFilename !== video?.filename) {
     setPrevFilename(video?.filename);
     setVideoError(false);
@@ -218,6 +231,10 @@ export const VideoCard = memo(function VideoCard({
   if (prevImageName !== imageFile?.filename) {
     setPrevImageName(imageFile?.filename);
     setImageError(false);
+  }
+  if (prevIconName !== iconFile?.filename) {
+    setPrevIconName(iconFile?.filename);
+    setIconError(false);
   }
 
   // 标题输入框自动增高：聚焦时完全展开（长标题编辑全可见），失焦时收折到约 4 行；
@@ -276,7 +293,8 @@ export const VideoCard = memo(function VideoCard({
   const displaySize = video?.size ?? htmlFile?.size ?? imageFile?.size ?? 0;
 
   /** below/above 模式共用的标题编辑框（常驻可编辑 textarea，与 overlay 展示态排他；
-   *  below 渲染在内容下方信息区，above 渲染在内容上方独立标题带，两处互斥复用同一元素与 textareaRef） */
+   *  below 渲染在内容下方信息区，above 渲染在内容上方高级标题带内，两处互斥复用同一元素与 textareaRef；
+   *  above 变体去底色融入标题带（hover 才浮出淡底），below 保持原有的嵌入式外观 */
   const titleTextarea = (
     <textarea
       ref={textareaRef}
@@ -291,10 +309,15 @@ export const VideoCard = memo(function VideoCard({
       style={{
         textAlign: titleAlign,
         fontSize: `${titleFontSize}px`,
-        fontWeight: titleFontWeight,
+        fontWeight: titleWeight,
         ...(titleColorCss ? { color: titleColorCss } : {}),
       }}
-      className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
+      className={cn(
+        'no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent px-2.5 py-1.5 leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:outline-none',
+        aboveMode
+          ? 'bg-transparent hover:bg-muted/40 focus:bg-muted/50 focus:border-ring/50'
+          : 'bg-muted/40 focus:border-ring focus:bg-muted/60',
+      )}
     />
   );
 
@@ -320,33 +343,103 @@ export const VideoCard = memo(function VideoCard({
       )}
     >
       {/* 位置角标：兼作拖拽排序手柄（有 dragHandle 时可抓取，蓝图 §14）。
-          showIndex=false 时仅视觉隐藏（opacity-0）：拖拽/键盘能力保留，界面与截图更干净 */}
-      <span
-        {...(dragHandle ?? {})}
-        aria-hidden={dragHandle ? undefined : true}
-        title={dragHandle ? '拖动调整顺序' : undefined}
-        className={cn(
-          'absolute left-2.5 top-2.5 z-20 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm',
-          dragHandle &&
-            'cursor-grab touch-none select-none hover:border-primary/60 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing',
-          !showIndex && 'opacity-0',
-        )}
-      >
-        {index + 1}
-      </span>
-
-      {/* above 标题带（titlePosition='above'）：内容上方独立标题区，不遮内容、不占内容比例；
-          与 below 编辑框同体（titleTextarea 复用），仅位置在顶；
-          左对齐 + 编号可见时 pl-11 避开左上角位置角标（与 overlay 同策略）；
-          空位也渲染（与 below 一致的编辑可供性，标题随位置持久化） */}
-      {aboveMode && (
-        <div
+          showIndex=false 时仅视觉隐藏（opacity-0）：拖拽/键盘能力保留，界面与截图更干净。
+          above 模式不在此渲染：角标改为内联进高级标题带行首（排行榜式「序号+头像+名称」），
+          避免绝对定位角标压在标题带头像上 */}
+      {!aboveMode && (
+        <span
+          {...(dragHandle ?? {})}
+          aria-hidden={dragHandle ? undefined : true}
+          title={dragHandle ? '拖动调整顺序' : undefined}
           className={cn(
-            'flex w-full shrink-0 flex-col p-2.5 sm:p-3',
-            titleAlign === 'left' && showIndex && 'pl-11', // 编号隐藏后不再需要避让角标
+            'absolute left-2.5 top-2.5 z-20 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm',
+            dragHandle &&
+              'cursor-grab touch-none select-none hover:border-primary/60 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing',
+            !showIndex && 'opacity-0',
           )}
         >
-          {titleTextarea}
+          {index + 1}
+        </span>
+      )}
+
+      {/* above 高级标题带（titlePosition='above'）：内容上方独立标题区，不遮内容、不占内容比例。
+          排行榜式布局：内联序号角标（兼拖拽手柄）+ 圆形内容头像（可上传/替换/移除）+ 标题输入区；
+          视觉：圆角卡片式条体（渐变底 + 细描边 + 暗色内高光），深浅主题各自成立。
+          头像仅在有内容时展示（图标依附于内容，空位隐藏）；标题空位也渲染（与 below 一致的编辑可供性） */}
+      {aboveMode && (
+        <div className="w-full shrink-0 px-2.5 pt-2.5 sm:px-3 sm:pt-3">
+          <div
+            className={cn(
+              'flex w-full items-center gap-2.5 rounded-xl border border-border/80 bg-gradient-to-b from-muted/70 to-muted/10 px-2.5 py-2 shadow-sm',
+              'dark:border-white/10 dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.07),0_2px_10px_-2px_rgba(0,0,0,0.4)]',
+            )}
+          >
+            {/* 内联序号角标（above 模式专用）：兼作拖拽排序手柄，样式与非 above 的绝对定位角标一致 */}
+            <span
+              {...(dragHandle ?? {})}
+              aria-hidden={dragHandle ? undefined : true}
+              title={dragHandle ? '拖动调整顺序' : undefined}
+              className={cn(
+                'shrink-0 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm',
+                dragHandle &&
+                  'cursor-grab touch-none select-none hover:border-primary/60 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing',
+                !showIndex && 'opacity-0',
+              )}
+            >
+              {index + 1}
+            </span>
+
+            {/* 内容头像/图标：44px 圆形；未设置时显示上传占位，下拉菜单提供 上传/替换/移除。
+                图标依附内容（空位不显示头像），替换内容不清除图标（模型头像跨视频保留） */}
+            {(video || htmlFile || imageFile) && onIconFiles && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={uploading}
+                    title={iconFile ? '内容图标：点击替换或移除' : '上传内容图标/头像（展示在标题左侧）'}
+                    aria-label={`位置 ${index + 1} 的图标，${iconFile ? '点击替换或移除' : '点击上传'}`}
+                    className="group relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted ring-1 ring-border transition-shadow hover:ring-2 hover:ring-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 dark:ring-white/15 dark:hover:ring-primary/70"
+                  >
+                    {iconFile && !iconError ? (
+                      <img
+                        src={`/api/files/${encodeURIComponent(iconFile.filename)}`}
+                        alt=""
+                        loading="lazy"
+                        onError={() => setIconError(true)}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <ImagePlus className="h-4.5 w-4.5 text-muted-foreground/70 transition-colors group-hover:text-muted-foreground" aria-hidden />
+                    )}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-[10rem] border-border bg-card">
+                  <DropdownMenuItem
+                    onClick={() => iconInputRef.current?.click()}
+                    disabled={uploading}
+                    className="text-[13px]"
+                  >
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                    {iconFile ? '替换图标…' : '上传图标…'}
+                  </DropdownMenuItem>
+                  {iconFile && onIconRemove && (
+                    <DropdownMenuItem
+                      onClick={() => onIconRemove(index)}
+                      disabled={uploading}
+                      className="text-[13px] text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                      移除图标
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+
+            {/* 标题输入区：占据剩余宽度，对齐/字号/字重/颜色随全局设置 */}
+            <div className="min-w-0 flex-1">{titleTextarea}</div>
+          </div>
         </div>
       )}
 
@@ -402,7 +495,7 @@ export const VideoCard = memo(function VideoCard({
                 style={{
                   textAlign: titleAlign,
                   fontSize: `${titleFontSize}px`,
-                  fontWeight: titleFontWeight,
+                  fontWeight: titleWeight,
                   color: titleColor !== TITLE_COLOR_DEFAULT ? titleColor : '#ffffff',
                   textShadow: '0 1px 4px rgba(0,0,0,0.7)',
                 }}
@@ -416,7 +509,7 @@ export const VideoCard = memo(function VideoCard({
                 aria-label={`位置 ${index + 1} 的叠加标题，点击编辑`}
                 style={{
                   fontSize: `${titleFontSize}px`,
-                  fontWeight: titleFontWeight,
+                  fontWeight: titleWeight,
                   color: titleColor !== TITLE_COLOR_DEFAULT ? titleColor : '#ffffff',
                   textShadow: '0 1px 4px rgba(0,0,0,0.7)',
                 }}
@@ -717,6 +810,19 @@ export const VideoCard = memo(function VideoCard({
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) onFiles([file], index);
+          e.target.value = '';
+        }}
+      />
+
+      {/* 隐藏的图标选择框（above 标题带头像，仅图片类型；服务端另有 5MB 上限与扩展名白名单） */}
+      <input
+        ref={iconInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp,image/avif"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onIconFiles?.(file, index);
           e.target.value = '';
         }}
       />

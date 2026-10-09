@@ -33,6 +33,7 @@ import {
   DEFAULT_PROJECT_ID,
   Layout,
   MAX_AUDIO_SIZE,
+  MAX_ICON_SIZE,
   Manifest,
   SLOT_MAX,
   Slot,
@@ -708,6 +709,52 @@ export function VideoWall() {
     [withPid],
   );
 
+  /* ---------- 卡片图标（above 标题带头像）：上传/替换与移除 ---------- */
+  /** 上传/替换图标：POST FormData → 响应清单回填（服务端同临界区删除旧图标文件）；
+   *  复用本槽位的 uploading 状态（上传期间头像与替换按钮禁用） */
+  const handleIconFiles = useCallback(
+    async (file: File, index: number) => {
+      if (file.size > MAX_ICON_SIZE) {
+        toast.error('图标不能超过 5MB', { id: 'icon' });
+        return;
+      }
+      setUploading((prev) => ({ ...prev, [index]: true }));
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(withPid(`/api/videos/icon?slot=${index}`), {
+          method: 'POST',
+          body: fd,
+        });
+        const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
+        if (!res.ok || !data?.slots) throw new Error(data?.error || '图标上传失败');
+        setSlots(data.slots);
+        toast.success(`已设置位置 ${index + 1} 的图标`, { id: 'icon' });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : '图标上传失败，请重试', { id: 'icon' });
+      } finally {
+        setUploading((prev) => ({ ...prev, [index]: false }));
+      }
+    },
+    [withPid],
+  );
+
+  /** 移除图标：DELETE → 响应清单回填（文件由服务端同临界区清理） */
+  const handleIconRemove = useCallback(
+    async (index: number) => {
+      try {
+        const res = await fetch(withPid(`/api/videos/icon?slot=${index}`), { method: 'DELETE' });
+        const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
+        if (!res.ok || !data?.slots) throw new Error(data?.error || '移除失败');
+        setSlots(data.slots);
+        toast.success(`已移除位置 ${index + 1} 的图标`, { id: 'icon' });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : '图标移除失败，请重试', { id: 'icon' });
+      }
+    },
+    [withPid],
+  );
+
   const handleClearAll = useCallback(async () => {
     try {
       const res = await fetch(withPid('/api/videos?all=1'), { method: 'DELETE' });
@@ -958,6 +1005,8 @@ export function VideoWall() {
       onAspectOverride: handleSlotAspect,
       onFiles: handleCardFiles,
       onTitleChange: handleTitleChange,
+      onIconFiles: handleIconFiles,
+      onIconRemove: handleIconRemove,
       onClear: handleClearSlot,
       setVideoRef,
     }),
@@ -967,7 +1016,7 @@ export function VideoWall() {
       settings.letterboxFill, settings.htmlScale, settings.titleAlign, settings.titleFontSize,
       settings.titlePosition, settings.titleWeight, settings.titleColor,
       mode, gridDrag, htmlRefreshTick,
-      handleSlotAspect, handleCardFiles, handleTitleChange, handleClearSlot, setVideoRef,
+      handleSlotAspect, handleCardFiles, handleTitleChange, handleIconFiles, handleIconRemove, handleClearSlot, setVideoRef,
     ],
   );
 

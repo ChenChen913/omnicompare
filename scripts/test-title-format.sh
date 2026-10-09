@@ -26,12 +26,13 @@ check() { # name expect_code actual_code expect_regex actual_body
   fi
 }
 
-echo "=== A. 默认值兜底（旧数据无新字段 → 回落 center/16） ==="
+echo "=== A. 默认值兜底（旧数据无新字段 → 回落 center/16/400） ==="
 R=$(req GET /api/videos)
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "GET /api/videos 200" 200 "$CODE" '"count"' "$BODY"
 check "默认 titleAlign=center" 0 0 'center' "$BODY"
 check "默认 titleFontSize=16" 0 0 '"titleFontSize":16' "$BODY"
+check "默认 titleWeight=400" 0 0 '"titleWeight":400' "$BODY"
 
 echo "=== B. 合法更新 ==="
 R=$(req PATCH /api/videos/settings '{"titleAlign":"left"}')
@@ -46,8 +47,8 @@ R=$(req PATCH /api/videos/settings '{"titleAlign":"right","titleFontSize":24}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "PATCH 两字段同发" 200 "$CODE" '"titleAlign":"right".*"titleFontSize":24' "$BODY"
 
-echo "=== C. 边界值（上限 60：用户反馈 28 不够用） ==="
-for v in 12 60; do
+echo "=== C. 边界值（上限 96：above 高级标题带 + 大屏远看场景） ==="
+for v in 12 96; do
   R=$(req PATCH /api/videos/settings "{\"titleFontSize\":$v}")
   CODE=$(echo "$R" | tail -n 1)
   check "PATCH 字号边界 $v" 200 "$CODE" '"titleFontSize":'$v "$(echo "$R" | head -n -1)"
@@ -55,7 +56,7 @@ done
 
 echo "=== D. 非法值 400 ==="
 declare -a CASES=(
-  '{"titleFontSize":11}'          '{"titleFontSize":61}'
+  '{"titleFontSize":11}'          '{"titleFontSize":97}'
   '{"titleFontSize":"abc"}'       '{"titleFontSize":null}'
   '{"titleAlign":"middle"}'       '{"titleAlign":123}'
   '{"titleAlign":""}'
@@ -70,24 +71,33 @@ echo "=== E. 非法更新不落盘（GET 回读仍为最后一次合法值） ==
 R=$(req GET /api/videos)
 BODY=$(echo "$R" | head -n -1)
 check "回读 titleAlign=right" 0 0 '"titleAlign":"right"' "$BODY"
-check "回读 titleFontSize=60" 0 0 '"titleFontSize":60' "$BODY"
+check "回读 titleFontSize=96" 0 0 '"titleFontSize":96' "$BODY"
 
-echo "=== F. 标题位置/粗细/颜色（overlay 模式三件套） ==="
-R=$(req PATCH /api/videos/settings '{"titlePosition":"overlay","titleWeight":"bold","titleColor":"#facc15"}')
+echo "=== F. 标题位置/字重/颜色 ==="
+R=$(req PATCH /api/videos/settings '{"titlePosition":"overlay","titleWeight":700,"titleColor":"#facc15"}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
-check "PATCH 位置/粗细/颜色同发" 200 "$CODE" '"titlePosition":"overlay".*"titleWeight":"bold".*"titleColor":"#facc15"' "$BODY"
-R=$(req PATCH /api/videos/settings '{"titlePosition":"above","titleWeight":"medium"}')
+check "PATCH 位置/字重/颜色同发" 200 "$CODE" '"titlePosition":"overlay".*"titleWeight":700.*"titleColor":"#facc15"' "$BODY"
+R=$(req PATCH /api/videos/settings '{"titleWeight":"bold"}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
-check "PATCH titlePosition=above（内容上方）" 200 "$CODE" '"titlePosition":"above".*"titleWeight":"medium"' "$BODY"
+check "PATCH 旧枚举 bold → 迁移 700" 200 "$CODE" '"titleWeight":700' "$BODY"
+R=$(req PATCH /api/videos/settings '{"titlePosition":"above","titleWeight":800}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "PATCH titlePosition=above + 字重 800" 200 "$CODE" '"titlePosition":"above".*"titleWeight":800' "$BODY"
 R=$(req GET /api/videos)
 BODY=$(echo "$R" | head -n -1)
 check "GET 回读 titlePosition=above 落盘" 0 0 '"titlePosition":"above"' "$BODY"
-R=$(req PATCH /api/videos/settings '{"titlePosition":"below","titleWeight":"normal","titleColor":"default"}')
+check "GET 回读 titleWeight=800 落盘" 0 0 '"titleWeight":800' "$BODY"
+R=$(req PATCH /api/videos/settings '{"titleWeight":750}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
-check "PATCH 回 below/normal/default" 200 "$CODE" '"titlePosition":"below".*"titleWeight":"normal".*"titleColor":"default"' "$BODY"
+check "PATCH 字重 750 → 吸附 800" 200 "$CODE" '"titleWeight":800' "$BODY"
+R=$(req PATCH /api/videos/settings '{"titlePosition":"below","titleWeight":400,"titleColor":"default"}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "PATCH 回 below/400/default" 200 "$CODE" '"titlePosition":"below".*"titleWeight":400.*"titleColor":"default"' "$BODY"
 declare -a CASES2=(
   '{"titlePosition":"top"}'        '{"titlePosition":123}'
-  '{"titleWeight":"heavy"}'        '{"titleWeight":700}'
+  '{"titleWeight":"heavy"}'        '{"titleWeight":950}'
+  '{"titleWeight":50}'              '{"titleWeight":true}'
+  '{"titleWeight":null}'            '{"titleWeight":[]}'
   '{"titleColor":"#fff"}'          '{"titleColor":"javascript:alert(1)"}'
   '{"titleColor":"#GGGGGG"}'       '{"titleColor":null}'
 )
@@ -127,9 +137,12 @@ check "v2 PATCH 非法对齐 → 400" 400 "$CODE" '标题对齐' "$(echo "$R" | 
 R=$(req PATCH /api/projects/default/settings '{"titlePosition":"above"}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "v2 PATCH titlePosition=above 一致" 200 "$CODE" '"titlePosition":"above"' "$BODY"
-R=$(req PATCH /api/projects/default/settings '{"titlePosition":"below"}')
+R=$(req PATCH /api/projects/default/settings '{"titleWeight":900}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
-check "v2 恢复 below" 200 "$CODE" '"titlePosition":"below"' "$BODY"
+check "v2 PATCH 字重 900 一致" 200 "$CODE" '"titleWeight":900' "$BODY"
+R=$(req PATCH /api/projects/default/settings '{"titlePosition":"below","titleWeight":400}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "v2 恢复 below/400" 200 "$CODE" '"titlePosition":"below".*"titleWeight":400' "$BODY"
 
 echo "=== H. 恢复默认（center/16，不污染演示状态） ==="
 R=$(req PATCH /api/videos/settings '{"titleAlign":"center","titleFontSize":16}')

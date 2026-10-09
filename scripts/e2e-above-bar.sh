@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# above 高级标题带端到端验证（单次调用内完成 server + 浏览器操作）
+# 覆盖：premium bar 结构 / 头像上传 UI 全链路 / 字重滑杆与快捷档 / 视觉截图 / 恢复默认
+set -u
+cd "$(dirname "$0")/.."
+BASE="http://127.0.0.1:3000"
+AVATAR=".tmp-avatar/avatar-a.png"
+PASS=0; FAIL=0
+
+ok()   { PASS=$((PASS+1)); echo "PASS  $1"; }
+bad()  { FAIL=$((FAIL+1)); echo "FAIL  $1"; }
+
+# ---------- 0. server ----------
+# 先清理可能的孤儿进程（npx 被 kill 时子进程 next-server 可能存活并持旧编译产物）
+pkill -f "next dev" 2>/dev/null
+pkill -f "next-server" 2>/dev/null
+sleep 1
+if ! curl -s -o /dev/null -w "%{http_code}" $BASE/api --max-time 2 2>/dev/null | grep -q 200; then
+  npx next dev --port 3000 > /dev/null 2>&1 < /dev/null &
+  SERVER_PID=$!
+  OWN=1
+  for i in $(seq 1 90); do
+    curl -s -o /dev/null -w "%{http_code}" $BASE/api --max-time 2 2>/dev/null | grep -q 200 && break
+    sleep 1
+  done
+else
+  OWN=0
+fi
+# 结束时连同子孙进程一起收尾（防孤儿 next-server）
+cleanup_server() {
+  if [ "${OWN:-0}" = "1" ]; then
+    kill $SERVER_PID 2>/dev/null
+    pkill -P $SERVER_PID 2>/dev/null
+    pkill -f "next dev" 2>/dev/null
+    pkill -f "next-server" 2>/dev/null
+  fi
+}
+trap cleanup_server EXIT
+echo "[e2e] server ready (own=$OWN)"
+
+# ---------- 1. 设置 above 模式 + 大字号 + 800 字重 ----------
+curl -s -X PATCH -H 'Content-Type: application/json' \
+  -d '{"titlePosition":"above","titleFontSize":32,"titleWeight":800}' \
+  $BASE/api/videos/settings -o /dev/null
+echo "[e2e] 已设置 above / 32px / 800"
+
+# ---------- 2. 打开页面（先关旧浏览器实例：跨 server 重启的陈旧标签页会导致 hydration 报错噪音；
+#     open 后校验 URL，about:blank 竞态时重试，最多 5 次）----------
+agent-browser close > /dev/null 2>&1
+OPENED=0
+for i in 1 2 3 4 5; do
+  agent-browser open $BASE/ > /dev/null 2>&1
+  sleep 2
+  U=$(agent-browser get url 2>/dev/null)
+  if echo "$U" | grep -q "127.0.0.1:3000"; then OPENED=1; break; fi
+  echo "[e2e] open 第 ${i} 次后仍在 $U，重试..."
+done
+if [ "$OPENED" != "1" ]; then
+  echo "[e2e] 页面未能打开"; cleanup_server; exit 1
+fi
+agent-browser wait --load networkidle > /dev/null 2>&1
+agent-browser wait 1500 > /dev/null 2>&1
+
+# ---------- 3. premium bar 结构断言（eval 返回 JSON-in-string，先去转义再匹配）----------
+RAW=$(agent-browser eval "(() => {
+  const card = document.querySelector('article');
+  const bar = card.querySelector('.rounded-xl');
+  const ta = card.querySelector('textarea');
+  const barTa = bar ? bar.querySelector('textarea') : null;
+  const avatarBtn = bar ? bar.querySelector('button[aria-label*=\"图标\"]') : null;
+  const inlineBadge = bar ? bar.querySelector('span.rounded-md') : null;
+  const absBadge = card.querySelector('span.absolute.left-2\\\\.5');
+  const content = card.querySelector('div[style*=\"aspect-ratio\"]');
+  const st = ta ? getComputedStyle(ta) : null;
+  const barRect = bar ? bar.getBoundingClientRect() : null;
+  const cRect = content ? content.getBoundingClientRect() : null;
+  return JSON.stringify({
+    barExists: !!bar,
+    textareaInBar: !!barTa,
+    avatarPlaceholder: !!avatarBtn,
+    avatarSize: avatarBtn ? avatarBtn.getBoundingClientRect().width : null,
+    inlineBadgeInBar: !!inlineBadge,
+    noAbsBadge: !absBadge,
+    fontWeight: st ? st.fontWeight : null,
+    fontSize: st ? st.fontSize : null,
+    barAboveContent: barRect && cRect ? barRect.bottom <= cRect.top : null,
+  });
+})()" 2>/dev/null)
+R=$(echo "$RAW" | sed 's/\\//g')
+echo "  $R"
+echo "$R" | grep -q '"barExists":true'          && ok "高级标题带存在"                 || bad "高级标题带存在"
+echo "$R" | grep -q '"textareaInBar":true'       && ok "标题输入框在带内"               || bad "标题输入框在带内"
+echo "$R" | grep -q '"avatarPlaceholder":true'  && ok "头像占位按钮存在"               || bad "头像占位按钮存在"
+echo "$R" | grep -q '"avatarSize":44'           && ok "头像 44px"                      || bad "头像 44px ($R)"
+echo "$R" | grep -q '"inlineBadgeInBar":true'   && ok "编号角标内联在带内"             || bad "编号角标内联在带内"
+echo "$R" | grep -q '"noAbsBadge":true'         && ok "绝对定位角标已隐藏"             || bad "绝对定位角标已隐藏"
+echo "$R" | grep -q '"fontWeight":"800"'        && ok "字重 800 生效"                  || bad "字重 800 生效 ($R)"
+echo "$R" | grep -q '"fontSize":"32px"'         && ok "字号 32px 生效"                 || bad "字号 32px 生效 ($R)"
+echo "$R" | grep -q '"barAboveContent":true'    && ok "标题带位于内容上方"             || bad "标题带位于内容上方"
+
+# ---------- 4. 头像菜单（上传/替换/移除选项存在）----------
+AV_REF=$(agent-browser snapshot -i 2>/dev/null | grep "的图标" | grep -o 'ref=e[0-9]*' | cut -d= -f2 | head -1)
+echo "  头像按钮 ref: $AV_REF"
+agent-browser click "@$AV_REF" > /dev/null 2>&1
+agent-browser wait 1200 > /dev/null 2>&1
+S=$(agent-browser snapshot -i 2>/dev/null | grep -c "上传图标")
+[ "$S" -ge 1 ] && ok "头像菜单含「上传图标」" || bad "头像菜单含「上传图标」"
+agent-browser press Escape > /dev/null 2>&1
+agent-browser wait 300 > /dev/null 2>&1
+
+# ---------- 5. 通过 UI 上传头像（页面内 DataTransfer 模拟用户选文件：agent-browser upload
+#     对 hidden input 不可靠，改用与 Playwright setInputFiles 同机制的 DOM 注入）----------
+AV_B64=$(base64 -w0 "$AVATAR")
+R=$(agent-browser eval "(async () => {
+  const inputs = document.querySelectorAll('article input[type=file]');
+  const iconInput = Array.from(inputs).find((el) => el.accept.startsWith('image/png'));
+  if (!iconInput) return JSON.stringify({ error: 'no-icon-input' });
+  const blob = await (await fetch('data:image/png;base64,$AV_B64')).blob();
+  const file = new File([blob], 'avatar-e2e.png', { type: 'image/png' });
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  iconInput.files = dt.files;
+  iconInput.dispatchEvent(new Event('change', { bubbles: true }));
+  return JSON.stringify({ set: true });
+})()" 2>/dev/null)
+echo "  set: $R"
+agent-browser wait 2500 > /dev/null 2>&1
+R=$(agent-browser eval "(() => {
+  const img = document.querySelector('article .rounded-xl button img');
+  return JSON.stringify({ iconImg: !!img, src: img ? img.src : null, w: img ? img.getBoundingClientRect().width : null });
+})()" 2>/dev/null | sed 's/\\//g')
+echo "  $R"
+echo "$R" | grep -q '"iconImg":true' && ok "头像图片已渲染（UI 上传链路通）" || bad "头像图片已渲染 ($R)"
+echo "$R" | grep -q '/api/files/'   && ok "头像 src 指向 /api/files"        || bad "头像 src 指向 /api/files"
+ICON_URL=$(echo "$R" | grep -o 'src":"[^"]*' | cut -d'"' -f3)
+
+# ---------- 6. 字重滑杆 + 快捷档（菜单 UI）----------
+agent-browser find role button click --name "标题设置" > /dev/null 2>&1
+agent-browser wait 600 > /dev/null 2>&1
+WREF=$(agent-browser snapshot -i 2>/dev/null | grep "标题粗细" | head -1 | grep -o 'ref=e[0-9]*' | cut -d= -f2)
+echo "  粗细子菜单 ref: $WREF"
+agent-browser click "@$WREF" > /dev/null 2>&1
+agent-browser wait 700 > /dev/null 2>&1
+R=$(agent-browser eval "(() => {
+  const slider = document.querySelector('input[type=range][aria-label=\"标题字重\"]');
+  const presets = Array.from(document.querySelectorAll('button[aria-pressed]'))
+    .filter((b) => ['细体','常规','中等','粗体','黑体'].includes(b.textContent.trim()));
+  return JSON.stringify({ slider: !!slider, min: slider ? slider.min : null, max: slider ? slider.max : null,
+    step: slider ? slider.step : null, val: slider ? slider.value : null, presetCount: presets.length });
+})()" 2>/dev/null | sed 's/\\//g')
+echo "  $R"
+echo "$R" | grep -q '"slider":true'        && ok "字重滑杆存在"          || bad "字重滑杆存在"
+echo "$R" | grep -q '"min":"100"'          && ok "滑杆下限 100"          || bad "滑杆下限 100"
+echo "$R" | grep -q '"max":"900"'          && ok "滑杆上限 900"          || bad "滑杆上限 900"
+echo "$R" | grep -q '"step":"100"'         && ok "滑杆步进 100"          || bad "滑杆步进 100"
+echo "$R" | grep -q '"val":"800"'          && ok "滑杆当前值 800"        || bad "滑杆当前值 800"
+echo "$R" | grep -q '"presetCount":5'      && ok "五个快捷档"            || bad "五个快捷档 ($R)"
+
+# 点击「黑体」快捷档 → 断言 900 生效（eval 返回带引号的字符串，先归一化）
+agent-browser find text "黑体" click > /dev/null 2>&1
+agent-browser wait 1500 > /dev/null 2>&1
+R=$(agent-browser eval "document.querySelector('article textarea') ? getComputedStyle(document.querySelector('article textarea')).fontWeight : null" 2>/dev/null | sed 's/\\//g')
+echo "$R" | grep -q '"900"' && ok "点击快捷档「黑体」→ 字重 900" || bad "快捷档字重 900 ($R)"
+
+# ---------- 7. 视觉截图（above + 头像 + 900 字重）----------
+mkdir -p /home/z/my-project/download
+agent-browser screenshot /home/z/my-project/download/above-premium-bar.png > /dev/null 2>&1
+echo "[e2e] 截图已保存 download/above-premium-bar.png"
+
+# ---------- 8. 浏览器控制台零错误 ----------
+ERRS=$(agent-browser errors 2>/dev/null | rg -c "error|Error" || echo 0)
+[ "$ERRS" = "0" ] && ok "浏览器零控制台错误" || bad "浏览器控制台错误 ($ERRS)"
+
+# ---------- 9. 恢复默认 + 关闭 ----------
+curl -s -X DELETE "$BASE/api/videos/icon?slot=0" -o /dev/null
+curl -s -X PATCH -H 'Content-Type: application/json' \
+  -d '{"titlePosition":"below","titleFontSize":16,"titleWeight":400}' \
+  $BASE/api/videos/settings -o /dev/null
+agent-browser close > /dev/null 2>&1
+if [ "${OWN:-0}" = "1" ]; then kill $SERVER_PID 2>/dev/null; fi
+rm -rf .tmp-avatar
+
+echo
+echo "================================"
+echo "PASS=$PASS FAIL=$FAIL"
+[ "$FAIL" -eq 0 ]

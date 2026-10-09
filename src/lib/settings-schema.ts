@@ -27,7 +27,10 @@ import {
   TITLE_FONT_MAX,
   TITLE_FONT_MIN,
   TITLE_POSITIONS,
-  TITLE_WEIGHTS,
+  TITLE_WEIGHT_LEGACY,
+  TITLE_WEIGHT_MAX,
+  TITLE_WEIGHT_MIN,
+  TITLE_WEIGHT_STEP,
   WATERMARK_COLORS,
   WATERMARK_FAMILIES,
   WATERMARK_FONT_MAX,
@@ -63,7 +66,17 @@ type FieldSpec =
       round?: boolean;
     }
   | { key: keyof ProjectSettings; label: string; kind: 'scale' }
-  | { key: keyof ProjectSettings; label: string; kind: 'strTrunc'; maxLen: number };
+  | { key: keyof ProjectSettings; label: string; kind: 'strTrunc'; maxLen: number }
+  | {
+      /** 字重数值范围（100-900 步进 100）：接受旧枚举字符串（normal/medium/bold）并迁移为对应数值 */
+      key: keyof ProjectSettings;
+      label: string;
+      kind: 'weightRange';
+      min: number;
+      max: number;
+      step: number;
+      legacyMap: Readonly<Record<string, number>>;
+    };
 
 type NumRangeSpec = Extract<FieldSpec, { kind: 'numRange' }>;
 type ScaleSpec = Extract<FieldSpec, { kind: 'scale' }>;
@@ -88,7 +101,15 @@ const SPECS: readonly FieldSpec[] = [
   { key: 'titleAlign', label: '标题对齐', kind: 'enum', values: TITLE_ALIGNS },
   { key: 'titleFontSize', label: '标题字号', kind: 'numRange', min: TITLE_FONT_MIN, max: TITLE_FONT_MAX },
   { key: 'titlePosition', label: '标题位置', kind: 'enum', values: TITLE_POSITIONS },
-  { key: 'titleWeight', label: '标题字重', kind: 'enum', values: TITLE_WEIGHTS },
+  {
+    key: 'titleWeight',
+    label: '标题字重',
+    kind: 'weightRange',
+    min: TITLE_WEIGHT_MIN,
+    max: TITLE_WEIGHT_MAX,
+    step: TITLE_WEIGHT_STEP,
+    legacyMap: TITLE_WEIGHT_LEGACY,
+  },
   { key: 'titleColor', label: '标题颜色', kind: 'enum', values: TITLE_COLOR_VALUES },
   { key: 'bgmVolume', label: '背景音乐音量', kind: 'numRange', min: 0, max: 100, round: true },
   { key: 'promptText', label: '提示词', kind: 'strTrunc', maxLen: PROMPT_MAX },
@@ -156,6 +177,20 @@ function checkStrict(spec: FieldSpec, raw: unknown): StrictResult {
     case 'strTrunc':
       if (typeof raw !== 'string') return { ok: false, error: `${spec.label}需为字符串` };
       return { ok: true, value: raw.slice(0, spec.maxLen) };
+    case 'weightRange': {
+      // 旧枚举字符串（normal/medium/bold）→ 迁移为对应数值，兼容存量客户端
+      const legacy = typeof raw === 'string' ? spec.legacyMap[raw] : undefined;
+      if (legacy !== undefined) return { ok: true, value: legacy };
+      const v = Number(raw);
+      if (typeof raw !== 'number' && typeof raw !== 'string') {
+        return { ok: false, error: `${spec.label}需为 ${spec.min}-${spec.max} 之间的字重值` };
+      }
+      if (!Number.isFinite(v) || v < spec.min || v > spec.max) {
+        return { ok: false, error: `${spec.label}需为 ${spec.min}-${spec.max} 之间的字重值` };
+      }
+      // 吸附到步进档（如 750→800）：合法字体重量恒为 100 的整数倍
+      return { ok: true, value: Math.round(v / spec.step) * spec.step };
+    }
   }
 }
 
@@ -200,6 +235,15 @@ function checkLenient(spec: FieldSpec, raw: unknown): LenientResult {
       return typeof raw === 'string'
         ? { ok: true, value: raw.slice(0, spec.maxLen) }
         : { ok: false };
+    case 'weightRange': {
+      // 存量清单读到旧枚举字符串 → 迁移为数值；越界钳到边界；非 100 倍数吸附到档位
+      const legacy = typeof raw === 'string' ? spec.legacyMap[raw] : undefined;
+      if (legacy !== undefined) return { ok: true, value: legacy };
+      const v = Number(raw);
+      if (!Number.isFinite(v)) return { ok: false };
+      const clamped = Math.min(spec.max, Math.max(spec.min, v));
+      return { ok: true, value: Math.round(clamped / spec.step) * spec.step };
+    }
   }
 }
 

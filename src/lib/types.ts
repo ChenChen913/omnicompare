@@ -48,6 +48,9 @@ export const BUNDLE_ASSET_EXTS = [
 /** 背景音乐文件大小上限（50MB） */
 export const MAX_AUDIO_SIZE = 50 * 1024 * 1024;
 
+/** 卡片图标（above 标题带头像/图标）大小上限：仅在标题带内 44px 展示，5MB 绰绰有余 */
+export const MAX_ICON_SIZE = 5 * 1024 * 1024;
+
 /** 允许的背景音乐扩展名（均为浏览器原生可解码格式） */
 export const AUDIO_EXTS = ['.mp3', '.m4a', '.aac', '.wav', '.ogg', '.oga', '.flac'] as const;
 
@@ -99,13 +102,13 @@ export type TitleAlign = 'left' | 'center' | 'right';
 /** 合法的标题对齐取值（API 校验与前端选项的共同来源） */
 export const TITLE_ALIGNS = ['left', 'center', 'right'] as const;
 
-/** 标题字号范围（px）：全局同步调节的上下限与默认值（上限 60：用户反馈 28 不够用，大屏/远看场景需要更大字号） */
+/** 标题字号范围（px）：全局同步调节的上下限与默认值（上限 96：above 高级标题带 + 大屏/远看场景需要更大字号） */
 export const TITLE_FONT_MIN = 12;
-export const TITLE_FONT_MAX = 60;
+export const TITLE_FONT_MAX = 96;
 export const TITLE_FONT_DEFAULT = 16;
 
-/** 字号快捷档位（含默认与上限）：供菜单一键跳档，避免从 16 连点 44 次才到 60 */
-export const TITLE_FONT_PRESETS = [16, 24, 32, 40, 48, TITLE_FONT_MAX] as const;
+/** 字号快捷档位（含默认与上限）：供菜单一键跳档，覆盖小→特大全区间 */
+export const TITLE_FONT_PRESETS = [16, 24, 32, 40, 48, 64, 80, TITLE_FONT_MAX] as const;
 
 /** 标题位置：below = 内容下方（v1 行为，可编辑 textarea）；above = 内容上方独立标题带（不遮内容）；
  *  overlay = 内容内部顶部叠加（三者排他） */
@@ -114,11 +117,23 @@ export type TitlePosition = 'below' | 'above' | 'overlay';
 /** 合法的标题位置取值 */
 export const TITLE_POSITIONS = ['below', 'above', 'overlay'] as const;
 
-/** 标题字重档位 */
-export type TitleWeight = 'normal' | 'medium' | 'bold';
+/** 标题字重：CSS font-weight 数值（100-900，步进 100），自由调节不再限三档 */
+export type TitleWeight = number;
 
-/** 合法的标题字重取值（对应 CSS font-weight 400/500/700） */
-export const TITLE_WEIGHTS = ['normal', 'medium', 'bold'] as const;
+export const TITLE_WEIGHT_MIN = 100;
+export const TITLE_WEIGHT_MAX = 900;
+export const TITLE_WEIGHT_STEP = 100;
+export const TITLE_WEIGHT_DEFAULT = 400;
+
+/** 旧枚举字重 → 数值迁移映射（存量清单读到旧值时归一化为对应数值） */
+export const TITLE_WEIGHT_LEGACY: Readonly<Record<string, number>> = {
+  normal: 400,
+  medium: 500,
+  bold: 700,
+};
+
+/** 字重快捷档（含默认与两极）：滑杆之外的一键跳档 */
+export const TITLE_WEIGHT_PRESETS = [300, 400, 500, 700, 900] as const;
 
 /** 标题颜色哨兵值：跟随主题（below 用前景色；overlay 用白色+投影保可读） */
 export const TITLE_COLOR_DEFAULT = 'default';
@@ -208,6 +223,9 @@ export interface Slot {
   bundle?: boolean;
   /** 已放置的图片文件；仅 kind='image' 时存在（第二阶段 Step A） */
   image?: FileMeta | null;
+  /** 卡片图标/头像（above 标题带内展示，44px 圆形）：null/缺省 = 未设置；
+   *  undefined = 视图未携带（旧客户端，写路径保留原值）；仅由 /api/videos/icon 路由变更 */
+  icon?: FileMeta | null;
   /** 单卡比例覆盖（Step 7 扩展字段，向后兼容）：null/缺省 = 跟随全局（蓝图 §13） */
   aspectRatio?: AspectRatio | null;
 }
@@ -258,7 +276,7 @@ export interface ManifestSettings {
   titleFontSize?: number;
   /** 标题位置（全局同步）：缺省/非法回落 below（v1 行为） */
   titlePosition?: TitlePosition;
-  /** 标题字重（全局同步）：缺省/非法回落 normal */
+  /** 标题字重（全局同步）：CSS font-weight 数值；缺省/非法回落 400（旧枚举字符串自动迁移） */
   titleWeight?: TitleWeight;
   /** 标题颜色（全局同步）：'default' 或色板 hex；缺省/非法回落 'default' */
   titleColor?: string;
@@ -360,6 +378,8 @@ export interface ContentItemBase {
   order: number;
   /** null = 跟随全局比例 */
   aspectRatio: AspectRatio | null;
+  /** 卡片图标/头像（above 标题带）：缺省 = 未设置；仅由 /api/videos/icon 路由变更 */
+  icon?: FileMeta | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -414,7 +434,7 @@ export interface ProjectSettings {
   titleFontSize: number;
   /** 标题位置（全局同步）：below = 内容下方；above = 内容上方独立标题带；overlay = 内容内部顶部叠加（三者排他） */
   titlePosition: TitlePosition;
-  /** 标题字重（全局同步）：normal / medium / bold */
+  /** 标题字重（全局同步）：CSS font-weight 数值 100-900（步进 100；旧枚举 normal/medium/bold 读路径自动迁移为 400/500/700） */
   titleWeight: TitleWeight;
   /** 标题颜色（全局同步）：'default' 或色板 hex */
   titleColor: string;
@@ -524,9 +544,9 @@ export function defaultSettings(): ProjectSettings {
     // 标题默认居中 + 16px：比正文更醒目（v1 行为 13px 偏小，用户反馈字体过小且未居中）
     titleAlign: 'center',
     titleFontSize: TITLE_FONT_DEFAULT,
-    // 标题位置默认下方（v1 行为不变）；字重/颜色默认跟随主题常规样式
+    // 标题位置默认下方（v1 行为不变）；字重默认 400（常规）；颜色默认跟随主题常规样式
     titlePosition: 'below',
-    titleWeight: 'normal',
+    titleWeight: TITLE_WEIGHT_DEFAULT,
     titleColor: TITLE_COLOR_DEFAULT,
     // 背景音乐默认未设置；音量默认 100%（配合全局静音可做"只留 BGM"的录屏预设）
     bgm: null,
