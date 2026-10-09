@@ -1122,11 +1122,13 @@ export function VideoWall() {
         </div>
       )}
 
-      {/* 主区：Studio 含左侧栏，Focus 满幅；两模式复用同一网格，切换不重建视频元素 */}
+      {/* 主区：Studio 含左侧栏，Focus 满幅无上限（大屏墙可生长至视口宽）；两模式复用同一网格，切换不重建视频元素 */}
       <div
         className={cn(
           'mx-auto flex w-full flex-1 gap-5 px-3 sm:px-6',
-          mode === 'focus' || !sidebarOpen ? 'max-w-[1800px]' : 'max-w-[1400px]',
+          // 专注模式解除 max-w 上限：屏幕宽于 1800px 时墙不再被卡在中间留大边，
+          // 由 autoFit 求解器按高度约束在满幅与恰好同屏之间取值
+          mode === 'focus' ? 'max-w-none' : !sidebarOpen ? 'max-w-[1800px]' : 'max-w-[1400px]',
         )}
         onDragOver={(e) => {
           // 仅外部文件拖入时提示；卡片排序（pointer 模拟）不产生 dataTransfer

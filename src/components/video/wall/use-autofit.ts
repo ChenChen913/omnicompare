@@ -2,12 +2,14 @@
 
 /**
  * 自动适配视口（autoFit）hook：整墙高度超出视口可用空间时等比缩小到恰好同屏
- * （截图/录屏全入镜）。从 video-wall.tsx 拆出，算法与行为保持不变。
+ * （截图/录屏全入镜）；视口变大时逐轮回涨至满宽。从 video-wall.tsx 拆出。
  *
  * 目标求解墙宽 px（fitWidth）。格子高度随宽度单调增长（内容区 aspect-ratio 驱动），
  * 每轮按实测高度比例收缩：newW = w × avail/h —— 不动点迭代，线性布局一轮到位，
- * 非线性（标题换行/单卡覆盖比例）2-6 轮收敛；步长限制 35% 防过渡态读数过冲，
- * 只缩不放（h ≤ avail 即静止，满宽态不放大）。应用 grid width = w*px —— 纯布局变化：
+ * 非线性（标题换行/单卡覆盖比例）2-6 轮收敛；步长限制 ±35% 防过渡态读数过冲，
+ * 目标上限 = 容器宽：墙比容器矮即满宽（100%），比视口高则缩到恰好同屏；
+ * 视口变大时允许逐轮回涨（防历史收缩值卡死在屏幕中间）。
+ * 应用 grid width = w*px —— 纯布局变化：
  * 文字重新排版保持清晰、dnd 拖拽坐标零偏差、无需外层高度补偿。
  * 触发：RO 观察 grid（内容/布局变化）与 main（容器宽变化，如侧栏开合）+ window resize；
  * rAF 合并，每帧最多一次求解；迭代上限 14 防震荡。
@@ -119,11 +121,16 @@ export function useAutoFit(args: {
       /* 迭代上限：连续多轮仍有变化时强制静止（极端布局保护，正常 2-7 轮收敛后自动复位） */
       if (fitIterRef.current >= FIT_MAX_ITERATIONS) return;
       const raw = w * (avail / h);
-      /* 步长限制 35%：防过渡态（字体加载中/图片占位）读数过冲导致来回震荡 */
-      const target = Math.max(w * 0.65, Math.min(w, raw));
-      if (!Number.isFinite(target) || target <= 0) return;
-      /* 超过容器宽 = 满宽即可容纳（只缩不放），回到 100%；下限 240 保证可读性 */
-      commit(target >= containerW - 1 ? null : Math.max(240, Math.round(target)));
+      /* 步长限制 ±35%：防过渡态（字体加载中/图片占位）读数过冲导致来回震荡。
+       * 目标 = 恰好同屏的等比宽度，上限钳到容器宽（满宽即自然上限）。
+       * 允许放大（w*1.35 每轮）：视口变大（拉高窗口 / 换大屏 / 进入专注模式腾出
+       * 顶栏侧栏空间）后墙能重新长回满宽——此前「只缩不放」会把历史收缩值
+       * 永久卡死在屏幕中间（用户实测：小窗收缩 1012px → 拉大窗口仍停 1012px） */
+      const target = Math.min(containerW, Math.max(w * 0.65, raw));
+      const stepped = Math.min(target, w * 1.35);
+      if (!Number.isFinite(stepped) || stepped <= 0) return;
+      /* 达到容器宽 = 满宽即可容纳，回到 100%；下限 240 保证可读性 */
+      commit(stepped >= containerW - 1 ? null : Math.max(240, Math.round(stepped)));
     };
     const schedule = () => {
       if (raf === 0) raf = window.requestAnimationFrame(measure);
