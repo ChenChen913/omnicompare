@@ -155,12 +155,19 @@ src/
 │       ├── files/[name]/         # 内容文件流（Range 206；HTML/SVG 强制沙箱头）
 │       └── bundles/[name]/[[...path]]/  # zip 包内资产
 ├── components/
-│   ├── video/video-wall.tsx      # 主组件：顶栏、网格、批量逻辑、多项目
-│   ├── video/video-card.tsx      # 单格卡片：object-contain、拖拽上传、iframe 沙箱
+│   ├── video/video-wall.tsx      # 主组件（状态协调中枢）：清单加载、上传分发、拖拽排序、批量播放
+│   ├── video/video-card.tsx      # 单格卡片：object-contain、拖拽上传、iframe 沙箱（memo 化）
+│   ├── video/wall/               # 主组件拆分：顶栏/侧栏/项目库/提示词栏/水印层/弹窗 + 域 hooks
+│   │   ├── top-bar.tsx           # 顶栏（品牌行 + 功能行：布局/播放/标题/填充/水印菜单）
+│   │   ├── sidebar.tsx           # 侧栏（项目卡/管理/视图导航/窗格列表）
+│   │   ├── use-wall-settings.ts  # 设置域：单一 state 对象 + 乐观更新 + 快照回滚
+│   │   ├── use-projects.ts       # 项目域：列表/切换/新建/改名/删除
+│   │   └── use-autofit.ts        # autoFit 不动点求解器 + 提示词栏宽/水印层对齐
 │   └── ui/                       # shadcn/ui 组件（只保留实际用到的，其余用 CLI 按需添加）
 └── lib/
     ├── types.ts                  # 前后端共享常量、类型与纯函数
-    ├── project-store.ts          # v2 存储核心：项目锁、原子写、zip 流式解包、文件解析
+    ├── settings-schema.ts        # settings 字段规格表：v1/v2 路由与归一化共用的唯一判据
+    ├── project-store.ts          # v2 存储核心：项目锁、原子写、zip 流式解包、流式落盘
     ├── video-store.ts            # v1 兼容门面
     ├── v1-project-param.ts       # v1 的 ?project= 解析
     └── v2-project-param.ts       # v2 的 [id] 解析
@@ -179,7 +186,7 @@ bun run typecheck    # tsc --noEmit
 bun run lint         # eslint .
 bun run build        # 生产构建（含 standalone 拷贝自检）
 
-# 启动服务后跑接口回归（零外部依赖，62 项断言）
+# 启动服务后跑接口回归（零外部依赖，67 项断言）
 # ⚠️ 脚本收尾会清空默认项目的全部内容（all=1），只在本地开发环境跑，
 #    且跑之前确认默认项目里没有需要保留的内容；重要数据先备份 data/
 node scripts/api-regression-test.mjs

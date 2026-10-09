@@ -30,3 +30,44 @@ jobs:
 
       - name: 生产构建
         run: bun run build
+
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      # 接口回归（62 项断言，每项对应一个真实存在过的缺陷）：
+      # 起 dev server → 就绪探活 → 跑测试。CI 是全新 checkout（无 data/），
+      # 测试收尾清空默认项目内容的副作用在这里无数据可丢。
+      - name: 启动开发服务器
+        run: |
+          nohup bun run dev > dev.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/api > /dev/null 2>&1; then
+              echo "服务就绪（等待 ${i}s）"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "服务 60s 内未就绪，dev.log 尾部如下："
+          tail -n 50 dev.log
+          exit 1
+
+      - name: 接口回归测试
+        run: node scripts/api-regression-test.mjs
+
+      # 测试失败时保留 dev.log 便于排查
+      - name: 上传服务日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-log
+          path: dev.log
+          retention-days: 7
