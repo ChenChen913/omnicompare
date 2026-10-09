@@ -1,45 +1,17 @@
 /**
  * 项目级播放与展示设置 API（v1 视图，蓝图 §7/§9/§13；Step 8 起支持 ?project= 多项目）
- * PATCH /api/videos/settings[?project=id]  { aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?, letterboxFill?, wallScale?, htmlScale?, autoFit?, titleAlign?, titleFontSize?, titlePosition?, titleWeight?, titleColor? }
+ * PATCH /api/videos/settings[?project=id]  { aspectRatio?, showTitles?, ... 见 settings-schema 规格表 }
  * - 全部字段可选，仅更新提供的字段；播放设置只作用于 kind=video 的内容
  * - 与其它 v1 写路径共用清单互斥锁，杜绝并发丢更新
  * - 成功返回更新后的完整 v1 清单视图（响应即回填）
+ *
+ * 字段校验收口于 src/lib/settings-schema.ts（与 v2 路由、存储归一化共用同一份规格表）。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  ASPECT_RATIOS,
-  AspectRatio,
-  BYLINE_MAX,
-  CUSTOM_RATIO_MAX,
-  LETTERBOX_FILLS,
-  PLAYBACK_RATES,
-  ProjectSettings,
-  PROMPT_MAX,
-  SCALE_STEPS,
-  WATERMARK_FAMILIES,
-  WATERMARK_COLORS,
-  WATERMARK_FONT_MAX,
-  WATERMARK_FONT_MIN,
-  WATERMARK_MAX,
-  WATERMARK_OPACITY_MAX,
-  WATERMARK_OPACITY_MIN,
-  WATERMARK_SPEEDS,
-  WatermarkColor,
-  WatermarkFamily,
-  WatermarkSpeed,
-  TITLE_ALIGNS,
-  TITLE_FONT_MAX,
-  TITLE_FONT_MIN,
-  TITLE_POSITIONS,
-  TITLE_WEIGHTS,
-  parseCustomRatio,
-  parseScaleOption,
-  parseTitleColor,
-  parseTitleFontSize,
-} from '@/lib/types';
 import { readProject, withProjectLock, writeProject } from '@/lib/project-store';
 import { readManifest } from '@/lib/video-store';
 import { resolveProjectParam } from '@/lib/v1-project-param';
+import { parseSettingsPatch } from '@/lib/settings-schema';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,219 +25,12 @@ function badRequest(message: string) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as
-    | { aspectRatio?: unknown; customRatio?: unknown; showTitles?: unknown; showInfo?: unknown; showIndex?: unknown; loop?: unknown; muted?: unknown; playbackRate?: unknown; letterboxFill?: unknown; wallScale?: unknown; htmlScale?: unknown; autoFit?: unknown; titleAlign?: unknown; titleFontSize?: unknown; titlePosition?: unknown; titleWeight?: unknown; titleColor?: unknown; bgmVolume?: unknown; promptText?: unknown; showPrompt?: unknown; bylineText?: unknown; showByline?: unknown; showWatermark?: unknown; watermarkText?: unknown; watermarkFontSize?: unknown; watermarkFontFamily?: unknown; watermarkColor?: unknown; watermarkSpeed?: unknown; lockControls?: unknown; watermarkFontWeight?: unknown; watermarkOpacity?: unknown }
-    | null;
+  const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) return badRequest('请求体格式错误');
 
-  const patch: Partial<ProjectSettings> = {};
-  /** customRatio=null 的"显式清除"标记：undefined 无法区分"未提供"与"清除" */
-  let clearCustomRatio = false;
-  if (body.aspectRatio !== undefined) {
-    if (
-      typeof body.aspectRatio !== 'string' ||
-      !(ASPECT_RATIOS as readonly string[]).includes(body.aspectRatio)
-    ) {
-      return badRequest(`比例取值需为 ${ASPECT_RATIOS.join(' / ')}`);
-    }
-    patch.aspectRatio = body.aspectRatio as AspectRatio;
-  }
-  if (body.customRatio !== undefined) {
-    if (body.customRatio === null) {
-      // null = 显式清除自定义比例
-      patch.customRatio = undefined;
-      clearCustomRatio = true;
-    } else {
-      const parsed = parseCustomRatio(body.customRatio);
-      if (!parsed) return badRequest(`自定义比例需为 0-${CUSTOM_RATIO_MAX} 之间的正数宽高`);
-      patch.customRatio = parsed;
-    }
-  }
-  if (body.showTitles !== undefined) {
-    if (typeof body.showTitles !== 'boolean') return badRequest('showTitles 需为布尔值');
-    patch.showTitles = body.showTitles;
-  }
-  if (body.showInfo !== undefined) {
-    if (typeof body.showInfo !== 'boolean') return badRequest('showInfo 需为布尔值');
-    patch.showInfo = body.showInfo;
-  }
-  if (body.showIndex !== undefined) {
-    if (typeof body.showIndex !== 'boolean') return badRequest('showIndex 需为布尔值');
-    patch.showIndex = body.showIndex;
-  }
-  if (body.loop !== undefined) {
-    if (typeof body.loop !== 'boolean') return badRequest('loop 需为布尔值');
-    patch.loop = body.loop;
-  }
-  if (body.muted !== undefined) {
-    if (typeof body.muted !== 'boolean') return badRequest('muted 需为布尔值');
-    patch.muted = body.muted;
-  }
-  if (body.playbackRate !== undefined) {
-    if (
-      typeof body.playbackRate !== 'number' ||
-      !(PLAYBACK_RATES as readonly number[]).includes(body.playbackRate)
-    ) {
-      return badRequest(`播放速度需为 ${PLAYBACK_RATES.join(' / ')}`);
-    }
-    patch.playbackRate = body.playbackRate;
-  }
-  if (body.letterboxFill !== undefined) {
-    if (
-      typeof body.letterboxFill !== 'string' ||
-      !(LETTERBOX_FILLS as readonly string[]).includes(body.letterboxFill)
-    ) {
-      return badRequest(`留白填充需为 ${LETTERBOX_FILLS.join(' / ')}`);
-    }
-    patch.letterboxFill = body.letterboxFill as ProjectSettings['letterboxFill'];
-  }
-  if (body.wallScale !== undefined) {
-    const scale = parseScaleOption(body.wallScale);
-    if (scale === null) {
-      return badRequest(`整体大小需为 ${SCALE_STEPS.join(' / ')} 之一`);
-    }
-    patch.wallScale = scale;
-  }
-  if (body.htmlScale !== undefined) {
-    const scale = parseScaleOption(body.htmlScale);
-    if (scale === null) {
-      return badRequest(`页面缩放需为 ${SCALE_STEPS.join(' / ')} 之一`);
-    }
-    patch.htmlScale = scale;
-  }
-  if (body.autoFit !== undefined) {
-    if (typeof body.autoFit !== 'boolean') return badRequest('自动适配需为布尔值');
-    patch.autoFit = body.autoFit;
-  }
-  if (body.titleAlign !== undefined) {
-    if (
-      typeof body.titleAlign !== 'string' ||
-      !(TITLE_ALIGNS as readonly string[]).includes(body.titleAlign)
-    ) {
-      return badRequest(`标题对齐需为 ${TITLE_ALIGNS.join(' / ')}`);
-    }
-    patch.titleAlign = body.titleAlign as ProjectSettings['titleAlign'];
-  }
-  if (body.titleFontSize !== undefined) {
-    const size = parseTitleFontSize(body.titleFontSize);
-    if (size === null) {
-      return badRequest(`标题字号需为 ${TITLE_FONT_MIN}-${TITLE_FONT_MAX} 之间的数字`);
-    }
-    patch.titleFontSize = size;
-  }
-  if (body.titlePosition !== undefined) {
-    if (
-      typeof body.titlePosition !== 'string' ||
-      !(TITLE_POSITIONS as readonly string[]).includes(body.titlePosition)
-    ) {
-      return badRequest(`标题位置需为 ${TITLE_POSITIONS.join(' / ')}`);
-    }
-    patch.titlePosition = body.titlePosition as ProjectSettings['titlePosition'];
-  }
-  if (body.titleWeight !== undefined) {
-    if (
-      typeof body.titleWeight !== 'string' ||
-      !(TITLE_WEIGHTS as readonly string[]).includes(body.titleWeight)
-    ) {
-      return badRequest(`标题字重需为 ${TITLE_WEIGHTS.join(' / ')}`);
-    }
-    patch.titleWeight = body.titleWeight as ProjectSettings['titleWeight'];
-  }
-  if (body.titleColor !== undefined) {
-    const color = parseTitleColor(body.titleColor);
-    if (color === null) {
-      return badRequest('标题颜色需为 default 或色板内颜色值');
-    }
-    patch.titleColor = color;
-  }
-  if (body.bgmVolume !== undefined) {
-    // 背景音乐音量（0-100）；BGM 文件本体仅由 /api/videos/bgm 路由变更
-    const v = Number(body.bgmVolume);
-    if (!Number.isFinite(v) || v < 0 || v > 100) {
-      return badRequest('背景音乐音量需为 0-100 的数字');
-    }
-    patch.bgmVolume = Math.round(v);
-  }
-  if (body.promptText !== undefined) {
-    // 提示词文本（矩阵下方提示词框，录屏入镜用）：字符串截断到上限
-    if (typeof body.promptText !== 'string') return badRequest('提示词需为字符串');
-    patch.promptText = body.promptText.slice(0, PROMPT_MAX);
-  }
-  if (body.showPrompt !== undefined) {
-    if (typeof body.showPrompt !== 'boolean') return badRequest('提示词显隐需为布尔值');
-    patch.showPrompt = body.showPrompt;
-  }
-  if (body.bylineText !== undefined) {
-    // 署名文本（测评博主 / 账号 / tag）：字符串截断到上限
-    if (typeof body.bylineText !== 'string') return badRequest('署名需为字符串');
-    patch.bylineText = body.bylineText.slice(0, BYLINE_MAX);
-  }
-  if (body.showByline !== undefined) {
-    if (typeof body.showByline !== 'boolean') return badRequest('署名显隐需为布尔值');
-    patch.showByline = body.showByline;
-  }
-  if (body.showWatermark !== undefined) {
-    // 水印显隐（防伪标志）
-    if (typeof body.showWatermark !== 'boolean') return badRequest('水印显隐需为布尔值');
-    patch.showWatermark = body.showWatermark;
-  }
-  if (body.watermarkText !== undefined) {
-    // 水印文字：字符串截断到上限
-    if (typeof body.watermarkText !== 'string') return badRequest('水印文字需为字符串');
-    patch.watermarkText = body.watermarkText.slice(0, WATERMARK_MAX);
-  }
-  if (body.watermarkFontSize !== undefined) {
-    // 水印字号（px）：24-160
-    const v = Number(body.watermarkFontSize);
-    if (!Number.isFinite(v) || v < WATERMARK_FONT_MIN || v > WATERMARK_FONT_MAX) {
-      return badRequest(`水印字号需为 ${WATERMARK_FONT_MIN}-${WATERMARK_FONT_MAX} 的数字`);
-    }
-    patch.watermarkFontSize = Math.round(v);
-  }
-  if (body.watermarkFontFamily !== undefined) {
-    // 水印字体形式：default/serif/hand/mono
-    if (typeof body.watermarkFontFamily !== 'string' || !WATERMARK_FAMILIES.includes(body.watermarkFontFamily as WatermarkFamily)) {
-      return badRequest('水印字体形式需为 default / serif / hand / mono 之一');
-    }
-    patch.watermarkFontFamily = body.watermarkFontFamily as WatermarkFamily;
-  }
-  if (body.watermarkColor !== undefined) {
-    // 水印颜色深浅：auto/white/black
-    if (typeof body.watermarkColor !== 'string' || !WATERMARK_COLORS.includes(body.watermarkColor as WatermarkColor)) {
-      return badRequest('水印颜色需为 auto / white / black 之一');
-    }
-    patch.watermarkColor = body.watermarkColor as WatermarkColor;
-  }
-  if (body.watermarkSpeed !== undefined) {
-    // 水印巡游速度：slow/normal/fast
-    if (typeof body.watermarkSpeed !== 'string' || !WATERMARK_SPEEDS.includes(body.watermarkSpeed as WatermarkSpeed)) {
-      return badRequest('水印巡游速度需为 slow / normal / fast 之一');
-    }
-    patch.watermarkSpeed = body.watermarkSpeed as WatermarkSpeed;
-  }
-  if (body.lockControls !== undefined) {
-    // 锁定视频控件（录屏模式）：专注模式下悬停不再显示控件
-    if (typeof body.lockControls !== 'boolean') return badRequest('锁定控件需为布尔值');
-    patch.lockControls = body.lockControls;
-  }
-  if (body.watermarkFontWeight !== undefined) {
-    // 水印字重：normal/bold
-    if (body.watermarkFontWeight !== 'normal' && body.watermarkFontWeight !== 'bold') {
-      return badRequest('水印字重需为 normal 或 bold');
-    }
-    patch.watermarkFontWeight = body.watermarkFontWeight;
-  }
-  if (body.watermarkOpacity !== undefined) {
-    // 水印不透明度（%）：5-80
-    const v = Number(body.watermarkOpacity);
-    if (!Number.isFinite(v) || v < WATERMARK_OPACITY_MIN || v > WATERMARK_OPACITY_MAX) {
-      return badRequest(`水印不透明度需为 ${WATERMARK_OPACITY_MIN}-${WATERMARK_OPACITY_MAX} 的数字`);
-    }
-    patch.watermarkOpacity = Math.round(v);
-  }
-  if (Object.keys(patch).length === 0 && !clearCustomRatio) {
-    return badRequest('至少提供一个待更新字段');
-  }
+  const parsed = parseSettingsPatch(body);
+  if ('error' in parsed) return badRequest(parsed.error);
+  const { patch, clearCustomRatio } = parsed;
 
   const p = await resolveProjectParam(req);
   if (p.error) return p.error;

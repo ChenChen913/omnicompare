@@ -9,9 +9,8 @@
  * - 缩减 count          → order >= count 的条目连同文件删除
  */
 import { randomUUID } from 'crypto';
+import { normalizeSettingsFieldsPartial } from './settings-schema';
 import {
-  ASPECT_RATIOS,
-  BYLINE_MAX,
   ContentItem,
   ContentKind,
   DEFAULT_PROJECT_ID,
@@ -19,32 +18,10 @@ import {
   Layout,
   Manifest,
   ManifestSettings,
-  PLAYBACK_RATES,
   ProjectSettings,
-  PROMPT_MAX,
   Slot,
   SLOT_MAX,
-  TITLE_ALIGNS,
-  TITLE_POSITIONS,
-  TITLE_WEIGHTS,
-  LETTERBOX_FILLS,
-  WATERMARK_FAMILIES,
-  WATERMARK_COLORS,
-  WATERMARK_FONT_MAX,
-  WATERMARK_FONT_MIN,
-  WATERMARK_MAX,
-  WATERMARK_OPACITY_MAX,
-  WATERMARK_OPACITY_MIN,
-  WATERMARK_SPEEDS,
-  WatermarkColor,
-  WatermarkFamily,
-  WatermarkSpeed,
   autoLayoutFor,
-  defaultSettings,
-  parseCustomRatio,
-  parseScaleOption,
-  parseTitleColor,
-  parseTitleFontSize,
 } from './types';
 import {
   deleteFile,
@@ -221,158 +198,16 @@ export async function writeManifest(
 }
 
 /**
- * v1 视图设置 -> ProjectSettings 字段校验：仅接受合法值，其余回落默认值。
- * 返回 Partial：未携带的字段（如旧客户端的 customRatio）保持项目原值不动。
+ * v1 视图设置 -> ProjectSettings 字段校验：判据由 settings-schema 规格表驱动
+ * （与两套 settings 路由、磁盘归一化共用同一份，消灭四处手写校验的漂移）。
+ * 仅接受合法值，其余回落默认值；未携带的字段不在输出中，
+ * 经 {...project.settings, ...patch} 合并后保持项目原值。
  */
 function normalizeManifestSettings(s: ManifestSettings): Partial<ProjectSettings> {
-  const base = defaultSettings();
-  const out: Partial<ProjectSettings> = {
-    aspectRatio: (ASPECT_RATIOS as readonly string[]).includes(s.aspectRatio)
-      ? s.aspectRatio
-      : base.aspectRatio,
-    showTitles: typeof s.showTitles === 'boolean' ? s.showTitles : base.showTitles,
-    showInfo: typeof s.showInfo === 'boolean' ? s.showInfo : base.showInfo,
-    loop: typeof s.loop === 'boolean' ? s.loop : base.loop,
-    muted: typeof s.muted === 'boolean' ? s.muted : base.muted,
-    playbackRate:
-      typeof s.playbackRate === 'number' &&
-      (PLAYBACK_RATES as readonly number[]).includes(s.playbackRate)
-        ? s.playbackRate
-        : base.playbackRate,
-    letterboxFill: (LETTERBOX_FILLS as readonly string[]).includes(s.letterboxFill)
-      ? s.letterboxFill
-      : base.letterboxFill,
-  };
-  // customRatio：null = 显式清除；合法对象 = 写入；未携带/非法 = 保持原值
-  if (s.customRatio === null) out.customRatio = undefined;
-  else if (s.customRatio !== undefined) {
-    const parsed = parseCustomRatio(s.customRatio);
-    if (parsed) out.customRatio = parsed;
-  }
-  // 标题格式（全局同步）：旧客户端不携带时保持原值；携带非法值时回落默认
-  if (s.titleAlign !== undefined) {
-    out.titleAlign = (TITLE_ALIGNS as readonly string[]).includes(s.titleAlign)
-      ? s.titleAlign
-      : base.titleAlign;
-  }
-  if (s.titleFontSize !== undefined) {
-    const size = parseTitleFontSize(s.titleFontSize);
-    if (size !== null) out.titleFontSize = size;
-  }
-  if (s.titlePosition !== undefined) {
-    out.titlePosition = (TITLE_POSITIONS as readonly string[]).includes(s.titlePosition)
-      ? s.titlePosition
-      : base.titlePosition;
-  }
-  if (s.titleWeight !== undefined) {
-    out.titleWeight = (TITLE_WEIGHTS as readonly string[]).includes(s.titleWeight)
-      ? s.titleWeight
-      : base.titleWeight;
-  }
-  if (s.titleColor !== undefined) {
-    const color = parseTitleColor(s.titleColor);
-    if (color !== null) out.titleColor = color;
-  }
-  if (s.wallScale !== undefined) {
-    // 缩放档位（整墙/网页页面）：旧客户端不携带时保持原值；携带非法值时回落默认
-    const scale = parseScaleOption(s.wallScale);
-    if (scale !== null) out.wallScale = scale;
-  }
-  if (s.htmlScale !== undefined) {
-    const scale = parseScaleOption(s.htmlScale);
-    if (scale !== null) out.htmlScale = scale;
-  }
-  if (s.autoFit !== undefined) {
-    // 自动适配视口：旧客户端不携带时保持原值；携带非法值时回落默认
-    if (typeof s.autoFit === 'boolean') out.autoFit = s.autoFit;
-    else out.autoFit = base.autoFit;
-  }
-  if (s.showIndex !== undefined) {
-    // 位置编号显隐：旧客户端不携带时保持原值；携带非法值时回落默认（显示）
-    if (typeof s.showIndex === 'boolean') out.showIndex = s.showIndex;
-    else out.showIndex = base.showIndex;
-  }
-  if (s.bgmVolume !== undefined) {
-    // 背景音乐音量：旧客户端不携带时保持原值；携带非法值时回落默认（100）
-    const v = Number(s.bgmVolume);
-    if (Number.isFinite(v) && v >= 0 && v <= 100) out.bgmVolume = Math.round(v);
-    else out.bgmVolume = base.bgmVolume;
-  }
-  if (s.promptText !== undefined) {
-    // 提示词文本：旧客户端不携带时保持原值；携带时截断到上限
-    out.promptText = typeof s.promptText === 'string' ? s.promptText.slice(0, PROMPT_MAX) : base.promptText;
-  }
-  if (s.showPrompt !== undefined) {
-    // 提示词框显隐：旧客户端不携带时保持原值；携带非法值时回落默认（隐藏）
-    if (typeof s.showPrompt === 'boolean') out.showPrompt = s.showPrompt;
-    else out.showPrompt = base.showPrompt;
-  }
-  if (s.bylineText !== undefined) {
-    // 署名文本：旧客户端不携带时保持原值；携带时截断到上限
-    out.bylineText = typeof s.bylineText === 'string' ? s.bylineText.slice(0, BYLINE_MAX) : base.bylineText;
-  }
-  if (s.showByline !== undefined) {
-    // 署名行显隐：旧客户端不携带时保持原值；携带非法值时回落默认（隐藏）
-    if (typeof s.showByline === 'boolean') out.showByline = s.showByline;
-    else out.showByline = base.showByline;
-  }
-  if (s.showWatermark !== undefined) {
-    // 水印显隐：旧客户端不携带时保持原值；携带非法值时回落默认（隐藏）
-    if (typeof s.showWatermark === 'boolean') out.showWatermark = s.showWatermark;
-    else out.showWatermark = base.showWatermark;
-  }
-  if (s.watermarkText !== undefined) {
-    // 水印文字：旧客户端不携带时保持原值；携带时截断到上限
-    out.watermarkText =
-      typeof s.watermarkText === 'string' ? s.watermarkText.slice(0, WATERMARK_MAX) : base.watermarkText;
-  }
-  if (s.watermarkFontSize !== undefined) {
-    // 水印字号：越界钳制到 24-160，非法回落默认
-    const v = Number(s.watermarkFontSize);
-    if (Number.isFinite(v)) {
-      out.watermarkFontSize = Math.min(WATERMARK_FONT_MAX, Math.max(WATERMARK_FONT_MIN, Math.round(v)));
-    } else out.watermarkFontSize = base.watermarkFontSize;
-  }
-  if (s.watermarkFontFamily !== undefined) {
-    // 水印字体形式：枚举校验，非法回落默认
-    out.watermarkFontFamily = WATERMARK_FAMILIES.includes(s.watermarkFontFamily as WatermarkFamily)
-      ? (s.watermarkFontFamily as WatermarkFamily)
-      : base.watermarkFontFamily;
-  }
-  if (s.watermarkColor !== undefined) {
-    // 水印颜色深浅：枚举校验，非法回落默认
-    out.watermarkColor = WATERMARK_COLORS.includes(s.watermarkColor as WatermarkColor)
-      ? (s.watermarkColor as WatermarkColor)
-      : base.watermarkColor;
-  }
-  if (s.watermarkSpeed !== undefined) {
-    // 水印巡游速度：枚举校验，非法回落默认
-    out.watermarkSpeed = WATERMARK_SPEEDS.includes(s.watermarkSpeed as WatermarkSpeed)
-      ? (s.watermarkSpeed as WatermarkSpeed)
-      : base.watermarkSpeed;
-  }
-  if (s.lockControls !== undefined) {
-    // 锁定视频控件（录屏模式）：旧客户端不携带时保持原值；携带非法值时回落默认（不锁定）
-    if (typeof s.lockControls === 'boolean') out.lockControls = s.lockControls;
-    else out.lockControls = base.lockControls;
-  }
-  if (s.watermarkFontWeight !== undefined) {
-    // 水印字重：枚举校验，非法回落默认
-    if (s.watermarkFontWeight === 'normal' || s.watermarkFontWeight === 'bold') {
-      out.watermarkFontWeight = s.watermarkFontWeight;
-    } else out.watermarkFontWeight = base.watermarkFontWeight;
-  }
-  if (s.watermarkOpacity !== undefined) {
-    // 水印不透明度：越界钳制到 5-80，非法回落默认
-    const v = Number(s.watermarkOpacity);
-    if (Number.isFinite(v)) {
-      out.watermarkOpacity = Math.min(WATERMARK_OPACITY_MAX, Math.max(WATERMARK_OPACITY_MIN, Math.round(v)));
-    } else out.watermarkOpacity = base.watermarkOpacity;
-  }
   // 注意：s.bgm（背景音乐文件）不在 v1 清单写路径受理范围 —— 文件与设置必须在
-  // 同一临界区由 /api/videos/bgm 路由变更（先删旧文件再写清单），此处静默忽略，
-  // 经 {...project.settings, ...patch} 合并后原值保留，不会被旧客户端回显清掉
-  return out;
+  // 同一临界区由 /api/videos/bgm 路由变更（先删旧文件再写清单），规格表静默忽略，
+  // 合并后原值保留，不会被旧客户端回显清掉
+  return normalizeSettingsFieldsPartial(s as unknown as Record<string, unknown>);
 }
 
 /**

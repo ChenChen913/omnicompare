@@ -8,14 +8,16 @@
  * - 删文件与清单变更同临界区完成，杜绝磁盘孤儿文件
  * - v1→v2 迁移一次性、幂等：以 data/projects/default/manifest.json 是否存在为判据
  */
-import { promises as fsp } from 'fs';
+import { createWriteStream, promises as fsp } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { Unzip, UnzipInflate } from 'fflate';
+import { normalizeSettingsFields } from './settings-schema';
 import {
   BUNDLE_ASSET_EXTS,
   BUNDLE_ENTRY,
-  BYLINE_MAX,
   ContentItem,
   ContentKind,
   DEFAULT_PROJECT_ID,
@@ -31,33 +33,13 @@ import {
   MAX_IMAGE_SIZE,
   Project,
   ProjectSettings,
-  PROMPT_MAX,
   SLOT_MAX,
-  WATERMARK_FAMILIES,
-  WATERMARK_COLORS,
-  WATERMARK_FONT_MAX,
-  WATERMARK_FONT_MIN,
-  WATERMARK_MAX,
-  WATERMARK_OPACITY_MAX,
-  WATERMARK_OPACITY_MIN,
-  WATERMARK_SPEEDS,
-  WatermarkColor,
-  WatermarkFamily,
-  WatermarkSpeed,
   SLOT_MIN,
   Slot,
   defaultLayoutFor,
   defaultSettings,
-  parseTitleColor,
-  parseTitleFontSize,
-  parseScaleOption,
-  LETTERBOX_FILLS,
-  TITLE_ALIGNS,
-  TITLE_POSITIONS,
-  TITLE_WEIGHTS,
   isVideoFile,
   mimeFromExt,
-  parseCustomRatio,
 } from './types';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -194,85 +176,12 @@ function normalizeItem(raw: unknown, order: number): ContentItem | null {
 }
 
 function normalizeSettings(raw: unknown): ProjectSettings {
-  const base = defaultSettings();
-  if (!raw || typeof raw !== 'object') return base;
-  const r = raw as Record<string, unknown>;
-  const aspectRatio = ['16:9', '9:16', '1:1', 'original', 'custom'].includes(r.aspectRatio as string)
-    ? (r.aspectRatio as ProjectSettings['aspectRatio'])
-    : base.aspectRatio;
-  const customRatio = parseCustomRatio(r.customRatio) ?? undefined;
+  const r = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  // 字段判据全部由 settings-schema 规格表驱动（与两套 settings 路由共用同一份，
+  // 消灭四处手写校验的漂移）；bgm 文件元数据仅由 /api/videos/bgm 路由写入，单独归一化
   return {
-    aspectRatio,
-    customRatio,
-    showTitles: typeof r.showTitles === 'boolean' ? r.showTitles : base.showTitles,
-    showInfo: typeof r.showInfo === 'boolean' ? r.showInfo : base.showInfo,
-    // 位置编号显隐：非法/缺失回落显示（v1 行为）
-    showIndex: typeof r.showIndex === 'boolean' ? r.showIndex : base.showIndex,
-    loop: typeof r.loop === 'boolean' ? r.loop : base.loop,
-    muted: typeof r.muted === 'boolean' ? r.muted : base.muted,
-    playbackRate: [0.5, 1, 1.25, 1.5, 2].includes(Number(r.playbackRate))
-      ? Number(r.playbackRate)
-      : base.playbackRate,
-    // Step C：留白填充模式（base/blur/cover，非法值回落底色）
-    letterboxFill: (LETTERBOX_FILLS as readonly string[]).includes(r.letterboxFill as string)
-      ? (r.letterboxFill as ProjectSettings['letterboxFill'])
-      : base.letterboxFill,
-    // 缩放档位：非法/缺失回落 100（与引入前行为一致）
-    wallScale: parseScaleOption(r.wallScale) ?? base.wallScale,
-    htmlScale: parseScaleOption(r.htmlScale) ?? base.htmlScale,
-    // 自动适配视口：非法/缺失回落开启（整墙超出视口自动缩小同屏）
-    autoFit: typeof r.autoFit === 'boolean' ? r.autoFit : base.autoFit,
-    // 标题格式（全局同步）：对齐非法回落居中；字号非法/越界回落默认
-    titleAlign: (TITLE_ALIGNS as readonly string[]).includes(r.titleAlign as string)
-      ? (r.titleAlign as ProjectSettings['titleAlign'])
-      : base.titleAlign,
-    titleFontSize: parseTitleFontSize(r.titleFontSize) ?? base.titleFontSize,
-    // 标题位置/字重/颜色：非法一律回落默认（below/normal/'default'）
-    titlePosition: (TITLE_POSITIONS as readonly string[]).includes(r.titlePosition as string)
-      ? (r.titlePosition as ProjectSettings['titlePosition'])
-      : base.titlePosition,
-    titleWeight: (TITLE_WEIGHTS as readonly string[]).includes(r.titleWeight as string)
-      ? (r.titleWeight as ProjectSettings['titleWeight'])
-      : base.titleWeight,
-    titleColor: parseTitleColor(r.titleColor) ?? base.titleColor,
-    // 背景音乐：文件元数据非法一律回落 null（文件本体生命周期由 /api/videos/bgm 路由管理）
+    ...normalizeSettingsFields(r),
     bgm: normalizeFileMeta(r.bgm),
-    // 背景音乐音量：非法/越界回落 100
-    bgmVolume: clampInt(r.bgmVolume, 0, 100, base.bgmVolume),
-    // 提示词与署名（录屏入镜）：非字符串回落空文本，字符串截断到上限；显隐非法/缺失回落隐藏
-    promptText: typeof r.promptText === 'string' ? r.promptText.slice(0, PROMPT_MAX) : base.promptText,
-    showPrompt: typeof r.showPrompt === 'boolean' ? r.showPrompt : base.showPrompt,
-    bylineText: typeof r.bylineText === 'string' ? r.bylineText.slice(0, BYLINE_MAX) : base.bylineText,
-    showByline: typeof r.showByline === 'boolean' ? r.showByline : base.showByline,
-    // 水印（防伪）：显隐非法/缺失回落隐藏；文字截断；字号/不透明度越界钳制；字体形式/字重枚举校验
-    showWatermark: typeof r.showWatermark === 'boolean' ? r.showWatermark : base.showWatermark,
-    watermarkText: typeof r.watermarkText === 'string' ? r.watermarkText.slice(0, WATERMARK_MAX) : base.watermarkText,
-    watermarkFontSize: clampInt(
-      r.watermarkFontSize,
-      WATERMARK_FONT_MIN,
-      WATERMARK_FONT_MAX,
-      base.watermarkFontSize,
-    ),
-    watermarkFontFamily: WATERMARK_FAMILIES.includes(r.watermarkFontFamily as WatermarkFamily)
-      ? (r.watermarkFontFamily as WatermarkFamily)
-      : base.watermarkFontFamily,
-    watermarkColor: WATERMARK_COLORS.includes(r.watermarkColor as WatermarkColor)
-      ? (r.watermarkColor as WatermarkColor)
-      : base.watermarkColor,
-    watermarkSpeed: WATERMARK_SPEEDS.includes(r.watermarkSpeed as WatermarkSpeed)
-      ? (r.watermarkSpeed as WatermarkSpeed)
-      : base.watermarkSpeed,
-    lockControls: typeof r.lockControls === 'boolean' ? r.lockControls : base.lockControls,
-    watermarkFontWeight:
-      r.watermarkFontWeight === 'normal' || r.watermarkFontWeight === 'bold'
-        ? r.watermarkFontWeight
-        : base.watermarkFontWeight,
-    watermarkOpacity: clampInt(
-      r.watermarkOpacity,
-      WATERMARK_OPACITY_MIN,
-      WATERMARK_OPACITY_MAX,
-      base.watermarkOpacity,
-    ),
   };
 }
 
@@ -496,8 +405,20 @@ export async function saveFile(
             ? '.mp3'
             : '.mp4';
   const filename = `${randomUUID()}${ext}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await fsp.writeFile(path.join(dir, filename), buffer);
+  const target = path.join(dir, filename);
+  // 流式写盘：Buffer.from(await file.arrayBuffer()) 会把整个文件再复制一份常驻内存
+  // （200MB 视频并发上传 3 路峰值即 >1GB RSS；zip 路径早已流式，普通文件反而没有）。
+  // stream → pipeline 逐块落盘，峰值内存从「整份文件」降到「单个分片」。
+  // 失败时删除半写的目标文件，不留孤儿占用磁盘。
+  try {
+    await pipeline(
+      Readable.fromWeb(file.stream() as Parameters<typeof Readable.fromWeb>[0]),
+      createWriteStream(target),
+    );
+  } catch (err) {
+    await fsp.rm(target, { force: true }).catch(() => {});
+    throw err;
+  }
   return {
     filename,
     originalName: sanitizeOriginalName(file.name),
@@ -579,7 +500,8 @@ export async function saveBundle(projectId: string, file: File): Promise<FileMet
   const filename = `${randomUUID()}.html`;
   const bundleDir = path.join(filesDir, filename);
 
-  const zipBuffer = new Uint8Array(await file.arrayBuffer());
+  // zip 输入侧同样流式：不再 new Uint8Array(await file.arrayBuffer()) 整包常驻内存
+  // （上限 50MB 的包逐块从 file.stream() 读取，与解压侧的流式限额防护同一理念）
 
   /** 已校验通过、待落盘的文件 */
   const cleaned: { relPath: string; data: Uint8Array }[] = [];
@@ -639,12 +561,23 @@ export async function saveBundle(projectId: string, file: File): Promise<FileMet
   };
 
   try {
-    // 分片喂入：保证解码器增量投递，限额检查才有意义（见 ZIP_INPUT_SLICE 说明）
-    for (let offset = 0; offset < zipBuffer.length; offset += ZIP_INPUT_SLICE) {
+    // 分片喂入：保证解码器增量投递，限额检查才有意义（见 ZIP_INPUT_SLICE 说明）。
+    // zip 源自 file.stream()：不再整包缓冲（上限 50MB 的包逐块读取），
+    // 每个流分片再按 ZIP_INPUT_SLICE 细切，与原实现的投递粒度一致
+    const source = Readable.fromWeb(
+      file.stream() as Parameters<typeof Readable.fromWeb>[0],
+    );
+    for await (const chunk of source) {
       if (aborted) break;
-      const end = Math.min(offset + ZIP_INPUT_SLICE, zipBuffer.length);
-      unzip.push(zipBuffer.subarray(offset, end), end === zipBuffer.length);
+      const buf = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk as ArrayBuffer);
+      for (let offset = 0; offset < buf.length; offset += ZIP_INPUT_SLICE) {
+        if (aborted) break;
+        const end = Math.min(offset + ZIP_INPUT_SLICE, buf.length);
+        unzip.push(buf.subarray(offset, end), false);
+      }
     }
+    // 输入流结束：空块 + final 收尾，驱动 fflate 走完收尾解压
+    if (!aborted) unzip.push(new Uint8Array(0), true);
   } catch (err) {
     // 中止时 fflate 可能用空 chunk 再次回调，噪音异常不覆盖真正的中止原因
     if (!aborted) throw err;
@@ -656,12 +589,18 @@ export async function saveBundle(projectId: string, file: File): Promise<FileMet
     throw new Error(`zip 包根目录缺少 ${BUNDLE_ENTRY} 入口文件`);
   }
 
-  // 落盘（路径已归一化，不会越出包目录）
-  await fsp.mkdir(bundleDir, { recursive: true });
-  for (const { relPath, data } of cleaned) {
-    const target = path.join(bundleDir, relPath);
-    await fsp.mkdir(path.dirname(target), { recursive: true });
-    await fsp.writeFile(target, data);
+  // 落盘（路径已归一化，不会越出包目录）；中途失败清理半写目录（与 saveFile 的
+  // 失败清理同一策略：清单尚未引用，删掉即可，不留磁盘孤儿）
+  try {
+    await fsp.mkdir(bundleDir, { recursive: true });
+    for (const { relPath, data } of cleaned) {
+      const target = path.join(bundleDir, relPath);
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(target, data);
+    }
+  } catch (err) {
+    await fsp.rm(bundleDir, { recursive: true, force: true }).catch(() => {});
+    throw err;
   }
 
   return {
