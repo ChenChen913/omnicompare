@@ -52,7 +52,8 @@ export interface VideoCardProps {
   titleAlign?: TitleAlign;
   /** 全局标题字号 px（同步所有卡片，TITLE_FONT_MIN~MAX） */
   titleFontSize?: number;
-  /** 全局标题位置（同步所有卡片）：below = 内容下方（v1 行为）；overlay = 内容内部顶部叠加（两者排他） */
+  /** 全局标题位置（同步所有卡片）：below = 内容下方（v1 行为）；above = 内容上方独立标题带（不遮内容）；
+   *  overlay = 内容内部顶部叠加（三者排他） */
   titlePosition?: TitlePosition;
   /** 全局标题字重（同步所有卡片）：normal / medium / bold */
   titleWeight?: TitleWeight;
@@ -139,15 +140,16 @@ export const VideoCard = memo(function VideoCard({
   const [prevImageName, setPrevImageName] = useState(imageFile?.filename);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  /** overlay 标题条：展示态（点击进入编辑）⇄ 编辑态（失焦退出）；below/overlay 排他，textareaRef 复用 */
+  /** overlay 标题条：展示态（点击进入编辑）⇄ 编辑态（失焦退出）；below/above/overlay 三态排他，textareaRef 复用 */
   const [overlayEditing, setOverlayEditing] = useState(false);
   /** 主视频本地引用（父级 setVideoRef 之外的副本，用于同步模糊背景层，Step C） */
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const bgVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  /* ---------- 标题样式派生（below/overlay 共用一套全局格式，保证模式切换视觉连续） ---------- */
+  /* ---------- 标题样式派生（below/above/overlay 共用一套全局格式，保证模式切换视觉连续） ---------- */
   const overlayMode = showTitles && titlePosition === 'overlay';
-  const belowMode = showTitles && titlePosition !== 'overlay';
+  const aboveMode = showTitles && titlePosition === 'above';
+  const belowMode = showTitles && titlePosition === 'below';
   const titleFontWeight = titleWeight === 'bold' ? 700 : titleWeight === 'medium' ? 500 : 400;
   const titleColorCss = titleColor !== TITLE_COLOR_DEFAULT ? titleColor : undefined;
 
@@ -219,7 +221,8 @@ export const VideoCard = memo(function VideoCard({
   }
 
   // 标题输入框自动增高：聚焦时完全展开（长标题编辑全可见），失焦时收折到约 4 行；
-  // 配合 no-scrollbar，任何情况下都不会出现滚动条
+  // 配合 no-scrollbar，任何情况下都不会出现滚动条；titlePosition 入依赖：
+  // 位置切换时 textarea 换位重挂，重挂后需要立即重算高度（否则多行标题被 rows=1 裁剪）
   const recalcHeight = useCallback((expand: boolean) => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -232,7 +235,7 @@ export const VideoCard = memo(function VideoCard({
     if (!ta) return;
     const focused = document.activeElement === ta;
     recalcHeight(focused);
-  }, [title, titleFontSize, recalcHeight]);
+  }, [title, titleFontSize, titlePosition, recalcHeight]);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -272,6 +275,29 @@ export const VideoCard = memo(function VideoCard({
   const displayName = video?.originalName ?? htmlFile?.originalName ?? imageFile?.originalName ?? '';
   const displaySize = video?.size ?? htmlFile?.size ?? imageFile?.size ?? 0;
 
+  /** below/above 模式共用的标题编辑框（常驻可编辑 textarea，与 overlay 展示态排他；
+   *  below 渲染在内容下方信息区，above 渲染在内容上方独立标题带，两处互斥复用同一元素与 textareaRef） */
+  const titleTextarea = (
+    <textarea
+      ref={textareaRef}
+      rows={1}
+      value={title}
+      maxLength={100}
+      onChange={(e) => onTitleChange(index, e.target.value)}
+      onFocus={() => recalcHeight(true)}
+      onBlur={() => recalcHeight(false)}
+      placeholder="给内容起个标题，或写点介绍…"
+      aria-label={`位置 ${index + 1} 的标题与介绍`}
+      style={{
+        textAlign: titleAlign,
+        fontSize: `${titleFontSize}px`,
+        fontWeight: titleFontWeight,
+        ...(titleColorCss ? { color: titleColorCss } : {}),
+      }}
+      className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
+    />
+  );
+
   // 文件选择框按当前卡片状态收窄类型：空位全类型都收，已放置按类型收
   const accept = isHtml
     ? '.html,.htm,text/html,.zip,application/zip'
@@ -308,6 +334,21 @@ export const VideoCard = memo(function VideoCard({
       >
         {index + 1}
       </span>
+
+      {/* above 标题带（titlePosition='above'）：内容上方独立标题区，不遮内容、不占内容比例；
+          与 below 编辑框同体（titleTextarea 复用），仅位置在顶；
+          左对齐 + 编号可见时 pl-11 避开左上角位置角标（与 overlay 同策略）；
+          空位也渲染（与 below 一致的编辑可供性，标题随位置持久化） */}
+      {aboveMode && (
+        <div
+          className={cn(
+            'flex w-full shrink-0 flex-col p-2.5 sm:p-3',
+            titleAlign === 'left' && showIndex && 'pl-11', // 编号隐藏后不再需要避让角标
+          )}
+        >
+          {titleTextarea}
+        </div>
+      )}
 
       {/* 内容区域：比例只控制卡片框（行内 aspect-ratio），视频 object-contain 不裁切；HTML 为沙箱 iframe */}
       <div
@@ -579,29 +620,11 @@ export const VideoCard = memo(function VideoCard({
         )}
       </div>
 
-      {/* 标题 / 属性信息区（两者可独立显隐；标题仅在 below 模式下在此渲染，overlay 模式排他显示在内容顶部） */}
+      {/* 标题 / 属性信息区（两者可独立显隐）：below 标题在此渲染；
+          above 在内容上方独立标题带；overlay 排他显示在内容顶部（三种位置互斥） */}
       {(belowMode || showInfo) && (
       <div className="flex flex-1 flex-col gap-1.5 p-2.5 sm:p-3">
-        {belowMode && (
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={title}
-          maxLength={100}
-          onChange={(e) => onTitleChange(index, e.target.value)}
-          onFocus={() => recalcHeight(true)}
-          onBlur={() => recalcHeight(false)}
-          placeholder="给内容起个标题，或写点介绍…"
-          aria-label={`位置 ${index + 1} 的标题与介绍`}
-          style={{
-            textAlign: titleAlign,
-            fontSize: `${titleFontSize}px`,
-            fontWeight: titleFontWeight,
-            ...(titleColorCss ? { color: titleColorCss } : {}),
-          }}
-          className="no-scrollbar w-full resize-none overflow-hidden rounded-lg border border-transparent bg-muted/40 px-2.5 py-1.5 leading-snug text-foreground placeholder:text-muted-foreground/50 transition-colors focus:border-ring focus:bg-muted/60 focus:outline-none"
-        />
-        )}
+        {belowMode && titleTextarea}
         {showInfo && (video || htmlFile || imageFile) && (
           <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
             {/* 状态点：HTML 显示加载状态（绿=就绪 / 琥珀=加载中 / 红=失败）；视频与图片默认就绪 */}

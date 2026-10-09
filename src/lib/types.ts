@@ -107,11 +107,12 @@ export const TITLE_FONT_DEFAULT = 16;
 /** 字号快捷档位（含默认与上限）：供菜单一键跳档，避免从 16 连点 44 次才到 60 */
 export const TITLE_FONT_PRESETS = [16, 24, 32, 40, 48, TITLE_FONT_MAX] as const;
 
-/** 标题位置：below = 内容下方（v1 行为，可编辑 textarea）；overlay = 内容内部顶部叠加 */
-export type TitlePosition = 'below' | 'overlay';
+/** 标题位置：below = 内容下方（v1 行为，可编辑 textarea）；above = 内容上方独立标题带（不遮内容）；
+ *  overlay = 内容内部顶部叠加（三者排他） */
+export type TitlePosition = 'below' | 'above' | 'overlay';
 
 /** 合法的标题位置取值 */
-export const TITLE_POSITIONS = ['below', 'overlay'] as const;
+export const TITLE_POSITIONS = ['below', 'above', 'overlay'] as const;
 
 /** 标题字重档位 */
 export type TitleWeight = 'normal' | 'medium' | 'bold';
@@ -411,7 +412,7 @@ export interface ProjectSettings {
   titleAlign: TitleAlign;
   /** 标题字号 px（全局同步，TITLE_FONT_MIN~MAX） */
   titleFontSize: number;
-  /** 标题位置（全局同步）：below = 内容下方；overlay = 内容内部顶部叠加（两者排他） */
+  /** 标题位置（全局同步）：below = 内容下方；above = 内容上方独立标题带；overlay = 内容内部顶部叠加（三者排他） */
   titlePosition: TitlePosition;
   /** 标题字重（全局同步）：normal / medium / bold */
   titleWeight: TitleWeight;

@@ -13,11 +13,13 @@ import {
   AlignLeft,
   AlignRight,
   ArrowDownToLine,
+  ArrowUpToLine,
   Bold,
   Crop,
   Droplets,
   Expand,
   Gauge,
+  Layers,
   Minus,
   Music,
   Palette,
@@ -356,13 +358,19 @@ export function TitleMenu({ s, updateSettings }: MenuBase) {
         </DropdownMenuSub>
         <DropdownMenuSub>
           <DropdownMenuSubTrigger disabled={!s.showTitles} className="text-[13px]">
-            <ArrowDownToLine className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            {s.titlePosition === 'overlay' ? (
+              <Layers className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            ) : s.titlePosition === 'above' ? (
+              <ArrowUpToLine className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            ) : (
+              <ArrowDownToLine className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            )}
             标题位置
             <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
-              {s.titlePosition === 'overlay' ? '顶部叠加' : '内容下方'}
+              {s.titlePosition === 'overlay' ? '顶部叠加' : s.titlePosition === 'above' ? '内容上方' : '内容下方'}
             </span>
           </DropdownMenuSubTrigger>
-          {/* 两种位置排他显示：below = 下方编辑框；overlay = 内容顶部叠加（点击可编辑） */}
+          {/* 三种位置排他显示：below = 下方编辑框；above = 内容上方独立标题带（不遮内容）；overlay = 内容顶部叠加（点击可编辑） */}
           <DropdownMenuSubContent className="min-w-[9rem] border-border bg-card">
             {TITLE_POSITIONS.map((p) => (
               <DropdownMenuItem
@@ -370,7 +378,7 @@ export function TitleMenu({ s, updateSettings }: MenuBase) {
                 onClick={() => void updateSettings({ titlePosition: p })}
                 className={cn('text-[13px]', p === s.titlePosition && 'font-semibold text-primary')}
               >
-                {p === 'overlay' ? '内容顶部叠加' : '内容下方（默认）'}
+                {p === 'below' ? '内容下方（默认）' : p === 'above' ? '内容上方' : '内容顶部叠加'}
               </DropdownMenuItem>
             ))}
           </DropdownMenuSubContent>

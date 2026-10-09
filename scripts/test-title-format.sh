@@ -76,6 +76,12 @@ echo "=== F. 标题位置/粗细/颜色（overlay 模式三件套） ==="
 R=$(req PATCH /api/videos/settings '{"titlePosition":"overlay","titleWeight":"bold","titleColor":"#facc15"}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "PATCH 位置/粗细/颜色同发" 200 "$CODE" '"titlePosition":"overlay".*"titleWeight":"bold".*"titleColor":"#facc15"' "$BODY"
+R=$(req PATCH /api/videos/settings '{"titlePosition":"above","titleWeight":"medium"}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "PATCH titlePosition=above（内容上方）" 200 "$CODE" '"titlePosition":"above".*"titleWeight":"medium"' "$BODY"
+R=$(req GET /api/videos)
+BODY=$(echo "$R" | head -n -1)
+check "GET 回读 titlePosition=above 落盘" 0 0 '"titlePosition":"above"' "$BODY"
 R=$(req PATCH /api/videos/settings '{"titlePosition":"below","titleWeight":"normal","titleColor":"default"}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "PATCH 回 below/normal/default" 200 "$CODE" '"titlePosition":"below".*"titleWeight":"normal".*"titleColor":"default"' "$BODY"
@@ -97,7 +103,7 @@ BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "PATCH showIndex=false" 200 "$CODE" '"showIndex":false' "$BODY"
 R=$(req PATCH /api/videos/settings '{"showIndex":"yes"}')
 CODE=$(echo "$R" | tail -n 1)
-check "PATCH showIndex 非法 → 400" 400 "$CODE" 'showIndex' "$(echo "$R" | head -n -1)"
+check "PATCH showIndex 非法 → 400" 400 "$CODE" '编号显隐' "$(echo "$R" | head -n -1)"
 R=$(req PATCH /api/projects/default/settings '{"showIndex":false}')
 BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
 check "v2 showIndex 一致" 200 "$CODE" '"showIndex":false' "$BODY"
@@ -118,6 +124,12 @@ check "v2 PATCH 非法 → 400" 400 "$CODE" '标题字号' "$(echo "$R" | head -
 R=$(req PATCH /api/projects/default/settings '{"titleAlign":"top"}')
 CODE=$(echo "$R" | tail -n 1)
 check "v2 PATCH 非法对齐 → 400" 400 "$CODE" '标题对齐' "$(echo "$R" | head -n -1)"
+R=$(req PATCH /api/projects/default/settings '{"titlePosition":"above"}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "v2 PATCH titlePosition=above 一致" 200 "$CODE" '"titlePosition":"above"' "$BODY"
+R=$(req PATCH /api/projects/default/settings '{"titlePosition":"below"}')
+BODY=$(echo "$R" | head -n -1); CODE=$(echo "$R" | tail -n 1)
+check "v2 恢复 below" 200 "$CODE" '"titlePosition":"below"' "$BODY"
 
 echo "=== H. 恢复默认（center/16，不污染演示状态） ==="
 R=$(req PATCH /api/videos/settings '{"titleAlign":"center","titleFontSize":16}')
