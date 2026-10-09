@@ -1,12 +1,12 @@
 /**
  * 项目集合 API（schema v2）
- * GET  /api/projects  项目列表
+ * GET  /api/projects  项目列表（摘要：id/name/status/时间/内容构成计数，不含 items 明细）
  * POST /api/projects  新建项目 { name? } → 201 + 项目
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { listProjectIds, readProject, writeProject, withProjectLock } from '@/lib/project-store';
-import { SLOT_MIN, defaultLayoutFor, defaultSettings } from '@/lib/types';
+import { SLOT_MIN, defaultLayoutFor, defaultSettings, toProjectSummary } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +18,9 @@ const noStore = {
 export async function GET() {
   const ids = await listProjectIds();
   const projects = await Promise.all(ids.map((id) => readProject(id)));
-  return NextResponse.json(projects, { headers: noStore });
+  // 返回摘要而非完整项目：列表消费方（切换器徽标 / 库卡片 / 幽灵项目校验）
+  // 只需要名称、状态与内容构成计数；完整 items 逐条归一化的读放大随项目数增长
+  return NextResponse.json(projects.map(toProjectSummary), { headers: noStore });
 }
 
 export async function POST(req: NextRequest) {

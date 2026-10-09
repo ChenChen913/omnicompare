@@ -1,49 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
-  ArrowDownToLine,
-  Bold,
-  BookOpen,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Clapperboard,
-  Code2,
-  Crop,
-  Droplets,
-  Expand,
-  Film,
-  FolderPlus,
-  Gauge,
-  Image as ImageIcon,
-  LayoutGrid,
-  Library,
-  MessageSquareQuote,
-  Minus,
-  Moon,
-  Music,
-  Pause,
-  Palette,
-  PenLine,
-  Play,
-  Plus,
-  RefreshCw,
-  RotateCcw,
-  Stamp,
-  Settings,
-  Shrink,
-  Sun,
-  Trash2,
-  Type,
-  UploadCloud,
-  Video,
-  Volume2,
-  Wand2,
-} from 'lucide-react';
+/**
+ * 视频墙主组件：状态协调中枢。
+ *
+ * 2026-10 架构重构：本文件曾是 3665 行的「上帝组件」（62 个 useState、35 个
+ * useCallback、18 个 useEffect 挤在一个函数里，占 src 总量 41%）。重构后：
+ * - 设置域 33 个 useState → useWallSettings（单一 state 对象 + 快照回滚）
+ * - 项目域（列表/切换/新建/改名/删除）→ useProjects
+ * - autoFit 求解器与三个布局对齐 effect → useAutoFit
+ * - 顶栏 / 侧栏 / 项目库 / 提示词栏 / 水印层 / 四个弹窗 → wall/ 子组件
+ * 本文件只保留：清单状态与加载、上传分发、拖拽排序、批量播放控制、
+ * BGM 管理、键盘快捷键与整体布局编排。
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Play, Shrink, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
 import {
@@ -56,210 +26,48 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import {
-  SortableContext,
-  arrayMove,
-  rectSortingStrategy,
-  sortableKeyboardCoordinates,
-  useSortable,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { cn } from '@/lib/utils';
 import {
   AspectRatio,
-  AUDIO_EXTS,
   DEFAULT_PROJECT_ID,
-  FileMeta,
   Layout,
-  LetterboxFill,
-  LETTERBOX_FILLS,
-  BYLINE_MAX,
   MAX_AUDIO_SIZE,
   Manifest,
-  ManifestSettings,
-  Project,
-  PROMPT_MAX,
-  SCALE_STEPS,
-  WATERMARK_FONT_MAX,
-  WATERMARK_FONT_MIN,
-  WATERMARK_MAX,
-  WATERMARK_COLORS,
-  WATERMARK_SPEEDS,
-  WATERMARK_SPEED_SECONDS,
-  WATERMARK_OPACITY_MAX,
-  WATERMARK_OPACITY_MIN,
-  WatermarkColor,
-  WatermarkFamily,
-  WatermarkSpeed,
   SLOT_MAX,
   Slot,
-  TITLE_ALIGNS,
-  TITLE_COLOR_DEFAULT,
-  TITLE_COLOR_PALETTE,
-  TITLE_FONT_DEFAULT,
-  TITLE_FONT_MAX,
-  TITLE_FONT_MIN,
-  TITLE_FONT_PRESETS,
-  TITLE_POSITIONS,
-  TITLE_WEIGHTS,
-  TitleAlign,
-  TitlePosition,
-  TitleWeight,
   aspectCss,
-  aspectLabel,
   defaultLayoutFor,
-  defaultSettings,
   isContentFile,
-  layoutOptionsFor,
   validateClientFile,
 } from '@/lib/types';
+import { VideoCard } from './video-card';
+import { useWallSettings } from './wall/use-wall-settings';
+import { useProjects } from './wall/use-projects';
+import { useAutoFit } from './wall/use-autofit';
+import { TopBar } from './wall/top-bar';
+import { Sidebar } from './wall/sidebar';
+import { ProjectLibrary } from './wall/project-library';
+import { PromptBar } from './wall/prompt-bar';
+import { WatermarkLayer } from './wall/watermark-layer';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+  CreateProjectDialog,
+  NotesDialog,
+  ShrinkConfirmDialog,
+  WatermarkTextDialog,
+} from './wall/dialogs';
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { VideoCard, VideoCardProps } from './video-card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-
-/** 工作模式与侧栏开关（仅 UI 偏好，业务数据永远以服务端为准）；当前项目同此列 */
-const PREF_MODE = 'omnicompare:mode';
-const PREF_SIDEBAR = 'omnicompare:sidebar';
-const PREF_PROJECT = 'omnicompare:project';
-const PREF_VIEW = 'omnicompare:view';
-
-/** 项目状态展示名与状态点配色（蓝图 §7：active/draft/archived） */
-const STATUS_META = {
-  active: { label: '进行中', dot: 'bg-emerald-500' },
-  draft: { label: '草稿', dot: 'bg-amber-500' },
-  archived: { label: '已归档', dot: 'bg-muted-foreground/40' },
-} as const;
-
-function defaultSlots(): Slot[] {
-  return Array.from({ length: 6 }, (_, i) => ({ index: i, title: '', video: null }));
-}
-
-/** 拖拽排序的稳定 id：文件名全局唯一（uuid + 扩展名），与 React key 同源；空位不参与排序 */
-function sortableIdOf(slot: Slot): string {
-  return slot.video?.filename ?? slot.html?.filename ?? slot.image?.filename ?? `empty-${slot.index}`;
-}
-
-/**
- * Sortable 包装层：为已放置内容卡片接入 dnd-kit 排序。
- * 外层 div 承担 transform 与 ref；卡片本身只在拖拽中抬升（蓝图 §14）。
- * React key 用稳定文件名：排序后 DOM 节点被移动而非复用重建，视频播放不中断。
- */
-function SortableCard({
-  slot,
-  ...cardProps
-}: { slot: Slot } & Omit<VideoCardProps, 'slot' | 'dragHandle' | 'isDragging'>) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: sortableIdOf(slot),
-  });
-  return (
-    <div
-      ref={setNodeRef}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
-      className={cn('flex', isDragging && 'relative z-30')}
-    >
-      <VideoCard
-        slot={slot}
-        dragHandle={
-          { ...(attributes as object), ...(listeners as object) } as React.HTMLAttributes<HTMLSpanElement>
-        }
-        isDragging={isDragging}
-        {...cardProps}
-      />
-    </div>
-  );
-}
-
-/** 顶部控制按钮的基础样式 */
-const ctlBtn =
-  'inline-flex h-10 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3';
-
-/** 顶部按钮组之间的竖向分隔线：把「播放 / 管理与显示 / 模式」分成视觉上独立的组 */
-function Divider() {
-  return <span aria-hidden className="mx-0.5 hidden h-6 w-px shrink-0 bg-border sm:block" />;
-}
-
-/** 矩阵选项：迷你预览图 + 行×列标签 */
-function MatrixOption({
-  layout,
-  count,
-  active,
-  onSelect,
-}: {
-  layout: Layout;
-  count: number;
-  active: boolean;
-  onSelect: () => void;
-}) {
-  const pad = layout.rows * layout.cols - count;
-  const maxDim = Math.max(layout.rows, layout.cols);
-  const cell = Math.min(9, Math.max(4, Math.floor((84 - (maxDim - 1) * 2) / maxDim)));
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      title={`${layout.rows} 行 × ${layout.cols} 列${pad > 0 ? `，末尾留 ${pad} 个空格` : ''}`}
-      aria-pressed={active}
-      className={cn(
-        'flex flex-col items-center justify-start gap-1.5 rounded-lg border px-1.5 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-        active
-          ? 'border-primary bg-primary/15'
-          : 'border-border/80 bg-muted/40 hover:border-muted-foreground/40 hover:bg-accent',
-      )}
-    >
-      <span
-        className="grid gap-[2px]"
-        style={{ gridTemplateColumns: `repeat(${layout.cols}, ${cell}px)` }}
-        aria-hidden
-      >
-        {Array.from({ length: layout.rows * layout.cols }).map((_, i) => (
-          <span
-            key={i}
-            className={cn('rounded-[1px]', i < count ? 'bg-primary/80' : 'bg-muted-foreground/30')}
-            style={{ width: cell, height: cell }}
-          />
-        ))}
-      </span>
-      <span className={cn('text-[11px] font-semibold', active ? 'text-primary' : 'text-muted-foreground')}>
-        {layout.rows}×{layout.cols}
-        {pad > 0 && <span className="ml-0.5 text-[9px] font-normal text-amber-600 dark:text-amber-400/90">补</span>}
-      </span>
-    </button>
-  );
-}
+  PREF_MODE,
+  PREF_PROJECT,
+  PREF_SIDEBAR,
+  PREF_VIEW,
+  SortableCard,
+  defaultSlots,
+  sortableIdOf,
+} from './wall/shared';
 
 export function VideoWall() {
+  /* ---------- 清单状态（内容位与矩阵） ---------- */
   const [slots, setSlots] = useState<Slot[]>(defaultSlots);
   const [count, setCount] = useState(6);
   const [layout, setLayout] = useState<Layout>({ rows: 2, cols: 3 });
@@ -270,76 +78,71 @@ export function VideoWall() {
   const [switching, setSwitching] = useState(false);
   const [uploading, setUploading] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
-  /* 播放与展示设置（Step 7：服务端 Project.settings 为唯一事实源，蓝图 §7/§15） */
-  const [loop, setLoop] = useState(true);
-  const [mutedAll, setMutedAll] = useState(false);
-  const [aspect, setAspect] = useState<AspectRatio>('original');
-  /** 全局自定义比例宽高（aspectRatio='custom' 时生效） */
-  const [customRatio, setCustomRatio] = useState<{ w: number; h: number } | undefined>(undefined);
-  /** 自定义比例输入草稿（受控输入需要允许中间态，提交时再校验） */
-  const [ratioDraft, setRatioDraft] = useState({ w: '16', h: '9' });
-  const [showTitles, setShowTitles] = useState(true);
-  const [showInfo, setShowInfo] = useState(true);
-  /** 位置编号显隐（左上角数字角标，兼拖拽手柄；隐藏后仅视觉消失） */
-  const [showIndex, setShowIndex] = useState(true);
-  const [rate, setRate] = useState(1);
-  /* 背景音乐（全局唯一一轨，存项目 settings）：bgm = 文件元数据（null 未设置）；bgmVolume 0-100 */
-  const [bgm, setBgm] = useState<FileMeta | null>(null);
-  const [bgmVolume, setBgmVolume] = useState(100);
-  const [bgmUploading, setBgmUploading] = useState(false);
-  /* 提示词与署名（矩阵下方，录屏入镜用）：文本与显隐都随项目存服务端 settings */
-  const [promptText, setPromptText] = useState('');
-  const [showPrompt, setShowPrompt] = useState(false);
-  const [bylineText, setBylineText] = useState('');
-  const [showByline, setShowByline] = useState(false);
-  /** 最近一次持久化的文本：失焦时对比决定是否 PATCH，避免无变更也发请求 */
-  const promptSavedRef = useRef('');
-  const bylineSavedRef = useRef('');
-  /* 水印（防伪标志）：文字 + 字号 + 字体形式 + 字重 + 不透明度 + 显隐，全部随项目存服务端 settings */
-  const [wmShow, setWmShow] = useState(false);
-  const [wmText, setWmText] = useState('');
-  const [wmFontSize, setWmFontSize] = useState(48);
-  const [wmFamily, setWmFamily] = useState<WatermarkFamily>('default');
-  const [wmColor, setWmColor] = useState<WatermarkColor>('auto');
-  const [wmSpeed, setWmSpeed] = useState<WatermarkSpeed>('normal');
-  const [wmWeight, setWmWeight] = useState<'normal' | 'bold'>('bold');
-  const [wmOpacity, setWmOpacity] = useState(30);
-  /** 录屏模式（锁定控件）：开启后专注模式下悬停不再显示视频控件，随项目保存 */
-  const [lockControls, setLockControls] = useState(false);
+  /** 缩减数量确认框的目标值 */
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  /** studio = 管理（全部控件 + 侧栏 + 顶栏）；focus = 观看（顶栏整体隐藏 + 满幅网格） */
+  const [mode, setMode] = useState<'studio' | 'focus'>('studio');
+  /** workspace = 内容矩阵；library = 项目库（侧栏「库」入口，SPA 内切换） */
+  const [view, setView] = useState<'workspace' | 'library'>('workspace');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  /** 侧栏窗格列表点击定位时的高亮位 */
+  const [highlight, setHighlight] = useState<number | null>(null);
+  const [themeMounted, setThemeMounted] = useState(false);
+  /** 窄屏（<768px）标记：仅 auto 模式渲染列数收窄用 */
+  const [narrow, setNarrow] = useState(false);
+  /** 使用须知弹窗 */
+  const [notesOpen, setNotesOpen] = useState(false);
+  /** 「刷新全部页面」信号：自增触发所有 HTML 卡片重载 iframe（纯 HTML 项目的等价播放操作） */
+  const [htmlRefreshTick, setHtmlRefreshTick] = useState(0);
   /** 水印文字编辑对话框：open 状态与草稿（确认才提交，取消/Esc 丢弃草稿）；
-   *  enable：本次保存是否连带启用水印（顶栏按钮首次开启路径为 true，纯改文字为 false） */
+   *  enable：本次保存是否连带启用水印 */
   const [wmDialogOpen, setWmDialogOpen] = useState(false);
   const [wmDraft, setWmDraft] = useState('');
   const [wmDialogEnable, setWmDialogEnable] = useState(false);
-  /** 水印蒙版层：effect 把它的位置/尺寸实时对齐到视频墙（巡游范围 = 墙的实际区域） */
+  /** 背景音乐上传中 */
+  const [bgmUploading, setBgmUploading] = useState(false);
+  /** 自定义比例输入草稿（受控输入需要允许中间态，提交时再校验） */
+  const [ratioDraft, setRatioDraft] = useState({ w: '16', h: '9' });
+
+  const { resolvedTheme, setTheme } = useTheme();
+
+  /* ---------- DOM 引用 ---------- */
+  const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  /** 背景音乐：<audio> 元素（loop 恒开，音量/倍速由 effect 同步）与上传 input */
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const bgmInputRef = useRef<HTMLInputElement>(null);
+  const titleTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  /** 在途未提交的标题（slot → 最新文本）：卸载时用 keepalive 补提交，避免最后一次编辑丢失 */
+  const titlePending = useRef<Map<number, string>>(new Map());
+  /* 自动适配视口测量锚点：顶栏 / 主体 / 网格 / 提示词栏 / 水印层 */
+  const headerRef = useRef<HTMLElement | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
+  const wallRef = useRef<HTMLDivElement | null>(null);
+  const promptBarRef = useRef<HTMLDivElement | null>(null);
   const wmLayerRef = useRef<HTMLDivElement | null>(null);
-  /** 留白填充（Step C，扩展 cover）：base = 底色吸收；blur = 模糊填充；cover = 铺满裁切（仅视频/图片生效） */
-  const [letterboxFill, setLetterboxFill] = useState<LetterboxFill>('base');
-  /** 整墙缩放百分比（SCALE_STEPS 档位）：100 = 原始大小；小档位让纵向多行布局整墙同屏便于截图 */
-  const [wallScale, setWallScale] = useState(100);
-  /** 自动适配视口开关（全局同步，存项目 settings）：专注模式恒定生效不依赖此开关 */
-  const [autoFit, setAutoFit] = useState(true);
-  /** 自动适配视口：整墙高度超出视口可用空间时自动等比缩小到恰好同屏（截图/录屏全入镜）。
-   *  开启时优先于 wallScale 手动档；专注模式恒定生效（用户要求：专注下任意数量视频都居中同屏）。
-   *  实现为求解墙宽 px（fitWidth）：纯布局变化，文字保持清晰重排、dnd 拖拽坐标零偏差 */
-  const [fitWidth, setFitWidth] = useState<number | null>(null);
-  /** fitWidth 镜像 ref：测量回调内读写最新值，避免 RO 循环里读到过期闭包 */
-  const fitWidthRef = useRef<number | null>(null);
-  /** 收敛防护：单次布局环境内最多迭代次数（比例法每轮收窄一档，防极端布局震荡） */
-  const fitIterRef = useRef(0);
-  /** 网页页面缩放百分比（仅 HTML 卡片生效）：iframe 放大视口渲染再缩回，页面内容完整可见 */
-  const [htmlScale, setHtmlScale] = useState(100);
-  /** 标题格式（全局同步，存项目 settings）：所有卡片一次调节同时生效 */
-  const [titleAlign, setTitleAlign] = useState<TitleAlign>('center');
-  const [titleFontSize, setTitleFontSize] = useState(TITLE_FONT_DEFAULT);
-  const [titlePosition, setTitlePosition] = useState<TitlePosition>('below');
-  const [titleWeight, setTitleWeight] = useState<TitleWeight>('normal');
-  const [titleColor, setTitleColor] = useState<string>(TITLE_COLOR_DEFAULT);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** refs 聚合为稳定对象（useAutoFit 的 effect 依赖） */
+  const fitRefs = useMemo(
+    () => ({ headerRef, mainRef, wallRef, promptBarRef, wmLayerRef }),
+    [],
+  );
+
+  /* ---------- 派生 ---------- */
+  const busy = importing || Object.values(uploading).some(Boolean);
+  const filledCount = slots.filter((s) => s.video || s.html || s.image).length;
+  /** 当前项目是否含视频：纯 HTML 项目没有「播放」语义，播放类控件随之隐藏/禁用 */
+  const hasVideo = slots.some((s) => !!s.video);
+  /** 当前项目是否含 HTML 页面：纯 HTML 项目用「刷新全部页面」替代播放组 */
+  const hasHtml = slots.some((s) => s.kind === 'html' && !!s.html);
+  /** 当前项目是否含图片：模糊填充仅对视频/图片生效（Step C） */
+  const hasImage = slots.some((s) => s.kind === 'image' && !!s.image);
+
+  /* ---------- 拖拽导入提示（防卡死） ----------
+      卡片级 handleDrop 会 stopPropagation（防主区重复导入），冒泡层 onDrop 收不到 →
+      gridDrag 可能卡在 true；对策：dragover 持续触发时心跳续命，350ms 无 dragover
+      （即拖拽会话已结束）自动收起提示。 */
   const [gridDrag, setGridDrag] = useState(false);
-  /** 拖拽提示生命周期（防卡死）：卡片级 handleDrop 会 stopPropagation（防主区重复导入），
-      冒泡层 onDrop 收不到 → gridDrag 可能卡在 true；drop 落进 iframe 内部文档 / 拖拽被取消等
-      路径主文档同样收不到收尾事件。对策：dragover 持续触发时心跳续命，350ms 无 dragover
-      （即拖拽会话已结束）自动收起提示；正常路径仍由 onDropCapture / onDragLeave 立即复位。 */
   const gridDragTimerRef = useRef<number | null>(null);
   const endGridDrag = useCallback(() => {
     if (gridDragTimerRef.current !== null) {
@@ -358,61 +161,21 @@ export function VideoWall() {
     },
     [],
   );
-  const [pendingCount, setPendingCount] = useState<number | null>(null);
-  /** studio = 管理（全部控件 + 侧栏 + 顶栏）；focus = 观看（顶栏整体隐藏 + 满幅网格，右下角圆形按钮退出） */
-  const [mode, setMode] = useState<'studio' | 'focus'>('studio');
-  /** 视图（Step D）：workspace = 内容矩阵；library = 项目库（侧栏「库」入口，SPA 内切换） */
-  const [view, setView] = useState<'workspace' | 'library'>('workspace');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  /** 侧栏窗格列表点击定位时的高亮位 */
-  const [highlight, setHighlight] = useState<number | null>(null);
-  const [themeMounted, setThemeMounted] = useState(false);
-  /** 窄屏（<768px）标记：仅 auto 模式渲染列数收窄用 */
-  const [narrow, setNarrow] = useState(false);
-  /* 多项目（Step 8）：当前项目 id + 项目列表（顶栏切换器与侧栏项目卡共用） */
-  const [projectId, setProjectId] = useState<string>(DEFAULT_PROJECT_ID);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [projectBusy, setProjectBusy] = useState(false);
-  const [renameDraft, setRenameDraft] = useState('');
-  /** 使用须知弹窗（原底部注意事项，改为按需弹出不常驻占位） */
-  const [notesOpen, setNotesOpen] = useState(false);
-  /** 「刷新全部页面」信号：自增触发所有 HTML 卡片重载 iframe（纯 HTML 项目的等价播放操作） */
-  const [htmlRefreshTick, setHtmlRefreshTick] = useState(0);
-  const { resolvedTheme, setTheme } = useTheme();
 
-  const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
-  const importInputRef = useRef<HTMLInputElement>(null);
-  /** 背景音乐：<audio> 元素（loop 恒开，音量/倍速由 effect 同步）与上传 input */
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const bgmInputRef = useRef<HTMLInputElement>(null);
-  const titleTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-  /* 自动适配视口测量锚点：顶栏（扣除其高度）/ 主体（扣除内边距）/ 网格（自然高度） */
-  const headerRef = useRef<HTMLElement | null>(null);
-  const mainRef = useRef<HTMLElement | null>(null);
-  const wallRef = useRef<HTMLDivElement | null>(null);
-  /** 提示词/署名区域（网格下方）：autoFit 求解时预留其高度，避免专注模式下溢出视口 */
-  const promptBarRef = useRef<HTMLDivElement | null>(null);
-  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const setVideoRef = useCallback((index: number, el: HTMLVideoElement | null) => {
-    videoRefs.current[index] = el;
+  /* ---------- 项目域（列表/切换/新建/改名/删除） ---------- */
+  /** 项目切换请求：保留旧内容进入过渡态，新数据到达后一次性淡入，避免高度突变跳动 */
+  const requestSwitch = useCallback((id: string) => {
+    setSwitching(true);
+    projectApi.setProjectId(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setProjectId 是 useProjects 的稳定 setState
   }, []);
-
-  const busy = importing || Object.values(uploading).some(Boolean);
-  const filledCount = slots.filter((s) => s.video || s.html || s.image).length;
-  /** 当前项目是否含视频：纯 HTML 项目没有「播放」语义，播放类控件随之隐藏/禁用 */
-  const hasVideo = slots.some((s) => !!s.video);
-  /** 当前项目是否含 HTML 页面：纯 HTML 项目用「刷新全部页面」替代播放组（内容打开即自动运行） */
-  const hasHtml = slots.some((s) => s.kind === 'html' && !!s.html);
-  /** 当前项目是否含图片：模糊填充仅对视频/图片生效（Step C） */
-  const hasImage = slots.some((s) => s.kind === 'image' && !!s.image);
+  const projectApi = useProjects({ busy, requestSwitch });
+  const { projectId, projects, setProjectId } = projectApi;
   const currentProject = projects.find((p) => p.id === projectId) ?? null;
   const projectName =
     currentProject?.name ?? (projectId === DEFAULT_PROJECT_ID ? '默认项目' : '加载中…');
 
-  /** v1 API 多项目参数（Step 8）：默认项目不带参数（旧端点零改动），其余项目追加 project= */
+  /* v1 API 多项目参数（Step 8）：默认项目不带参数（旧端点零改动），其余项目追加 project= */
   const withPid = useCallback(
     (url: string) =>
       projectId === DEFAULT_PROJECT_ID
@@ -420,6 +183,14 @@ export function VideoWall() {
         : `${url}${url.includes('?') ? '&' : '?'}project=${encodeURIComponent(projectId)}`,
     [projectId],
   );
+  /** withPid 镜像 ref：卸载 cleanup 里读最新项目 id（闭包会捕获首渲染的 DEFAULT） */
+  const withPidRef = useRef(withPid);
+  withPidRef.current = withPid;
+
+  /* ---------- 设置域（服务端 Project.settings 为唯一事实源，蓝图 §7/§15） ---------- */
+  const { settings, applySettings, patchLocal, updateSettings, savePromptIfChanged, saveBylineIfChanged } =
+    useWallSettings(withPid);
+
   const getActiveVideos = useCallback(
     () =>
       slots
@@ -436,50 +207,6 @@ export function VideoWall() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  /** 从任意清单响应中同步播放与展示设置（缺省字段回落默认值） */
-  const applySettings = useCallback((s?: ManifestSettings) => {
-    const d = defaultSettings();
-    setAspect(s?.aspectRatio ?? d.aspectRatio);
-    setCustomRatio(s?.customRatio);
-    setShowTitles(s?.showTitles ?? d.showTitles);
-    setShowInfo(s?.showInfo ?? d.showInfo);
-    setShowIndex(s?.showIndex ?? d.showIndex);
-    setLoop(s?.loop ?? d.loop);
-    setMutedAll(s?.muted ?? d.muted);
-    setRate(s?.playbackRate ?? d.playbackRate);
-    setLetterboxFill(s?.letterboxFill ?? d.letterboxFill);
-    setWallScale(s?.wallScale ?? d.wallScale);
-    setHtmlScale(s?.htmlScale ?? d.htmlScale);
-    setAutoFit(s?.autoFit ?? d.autoFit);
-    setTitleAlign(s?.titleAlign ?? d.titleAlign);
-    setTitleFontSize(s?.titleFontSize ?? d.titleFontSize);
-    setTitlePosition(s?.titlePosition ?? d.titlePosition);
-    setTitleWeight(s?.titleWeight ?? d.titleWeight);
-    setTitleColor(s?.titleColor ?? d.titleColor);
-    setBgm(s?.bgm ?? null);
-    setBgmVolume(s?.bgmVolume ?? d.bgmVolume);
-    setPromptText(s?.promptText ?? d.promptText);
-    setShowPrompt(s?.showPrompt ?? d.showPrompt);
-    setBylineText(s?.bylineText ?? d.bylineText);
-    setShowByline(s?.showByline ?? d.showByline);
-    promptSavedRef.current = s?.promptText ?? d.promptText;
-    bylineSavedRef.current = s?.bylineText ?? d.bylineText;
-    setWmShow(s?.showWatermark ?? d.showWatermark);
-    setWmText(s?.watermarkText ?? d.watermarkText);
-    setWmFontSize(s?.watermarkFontSize ?? d.watermarkFontSize);
-    setWmFamily(s?.watermarkFontFamily ?? d.watermarkFontFamily);
-    setWmColor(s?.watermarkColor ?? d.watermarkColor);
-    setWmSpeed(s?.watermarkSpeed ?? d.watermarkSpeed);
-    setLockControls(s?.lockControls ?? d.lockControls);
-    setWmWeight(s?.watermarkFontWeight ?? d.watermarkFontWeight);
-    setWmOpacity(s?.watermarkOpacity ?? d.watermarkOpacity);
-  }, []);
-
-  /* 自定义比例草稿跟随服务端值同步（首次加载与切换项目后回填） */
-  useEffect(() => {
-    setRatioDraft({ w: String(customRatio?.w ?? 16), h: String(customRatio?.h ?? 9) });
-  }, [customRatio]);
-
   /* ---------- 初始化：拉取清单 + 恢复本地偏好 ---------- */
   useEffect(() => {
     let cancelled = false;
@@ -488,12 +215,7 @@ export function VideoWall() {
         const res = await fetch(withPid('/api/videos'), { cache: 'no-store' });
         if (res.status === 404) {
           // 当前项目已被其他会话删除：清除本地偏好并回落默认项目（触发重载）
-          if (!cancelled) {
-            try {
-              localStorage.removeItem(PREF_PROJECT);
-            } catch {}
-            setProjectId(DEFAULT_PROJECT_ID);
-          }
+          if (!cancelled) projectApi.fallbackToDefault();
           return;
         }
         const data = (await res.json()) as Manifest;
@@ -516,6 +238,7 @@ export function VideoWall() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- projectApi.fallbackToDefault 随 projectId 稳定
   }, [applySettings, withPid]);
 
   /* 窄屏检测：auto 模式下列数收窄到 2 竖向堆叠（蓝图 §12；仅影响渲染，不改存储矩阵） */
@@ -527,6 +250,7 @@ export function VideoWall() {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
+  /* 恢复本地 UI 偏好（含当前项目 id；业务数据永远以服务端为准） */
   useEffect(() => {
     try {
       const savedMode = localStorage.getItem(PREF_MODE);
@@ -540,163 +264,31 @@ export function VideoWall() {
     } catch {
       /* 忽略隐私模式下的存储错误 */
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载时恢复一次
   }, []);
 
+  /* UI 偏好持久化 */
   useEffect(() => {
     try {
       localStorage.setItem(PREF_MODE, mode);
     } catch {}
   }, [mode]);
-
   useEffect(() => {
     try {
       localStorage.setItem(PREF_VIEW, view);
     } catch {}
   }, [view]);
-
   useEffect(() => {
     try {
       localStorage.setItem(PREF_SIDEBAR, sidebarOpen ? '1' : '0');
     } catch {}
   }, [sidebarOpen]);
 
-  /* ---------- 多项目管理（Step 8）：列表加载 / 切换 / 新建 / 改名 / 状态 / 删除 ---------- */
-  /** 项目列表加载；同时校正本地持久化的当前项目（被其他会话删除后回落默认） */
-  const refreshProjects = useCallback(async () => {
-    try {
-      const res = await fetch('/api/projects', { cache: 'no-store' });
-      const list = (await res.json().catch(() => null)) as Project[] | null;
-      if (!Array.isArray(list)) return;
-      setProjects(list);
-      setProjectId((cur) => {
-        if (cur !== DEFAULT_PROJECT_ID && !list.some((p) => p.id === cur)) {
-          try {
-            localStorage.removeItem(PREF_PROJECT);
-          } catch {}
-          return DEFAULT_PROJECT_ID;
-        }
-        return cur;
-      });
-    } catch {
-      /* 列表加载失败不阻塞主流程，下次操作重试 */
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshProjects();
-  }, [refreshProjects]);
-
   /* 进入项目库时刷新项目列表（其他会话的状态变更也能看到） */
   useEffect(() => {
-    if (view === 'library') void refreshProjects();
-  }, [view, refreshProjects]);
-
-  /** 切换项目：内容处理中禁止切换，避免在途请求把旧项目数据写进新项目视图 */
-  const switchProject = useCallback(
-    (id: string) => {
-      if (id === projectId) return;
-      if (busy) {
-        toast.warning('内容处理中，请稍后再切换项目', { id: 'project' });
-        return;
-      }
-      try {
-        localStorage.setItem(PREF_PROJECT, id);
-      } catch {}
-      // 不替换骨架屏：保留旧内容进入过渡态，新数据到达后一次性淡入，避免高度突变跳动
-      setSwitching(true);
-      setProjectId(id);
-    },
-    [projectId, busy],
-  );
-
-  const createProject = useCallback(async () => {
-    if (busy) {
-      toast.warning('内容处理中，请稍后再新建项目', { id: 'project' });
-      return;
-    }
-    setProjectBusy(true);
-    try {
-      const res = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName }),
-      });
-      const p = (await res.json().catch(() => null)) as (Project & { error?: string }) | null;
-      if (!res.ok || !p?.id) {
-        toast.error(p?.error || '新建项目失败，请重试', { id: 'project' });
-        return;
-      }
-      setProjects((prev) => [...prev, p]);
-      setNewName('');
-      setCreating(false);
-      try {
-        localStorage.setItem(PREF_PROJECT, p.id);
-      } catch {}
-      setSwitching(true);
-      setProjectId(p.id);
-      toast.success(`已创建「${p.name}」并切换`, { id: 'project' });
-    } catch {
-      toast.error('新建项目失败，请重试', { id: 'project' });
-    } finally {
-      setProjectBusy(false);
-    }
-  }, [newName, busy]);
-
-  /** 改名 / 状态：乐观更新 + 失败回滚（同 updateSettings 风格） */
-  const updateProject = useCallback(
-    async (id: string, patch: { name?: string; status?: Project['status'] }) => {
-      const prevList = projects;
-      setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-      try {
-        const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(patch),
-        });
-        const p = (await res.json().catch(() => null)) as (Project & { error?: string }) | null;
-        if (!res.ok || !p?.id) throw new Error(p?.error || '保存失败');
-        toast.success(patch.name !== undefined ? '项目已重命名' : '项目状态已更新', { id: 'project' });
-      } catch {
-        setProjects(prevList);
-        toast.error('项目更新失败，请重试', { id: 'project' });
-      }
-    },
-    [projects],
-  );
-
-  const deleteProject = useCallback(
-    async (id: string) => {
-      try {
-        const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        if (!res.ok) {
-          const data = (await res.json().catch(() => null)) as { error?: string } | null;
-          toast.error(data?.error || '删除项目失败', { id: 'project' });
-          return;
-        }
-        setProjects((prev) => prev.filter((p) => p.id !== id));
-        if (id === projectId) {
-          try {
-            localStorage.removeItem(PREF_PROJECT);
-          } catch {}
-          setSwitching(true);
-          setProjectId(DEFAULT_PROJECT_ID);
-        }
-        toast.success('项目已删除', { id: 'project' });
-      } catch {
-        toast.error('删除项目失败', { id: 'project' });
-      }
-    },
-    [projectId],
-  );
-
-  /** 打开项目库中的某个项目：切换项目并回到工作空间视图 */
-  const openFromLibrary = useCallback(
-    (id: string) => {
-      if (id !== projectId) switchProject(id);
-      setView('workspace');
-    },
-    [projectId, switchProject],
-  );
+    if (view === 'library') void projectApi.refreshProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshProjects 引用稳定
+  }, [view]);
 
   /* next-themes 首帧渲染后才确定主题，先挂载再渲染图标避免水合不一致 */
   useEffect(() => setThemeMounted(true), []);
@@ -706,10 +298,7 @@ export function VideoWall() {
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
   }, [resolvedTheme, setTheme]);
 
-  /**
-   * 侧栏窗格点击：滚动到对应卡片并短暂高亮。
-   * 只滚动视口、不改任何状态，网格与视频元素不受影响。
-   */
+  /** 侧栏窗格点击：滚动到对应卡片并短暂高亮（只滚动视口、不改任何状态） */
   const focusSlot = useCallback((index: number) => {
     document.getElementById(`slot-card-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     setHighlight(index);
@@ -717,132 +306,10 @@ export function VideoWall() {
     highlightTimer.current = setTimeout(() => setHighlight(null), 1600);
   }, []);
 
-  /**
-   * 全局设置更新：乐观更新 + PATCH 响应回填；失败提示不叠加（固定通道 id）。
-   * loop/muted/比例/标题与属性显隐/播放速度全部走服务端 Project.settings（蓝图 §7/§15）。
-   */
-  const updateSettings = useCallback(
-    async (partial: Partial<ManifestSettings>) => {
-      const prev = {
-        aspect,
-        customRatio,
-        showTitles,
-        showInfo,
-        showIndex,
-        loop,
-        muted: mutedAll,
-        playbackRate: rate,
-        letterboxFill,
-        wallScale,
-        htmlScale,
-        autoFit,
-        titleAlign,
-        titleFontSize,
-        titlePosition,
-        titleWeight,
-        titleColor,
-        bgmVolume,
-        promptText,
-        showPrompt,
-        bylineText,
-        showByline,
-        showWatermark: wmShow,
-        watermarkText: wmText,
-        watermarkFontSize: wmFontSize,
-        watermarkFontFamily: wmFamily,
-        watermarkColor: wmColor,
-        watermarkSpeed: wmSpeed,
-        lockControls,
-        watermarkFontWeight: wmWeight,
-        watermarkOpacity: wmOpacity,
-      };
-      // 乐观回填
-      if (partial.aspectRatio !== undefined) setAspect(partial.aspectRatio);
-      if (partial.customRatio !== undefined) setCustomRatio(partial.customRatio);
-      if (partial.showTitles !== undefined) setShowTitles(partial.showTitles);
-      if (partial.showInfo !== undefined) setShowInfo(partial.showInfo);
-      if (partial.showIndex !== undefined) setShowIndex(partial.showIndex);
-      if (partial.loop !== undefined) setLoop(partial.loop);
-      if (partial.muted !== undefined) setMutedAll(partial.muted);
-      if (partial.playbackRate !== undefined) setRate(partial.playbackRate);
-      if (partial.letterboxFill !== undefined) setLetterboxFill(partial.letterboxFill);
-      if (partial.wallScale !== undefined) setWallScale(partial.wallScale);
-      if (partial.htmlScale !== undefined) setHtmlScale(partial.htmlScale);
-      if (partial.autoFit !== undefined) setAutoFit(partial.autoFit);
-      if (partial.titleAlign !== undefined) setTitleAlign(partial.titleAlign);
-      if (partial.titleFontSize !== undefined) setTitleFontSize(partial.titleFontSize);
-      if (partial.titlePosition !== undefined) setTitlePosition(partial.titlePosition);
-      if (partial.titleWeight !== undefined) setTitleWeight(partial.titleWeight);
-      if (partial.titleColor !== undefined) setTitleColor(partial.titleColor);
-      if (partial.bgmVolume !== undefined) setBgmVolume(partial.bgmVolume);
-      if (partial.promptText !== undefined) {
-        setPromptText(partial.promptText);
-        promptSavedRef.current = partial.promptText;
-      }
-      if (partial.showPrompt !== undefined) setShowPrompt(partial.showPrompt);
-      if (partial.bylineText !== undefined) {
-        setBylineText(partial.bylineText);
-        bylineSavedRef.current = partial.bylineText;
-      }
-      if (partial.showByline !== undefined) setShowByline(partial.showByline);
-      if (partial.showWatermark !== undefined) setWmShow(partial.showWatermark);
-      if (partial.watermarkText !== undefined) setWmText(partial.watermarkText);
-      if (partial.watermarkFontSize !== undefined) setWmFontSize(partial.watermarkFontSize);
-      if (partial.watermarkFontFamily !== undefined) setWmFamily(partial.watermarkFontFamily);
-      if (partial.watermarkColor !== undefined) setWmColor(partial.watermarkColor);
-      if (partial.watermarkSpeed !== undefined) setWmSpeed(partial.watermarkSpeed);
-      if (partial.lockControls !== undefined) setLockControls(partial.lockControls);
-      if (partial.watermarkFontWeight !== undefined) setWmWeight(partial.watermarkFontWeight);
-      if (partial.watermarkOpacity !== undefined) setWmOpacity(partial.watermarkOpacity);
-      try {
-        const res = await fetch(withPid('/api/videos/settings'), {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(partial),
-        });
-        const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
-        if (!res.ok || !data?.slots) throw new Error(data?.error || '设置保存失败');
-        applySettings(data.settings);
-      } catch {
-        // 回滚乐观更新
-        setAspect(prev.aspect);
-        setCustomRatio(prev.customRatio);
-        setShowTitles(prev.showTitles);
-        setShowInfo(prev.showInfo);
-        setShowIndex(prev.showIndex);
-        setLoop(prev.loop);
-        setMutedAll(prev.muted);
-        setRate(prev.playbackRate);
-        setLetterboxFill(prev.letterboxFill);
-        setWallScale(prev.wallScale);
-        setHtmlScale(prev.htmlScale);
-        setAutoFit(prev.autoFit);
-        setTitleAlign(prev.titleAlign);
-        setTitleFontSize(prev.titleFontSize);
-        setTitlePosition(prev.titlePosition);
-        setTitleWeight(prev.titleWeight);
-        setTitleColor(prev.titleColor);
-        setBgmVolume(prev.bgmVolume);
-        setPromptText(prev.promptText);
-        setShowPrompt(prev.showPrompt);
-        setBylineText(prev.bylineText);
-        setShowByline(prev.showByline);
-        promptSavedRef.current = prev.promptText;
-        bylineSavedRef.current = prev.bylineText;
-        setWmShow(prev.showWatermark);
-        setWmText(prev.watermarkText);
-        setWmFontSize(prev.watermarkFontSize);
-        setWmFamily(prev.watermarkFontFamily);
-        setWmColor(prev.watermarkColor);
-        setWmSpeed(prev.watermarkSpeed);
-        setLockControls(prev.lockControls);
-        setWmWeight(prev.watermarkFontWeight);
-        setWmOpacity(prev.watermarkOpacity);
-        toast.error('设置保存失败，请重试', { id: 'settings' });
-      }
-    },
-    [aspect, customRatio, showTitles, showInfo, showIndex, loop, mutedAll, rate, letterboxFill, wallScale, htmlScale, autoFit, titleAlign, titleFontSize, titlePosition, titleWeight, titleColor, bgmVolume, promptText, showPrompt, bylineText, showByline, wmShow, wmText, wmFontSize, wmFamily, wmColor, wmSpeed, lockControls, wmWeight, wmOpacity, applySettings, withPid],
-  );
+  /* 自定义比例草稿跟随服务端值同步（首次加载与切换项目后回填） */
+  useEffect(() => {
+    setRatioDraft({ w: String(settings.customRatio?.w ?? 16), h: String(settings.customRatio?.h ?? 9) });
+  }, [settings.customRatio]);
 
   /** 提交自定义比例：非正数直接驳回并回填服务端值，不做静默兜底 */
   const applyCustomRatio = useCallback(() => {
@@ -850,11 +317,11 @@ export function VideoWall() {
     const h = Number(ratioDraft.h);
     if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
       toast.error('自定义比例需为两个正数', { id: 'aspect' });
-      setRatioDraft({ w: String(customRatio?.w ?? 16), h: String(customRatio?.h ?? 9) });
+      setRatioDraft({ w: String(settings.customRatio?.w ?? 16), h: String(settings.customRatio?.h ?? 9) });
       return;
     }
     void updateSettings({ aspectRatio: 'custom', customRatio: { w, h } });
-  }, [ratioDraft, customRatio, updateSettings]);
+  }, [ratioDraft, settings.customRatio, updateSettings]);
 
   /** 单卡比例覆盖：null = 恢复跟随全局（蓝图 §13）；乐观更新 + 失败回滚 */
   const handleSlotAspect = useCallback(
@@ -884,22 +351,33 @@ export function VideoWall() {
   useEffect(() => {
     videoRefs.current.forEach((v) => {
       if (!v) return;
-      v.loop = loop;
-      v.muted = mutedAll;
+      v.loop = settings.loop;
+      v.muted = settings.mutedAll;
       try {
-        v.playbackRate = rate;
+        v.playbackRate = settings.rate;
       } catch {
         /* 个别浏览器对不支持的速率会抛错，忽略 */
       }
     });
-  }, [loop, mutedAll, rate, slots]);
+  }, [settings.loop, settings.mutedAll, settings.rate, slots]);
 
+  /* 卸载时清理计时器；在途标题用 keepalive 补提交（防抖窗口内关页会丢最后一次编辑） */
   useEffect(() => {
     const timers = titleTimers.current;
+    const pending = titlePending.current;
     const hlTimer = highlightTimer.current;
     return () => {
       timers.forEach((t) => clearTimeout(t));
       if (hlTimer) clearTimeout(hlTimer);
+      pending.forEach((title, index) => {
+        fetch(withPidRef.current('/api/videos'), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slot: index, title }),
+          /* keepalive：页面卸载后浏览器仍会完成该请求（64KB 上限对标题绰绰有余） */
+          keepalive: true,
+        }).catch(() => {});
+      });
     };
   }, []);
 
@@ -933,7 +411,7 @@ export function VideoWall() {
     [withPid],
   );
 
-  /** 缩减到 n 个位置时，将被移除区间内实际存在的内容数（视频/HTML/图片） */
+  /** 缩减到 n 个位置时，将被移除区间内实际存在的内容数 */
   const removedContentCount = useCallback(
     (n: number) => slots.slice(n).filter((s) => s.video || s.html || s.image).length,
     [slots],
@@ -970,7 +448,7 @@ export function VideoWall() {
     });
   }, [pendingCount, layoutMode, removedContentCount, requestLayout]);
 
-  /** 手动选择矩阵：覆盖 auto 并记住（蓝图 §12「用户任何手动选择都会覆盖 auto 并记住」） */
+  /** 手动选择矩阵：覆盖 auto 并记住（蓝图 §12） */
   const handleLayoutSelect = useCallback(
     (l: Layout) => {
       if (busy) return;
@@ -1032,39 +510,40 @@ export function VideoWall() {
 
   /* ---------- 上传与分配 ---------- */
   /** 上传单个文件到指定位置；返回失败原因（null 表示成功），提示由调用方聚合成一条 */
-  const uploadToSlot = useCallback(async (index: number, file: File): Promise<string | null> => {
-    const invalid = validateClientFile(file);
-    if (invalid) return `「${file.name}」${invalid}`;
-    setUploading((prev) => ({ ...prev, [index]: true }));
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('slot', String(index));
-      const res = await fetch(withPid('/api/videos/upload'), { method: 'POST', body: fd });
-      const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
-      if (!res.ok || !data?.slots) {
-        return data?.error || `「${file.name}」上传失败，请重试`;
+  const uploadToSlot = useCallback(
+    async (index: number, file: File): Promise<string | null> => {
+      const invalid = validateClientFile(file);
+      if (invalid) return `「${file.name}」${invalid}`;
+      setUploading((prev) => ({ ...prev, [index]: true }));
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('slot', String(index));
+        const res = await fetch(withPid('/api/videos/upload'), { method: 'POST', body: fd });
+        const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
+        if (!res.ok || !data?.slots) {
+          return data?.error || `「${file.name}」上传失败，请重试`;
+        }
+        setCount(data.count);
+        setLayout(data.layout);
+        setLayoutMode(data.layoutMode === 'auto' ? 'auto' : 'manual');
+        setSlots(data.slots);
+        return null;
+      } catch {
+        return `「${file.name}」上传失败，请检查网络后重试`;
+      } finally {
+        setUploading((prev) => ({ ...prev, [index]: false }));
       }
-      setCount(data.count);
-      setLayout(data.layout);
-      setLayoutMode(data.layoutMode === 'auto' ? 'auto' : 'manual');
-      setSlots(data.slots);
-      return null;
-    } catch {
-      return `「${file.name}」上传失败，请检查网络后重试`;
-    } finally {
-      setUploading((prev) => ({ ...prev, [index]: false }));
-    }
-  }, [withPid]);
+    },
+    [withPid],
+  );
 
   /**
-   * 分配一批文件：第一个进入 primarySlot（如果指定，仅空位拖入时指定），
-   * 其余按「空位优先」的顺序依次放入。
-   * 智能识别（用户预期「上传几个就显示几个」）：
-   * - 空项目（一个内容都没有）：格数直接调整为本次导入数，不再保留默认 6 空框；
+   * 分配一批文件：第一个进入 primarySlot（仅空位拖入时指定），其余按「空位优先」
+   * 依次放入。智能识别（用户预期「上传几个就显示几个」）：
+   * - 空项目：格数直接调整为本次导入数；
    * - 已有内容：只在空位不够时按缺口扩容——绝不静默替换已占用卡片
-   *   （拖到已占用卡片的文件与其他拖入一视同仁，按空位顺序放置；
-   *   替换已有内容走卡片信息行的「替换」按钮，属显式意图）。
+   *   （替换已有内容走卡片信息行的「替换」按钮，属显式意图）。
    */
   const distributeFiles = useCallback(
     async (files: File[], primarySlot?: number) => {
@@ -1085,9 +564,9 @@ export function VideoWall() {
       let resized = false;
       let finalCount = slots.length;
 
-      const filledCount = slots.filter((s) => s.video || s.html || s.image).length;
-      if (filledCount === 0) {
-        // 空项目：格数 = 本次导入数（上传几个显示几个）；格数恰好相等时无需调整
+      const filled = slots.filter((s) => s.video || s.html || s.image).length;
+      if (filled === 0) {
+        // 空项目：格数 = 本次导入数（上传几个显示几个）
         if (slots.length !== batch.length) {
           const m = await requestLayout(
             batch.length,
@@ -1099,9 +578,8 @@ export function VideoWall() {
           finalCount = batch.length;
         }
       } else {
-        // 已有内容：可容纳数 = 空位数 +（明确指向某张卡片时可替换该卡片 1 个）；
-        // 超出容量的部分扩新格，不再挤占其它已占用卡片
-        const emptyCount = slots.length - filledCount;
+        // 已有内容：可容纳数 = 空位数 +（明确指向某张卡片时可替换该卡片 1 个）
+        const emptyCount = slots.length - filled;
         const capacity = emptyCount + (primary !== undefined ? 1 : 0);
         if (batch.length > capacity) {
           const newCount = Math.min(slots.length + (batch.length - capacity), SLOT_MAX);
@@ -1122,7 +600,7 @@ export function VideoWall() {
       }
 
       // 目标位选择：主位置（明确指向的卡片，可为替换）+ 全部空位；
-      // 不再把未被指向的已占用卡片当目标——放不下的文件在结果中如实报告
+      // 放不下的文件在结果中如实报告
       const targets: number[] = [];
       if (primary !== undefined) targets.push(primary);
       targets.push(
@@ -1142,7 +620,7 @@ export function VideoWall() {
           if (err) failures.push(err);
           else ok++;
         }
-        // 单条聚合提示：成功 / 部分失败 / 全部失败都只占一条，附扩位与跳过信息，避免逐文件刷屏
+        // 单条聚合提示：成功 / 部分失败 / 全部失败都只占一条
         if (ok > 0) {
           const parts: string[] = [
             resized
@@ -1154,9 +632,7 @@ export function VideoWall() {
           if (failures.length > 0) {
             parts.push(`${failures.length} 个失败（${failures[0]}${failures.length > 1 ? ' 等' : ''}）`);
           }
-          if (unplaced > 0) {
-            parts.push(`${unplaced} 个未放置（内容位已达上限 ${SLOT_MAX} 个）`);
-          }
+          if (unplaced > 0) parts.push(`${unplaced} 个未放置（内容位已达上限 ${SLOT_MAX} 个）`);
           if (skipped > 0) parts.push(`${skipped} 个不支持的文件已跳过`);
           if (failures.length > 0) {
             toast.warning(parts.join('，'), { id: 'import', duration: 4500 });
@@ -1171,10 +647,10 @@ export function VideoWall() {
             { id: 'import', duration: 4500 },
           );
         } else if (unplaced > 0) {
-          toast.warning(
-            `${unplaced} 个未放置（内容位已达上限 ${SLOT_MAX} 个）`,
-            { id: 'import', duration: 4500 },
-          );
+          toast.warning(`${unplaced} 个未放置（内容位已达上限 ${SLOT_MAX} 个）`, {
+            id: 'import',
+            duration: 4500,
+          });
         }
       } finally {
         setImporting(false);
@@ -1184,37 +660,51 @@ export function VideoWall() {
   );
 
   /* ---------- 标题（防抖保存） ---------- */
-  const handleTitleChange = useCallback((index: number, title: string) => {
-    setSlots((prev) => prev.map((s) => (s.index === index ? { ...s, title } : s)));
-    const timer = titleTimers.current.get(index);
-    if (timer) clearTimeout(timer);
-    titleTimers.current.set(
-      index,
-      setTimeout(() => {
-        fetch(withPid('/api/videos'), {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slot: index, title }),
-        }).catch(() => {});
-      }, 600),
-    );
-  }, [withPid]);
+  const handleTitleChange = useCallback(
+    (index: number, title: string) => {
+      setSlots((prev) => prev.map((s) => (s.index === index ? { ...s, title } : s)));
+      const timer = titleTimers.current.get(index);
+      if (timer) clearTimeout(timer);
+      titlePending.current.set(index, title);
+      titleTimers.current.set(
+        index,
+        setTimeout(() => {
+          titlePending.current.delete(index);
+          // 闭包捕获提交时刻的 withPid（项目 id）：防抖窗口内切换项目后，
+          // 标题仍会写进编辑它时所属的项目，而不是新项目
+          fetch(withPid('/api/videos'), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slot: index, title }),
+          })
+            .then((res) => {
+              if (!res.ok) toast.error('标题保存失败，请重试', { id: 'title-save' });
+            })
+            .catch(() => toast.error('标题保存失败，请检查网络后重试', { id: 'title-save' }));
+        }, 600),
+      );
+    },
+    [withPid],
+  );
 
   /* ---------- 移除 ---------- */
-  const handleClearSlot = useCallback(async (index: number) => {
-    try {
-      const res = await fetch(withPid(`/api/videos?slot=${index}`), { method: 'DELETE' });
-      const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
-      if (!res.ok || !data?.slots) {
-        toast.error(data?.error || '移除失败，请重试', { id: 'slot' });
-        return;
+  const handleClearSlot = useCallback(
+    async (index: number) => {
+      try {
+        const res = await fetch(withPid(`/api/videos?slot=${index}`), { method: 'DELETE' });
+        const data = (await res.json().catch(() => null)) as (Manifest & { error?: string }) | null;
+        if (!res.ok || !data?.slots) {
+          toast.error(data?.error || '移除失败，请重试', { id: 'slot' });
+          return;
+        }
+        setSlots(data.slots);
+        toast.success(`已移除位置 ${index + 1} 的内容`, { id: 'slot' });
+      } catch {
+        toast.error('移除失败，请重试', { id: 'slot' });
       }
-      setSlots(data.slots);
-      toast.success(`已移除位置 ${index + 1} 的内容`, { id: 'slot' });
-    } catch {
-      toast.error('移除失败，请重试', { id: 'slot' });
-    }
-  }, [withPid]);
+    },
+    [withPid],
+  );
 
   const handleClearAll = useCallback(async () => {
     try {
@@ -1234,147 +724,124 @@ export function VideoWall() {
   }, [withPid]);
 
   /* ---------- 批量播放控制 ---------- */
-  const handlePlayAll = useCallback(() => {
-    const active = getActiveVideos();
-    if (active.length === 0 && !bgm) {
-      toast.error('还没有可播放的视频，请先上传', { id: 'play' });
-      return;
-    }
-    // 先统一暂停并回到开头（含背景音乐），再一起播放，保证起始同步
-    active.forEach((v) => {
-      try {
-        v.pause();
-        v.currentTime = 0;
-      } catch {
-        /* 个别浏览器在未加载元数据时设置进度会抛错，忽略 */
-      }
-    });
-    try {
-      audioRef.current?.pause();
-      if (audioRef.current) audioRef.current.currentTime = 0;
-    } catch {}
-    window.setTimeout(() => {
-      const attempts = active.map((v) => v.play());
-      // 背景音乐跟随视频一起从头播放（audio loop 恒开，循环由元素自身保证）
-      if (bgm && audioRef.current) {
-        try {
-          void audioRef.current.play().catch(() => {});
-        } catch {}
-      }
-      Promise.allSettled(attempts).then((results) => {
-        if (results.length > 0 && results.every((r) => r.status === 'rejected')) {
-          toast.error('播放被浏览器拦截，请再点一次「同时播放」', { id: 'play' });
-        }
-      });
-    }, 80);
-  }, [getActiveVideos, bgm]);
-
-  const handlePauseAll = useCallback(() => {
-    const active = getActiveVideos();
-    if (active.length === 0 && !bgm) {
-      toast.error('还没有可播放的视频，请先上传', { id: 'play' });
-      return;
-    }
-    active.forEach((v) => {
-      try {
-        v.pause();
-      } catch {}
-    });
-    try {
-      audioRef.current?.pause();
-    } catch {}
-  }, [getActiveVideos, bgm]);
-
-  /** 一键重置（录屏备场）：全部视频归零、网页 iframe 重载（从头运行）、背景音乐归零；
-   *  play=true 时归零后立即同步起播（等价专注模式圆形按钮），false 时保持暂停 */
-  const handleResetAll = useCallback(
-    (play: boolean) => {
-      const active = getActiveVideos();
-      if (active.length === 0 && !bgm && !hasHtml) {
-        toast.error('还没有可重置的内容，请先上传', { id: 'reset' });
-        return;
-      }
+  /**
+   * 归零并同步起播（同时播放 / 归零并播放 / 专注模式循环按钮三处共用）：
+   * 先统一暂停并归零（含背景音乐），80ms 后一起 play 保证起始同步；
+   * 全部被浏览器拦截时提示重试。
+   * React 对 video 的属性更新不可靠，操作全部直接作用于 DOM 元素。
+   */
+  const restartAndPlay = useCallback(
+    (active: HTMLVideoElement[]) => {
       active.forEach((v) => {
         try {
           v.pause();
           v.currentTime = 0;
         } catch {
-          /* 未加载元数据时设置进度可能抛错，忽略 */
+          /* 个别浏览器在未加载元数据时设置进度会抛错，忽略 */
         }
       });
       try {
         audioRef.current?.pause();
         if (audioRef.current) audioRef.current.currentTime = 0;
       } catch {}
-      // 网页"从头开始" = 重载 iframe（与「刷新全部页面」同一信号）
-      setHtmlRefreshTick((n) => n + 1);
-      if (!play) return;
       window.setTimeout(() => {
         const attempts = active.map((v) => v.play());
-        if (bgm && audioRef.current) {
+        // 背景音乐跟随视频一起从头播放（audio loop 恒开，循环由元素自身保证）
+        if (settings.bgm && audioRef.current) {
           try {
             void audioRef.current.play().catch(() => {});
           } catch {}
         }
         Promise.allSettled(attempts).then((results) => {
           if (results.length > 0 && results.every((r) => r.status === 'rejected')) {
-            toast.error('播放被浏览器拦截，请再点一次', { id: 'reset' });
+            toast.error('播放被浏览器拦截，请再点一次', { id: 'play' });
           }
         });
       }, 80);
     },
-    [getActiveVideos, bgm, hasHtml],
+    [settings.bgm],
   );
+
+  const handlePlayAll = useCallback(() => {
+    const active = getActiveVideos();
+    if (active.length === 0 && !settings.bgm) {
+      toast.error('还没有可播放的视频，请先上传', { id: 'play' });
+      return;
+    }
+    restartAndPlay(active);
+  }, [getActiveVideos, settings.bgm, restartAndPlay]);
+
+  const handlePauseAll = useCallback(() => {
+    const active = getActiveVideos();
+    if (active.length === 0 && !settings.bgm) {
+      toast.error('还没有可播放的视频，请先上传', { id: 'play' });
+      return;
+    }
+    active.forEach((v) => {
+      try {
+        v.pause();
+      } catch {}
+    });
+    try {
+      audioRef.current?.pause();
+    } catch {}
+  }, [getActiveVideos, settings.bgm]);
+
+  /** 一键重置（录屏备场）：全部视频归零、网页 iframe 重载、背景音乐归零；
+   *  play=true 时归零后立即同步起播（等价专注模式圆形按钮），false 时保持暂停 */
+  const handleResetAll = useCallback(
+    (play: boolean) => {
+      const active = getActiveVideos();
+      if (active.length === 0 && !settings.bgm && !hasHtml) {
+        toast.error('还没有可重置的内容，请先上传', { id: 'reset' });
+        return;
+      }
+      // 网页"从头开始" = 重载 iframe（与「刷新全部页面」同一信号）
+      setHtmlRefreshTick((n) => n + 1);
+      if (!play) {
+        // 仅归零暂停：视频与背景音乐归零，不起播
+        active.forEach((v) => {
+          try {
+            v.pause();
+            v.currentTime = 0;
+          } catch {
+            /* 未加载元数据时设置进度可能抛错，忽略 */
+          }
+        });
+        try {
+          audioRef.current?.pause();
+          if (audioRef.current) audioRef.current.currentTime = 0;
+        } catch {}
+        return;
+      }
+      restartAndPlay(active);
+    },
+    [getActiveVideos, settings.bgm, hasHtml, restartAndPlay],
+  );
+
+  /** 专注模式圆形按钮：视频 + 背景音乐全部从头开始同步播放，并保持循环 */
+  const handleLoopShow = useCallback(() => {
+    const active = getActiveVideos();
+    if (active.length === 0 && !settings.bgm) {
+      toast.error('还没有视频或背景音乐，请先上传', { id: 'loop-show' });
+      return;
+    }
+    restartAndPlay(active);
+  }, [getActiveVideos, settings.bgm, restartAndPlay]);
 
   /* ---------- 背景音乐（BGM）----------
      全局唯一一轨：文件经 /api/videos/bgm 上传/移除，音量经 settings PATCH 持久化。
      <audio loop> 恒开（循环由元素自身保证），音量/倍速由下方 effect 同步到元素。 */
   /** 音量 0-100 → 元素 0-1（bgm 变化时元素重挂载，一并在依赖里兜底） */
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = bgmVolume / 100;
-  }, [bgmVolume, bgm]);
+    if (audioRef.current) audioRef.current.volume = settings.bgmVolume / 100;
+  }, [settings.bgmVolume, settings.bgm]);
   /** 播放倍速与视频保持一致（用户在菜单调倍速时背景音乐同步变速） */
   useEffect(() => {
-    if (audioRef.current) audioRef.current.playbackRate = rate;
-  }, [rate, bgm]);
+    if (audioRef.current) audioRef.current.playbackRate = settings.rate;
+  }, [settings.rate, settings.bgm]);
 
-  /** 专注模式圆形按钮：视频 + 背景音乐全部从头开始同步播放，并保持循环 */
-  const handleLoopShow = useCallback(() => {
-    const active = getActiveVideos();
-    if (active.length === 0 && !bgm) {
-      toast.error('还没有视频或背景音乐，请先上传', { id: 'loop-show' });
-      return;
-    }
-    active.forEach((v) => {
-      try {
-        v.pause();
-        v.currentTime = 0;
-      } catch {
-        /* 未加载元数据时设置进度可能抛错，忽略 */
-      }
-    });
-    try {
-      audioRef.current?.pause();
-      if (audioRef.current) audioRef.current.currentTime = 0;
-    } catch {}
-    window.setTimeout(() => {
-      const attempts = active.map((v) => v.play());
-      if (bgm && audioRef.current) {
-        try {
-          void audioRef.current.play().catch(() => {});
-        } catch {}
-      }
-      Promise.allSettled(attempts).then((results) => {
-        if (results.length > 0 && results.every((r) => r.status === 'rejected')) {
-          toast.error('播放被浏览器拦截，请再点一次', { id: 'loop-show' });
-        }
-      });
-    }, 80);
-  }, [getActiveVideos, bgm]);
-
-  /** 专注模式键盘快捷键：空格 / F = 播放 ⇄ 暂停（一键全开/全停，录屏时鼠标不必入镜）；
-   *  R = 全部归零并保持暂停（备场重置）。
-   *  正在播放（任一视频或背景音乐）→ 全部暂停；否则从头同步播放（等价右下角圆形按钮）。
+  /** 专注模式键盘快捷键：空格 / F = 播放 ⇄ 暂停；R = 全部归零并保持暂停。
    *  标题/提示词输入框等聚焦时不抢键；空格默认滚动页面，需 preventDefault */
   useEffect(() => {
     if (mode !== 'focus') return;
@@ -1391,13 +858,13 @@ export function VideoWall() {
       }
       const anyPlaying =
         getActiveVideos().some((v) => !v.paused)
-        || (!!bgm && !!audioRef.current && !audioRef.current.paused);
+        || (!!settings.bgm && !!audioRef.current && !audioRef.current.paused);
       if (anyPlaying) handlePauseAll();
       else handleLoopShow();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mode, getActiveVideos, handleLoopShow, handlePauseAll, handleResetAll, bgm]);
+  }, [mode, getActiveVideos, handleLoopShow, handlePauseAll, handleResetAll, settings.bgm]);
 
   /** 上传/更换背景音乐：POST FormData → 响应清单回填（服务端同临界区删除旧文件） */
   const handleBgmFile = useCallback(
@@ -1424,7 +891,7 @@ export function VideoWall() {
     [withPid, applySettings],
   );
 
-  /** 移除背景音乐：DELETE /api/videos/bgm → 响应清单回填（服务端同临界区删除文件） */
+  /** 移除背景音乐：DELETE /api/videos/bgm → 响应清单回填 */
   const handleRemoveBgm = useCallback(async () => {
     try {
       const res = await fetch(withPid('/api/videos/bgm'), { method: 'DELETE' });
@@ -1437,1347 +904,132 @@ export function VideoWall() {
     }
   }, [withPid, applySettings]);
 
-  /* ---------- 自动适配视口（autoFit）----------
-     目标：整墙高度超出视口可用空间时等比缩小到恰好同屏（截图/录屏全入镜）。
-     生效条件：专注模式恒定生效（观看/截图是专注模式的核心用途）；工作台跟随 autoFit 设置。
-     实现：求解墙宽 px（fitWidth）。格子高度随宽度单调增长（内容区 aspect-ratio 驱动），
-     每轮按实测高度比例收缩：newW = w × avail/h —— 不动点迭代，线性布局一轮到位，
-     非线性（标题换行/单卡覆盖比例）2-6 轮收敛；步长限制 35% 防过渡态读数过冲，
-     只缩不放（h ≤ avail 即静止，满宽态不放大）。应用 grid width = w*px —— 纯布局变化：
-     文字重新排版保持清晰、dnd 拖拽坐标零偏差、无需外层高度补偿。
-     触发：RO 观察 grid（内容/布局变化）与 main（容器宽变化，如侧栏开合）+ window resize；
-     rAF 合并，每帧最多一次求解；迭代上限 14 防震荡。 */
-  const fitActive = mode === 'focus' || autoFit;
-  useLayoutEffect(() => {
-    const applyFitWidth = (v: number | null) => {
-      if (fitWidthRef.current !== v) {
-        fitWidthRef.current = v;
-        setFitWidth(v);
-      }
-    };
-    if (!fitActive) {
-      applyFitWidth(null);
-      fitIterRef.current = 0;
-      return;
-    }
-    /* 布局环境（模式/行数/比例/挂载时机）变化：重置迭代计数 */
-    fitIterRef.current = 0;
-    let raf = 0;
-    /** 应用一轮求解结果：与当前值相同 = 已收敛/下限钳制，复位迭代预算
-     *  （RO 只在尺寸变化时触发，相同值不会形成循环；复位保证后续环境变化有完整重算预算） */
-    const commit = (next: number | null) => {
-      if (next === fitWidthRef.current) {
-        fitIterRef.current = 0;
-        return;
-      }
-      fitIterRef.current += 1;
-      applyFitWidth(next);
-    };
-    const measure = () => {
-      raf = 0;
-      const wall = wallRef.current;
-      const main = mainRef.current;
-      if (!wall || !wall.isConnected || !main) return;
-      const ms = getComputedStyle(main);
-      const avail =
-        window.innerHeight -
-        (mode === 'studio' ? (headerRef.current?.offsetHeight ?? 0) : 0) -
-        (parseFloat(ms.paddingTop) || 0) -
-        (parseFloat(ms.paddingBottom) || 0) -
-        // 网格下方提示词/署名区域（含上边距）：可见时为它预留空间，保证一并入镜
-        ((promptBarRef.current?.offsetHeight ?? 0) > 0
-          ? (promptBarRef.current?.offsetHeight ?? 0) + 16
-          : 0) -
-        2;
-      const containerW = main.clientWidth - (parseFloat(ms.paddingLeft) || 0) - (parseFloat(ms.paddingRight) || 0);
-      const rect = wall.getBoundingClientRect();
-      const w = rect.width;
-      const h = rect.height;
-      if (w <= 0 || h <= 0 || containerW <= 0 || avail <= 0) return;
-      /* 迭代上限：连续多轮仍有变化时强制静止（极端布局保护，正常 2-7 轮收敛后自动复位） */
-      if (fitIterRef.current >= 14) return;
-      if (h <= avail + 3) {
-        /* 回弹：视口变大（resize/侧栏收起）后，此前缩窄的墙应放大回满宽——
-           放大量同样受步长限制，分几帧爬升；到达满宽即回 null（100%） */
-        if (fitWidthRef.current === null) return;
-        const up = Math.min(containerW, w * (avail / h));
-        commit(up >= containerW - 1 ? null : Math.min(Math.round(up), w + Math.round(w * 0.25)));
-        return;
-      }
-      /* 比例收缩：高度超出的比例即宽度应缩的比例。步长限制 35%：
-         防过渡态读数（视频重排/字体加载）导致的大幅过冲，每帧最多缩一档 */
-      const raw = (w * avail) / h;
-      const target = Math.max(w * 0.65, Math.min(w, raw));
-      if (!Number.isFinite(target) || target <= 0) return;
-      /* 超过容器宽 = 满宽即可容纳（只缩不放），回到 100%；下限 240 保证可读性 */
-      commit(target >= containerW - 1 ? null : Math.max(240, Math.round(target)));
-    };
-    const schedule = () => {
-      if (raf === 0) raf = window.requestAnimationFrame(measure);
-    };
-    schedule();
-    const ro = new ResizeObserver(schedule);
-    if (wallRef.current) ro.observe(wallRef.current);
-    if (mainRef.current) ro.observe(mainRef.current);
-    window.addEventListener('resize', schedule);
-    return () => {
-      if (raf !== 0) window.cancelAnimationFrame(raf);
-      ro.disconnect();
-      window.removeEventListener('resize', schedule);
-    };
-  }, [fitActive, mode, loading, view, filledCount]);
+  /* ---------- 自动适配视口（autoFit，含提示词栏宽/水印层对齐） ---------- */
+  const promptVisible = view === 'workspace' && filledCount > 0 && (settings.showPrompt || settings.showByline);
+  const wmVisible = view === 'workspace' && filledCount > 0 && settings.wmShow;
+  const fitActive = mode === 'focus' || settings.autoFit;
+  const fitWidth = useAutoFit({
+    refs: fitRefs,
+    fitActive,
+    mode,
+    loading,
+    view,
+    filledCount,
+    promptVisible,
+    wmVisible,
+  });
 
-  /* 提示词/署名区域宽度跟随视频墙实际渲染宽度（录屏观感）：墙是内容自适应宽度
-     （窄视频窄墙、宽视频宽墙，autoFit 求解的 fitWidth 也是布局宽度），
-     区域与墙同宽居中才上下对齐。RO 监听墙与区域自身：
-     - 墙尺寸变化 → 同步宽度；
-     - 提示词内容增高（field-sizing 自适应）→ 区域自身 RO 触发并派发 resize，
-       让 autoFit 重测 avail（main 高度被 flex 约束，自身增高不会触发 main 的 RO）。 */
-  useEffect(() => {
-    const wall = wallRef.current;
-    const bar = promptBarRef.current;
-    if (!wall || !bar) return;
-    const sync = () => {
-      const w = Math.round(wall.getBoundingClientRect().width);
-      if (w > 0) bar.style.width = `${w}px`;
-      // 区域/墙尺寸变化都可能改变 autoFit 的可用空间，通知重测（无 autoFit 时 measure 不挂载，事件无人监听，零成本）
-      window.dispatchEvent(new Event('resize'));
-    };
-    sync();
-    const ro = new ResizeObserver(sync);
-    ro.observe(wall);
-    ro.observe(bar);
-    return () => ro.disconnect();
-  }, [view, filledCount, showPrompt, showByline]);
+  /* ---------- 卡片渲染 props：公共部分引用稳定（配合 VideoCard memo 跳过无关重渲） ---------- */
+  /** 文件落入分发：与 distributeFiles 解耦为稳定引用 */
+  const handleCardFiles = useCallback(
+    (files: File[], primarySlot?: number) => void distributeFiles(files, primarySlot),
+    [distributeFiles],
+  );
+  const setVideoRef = useCallback((index: number, el: HTMLVideoElement | null) => {
+    videoRefs.current[index] = el;
+  }, []);
+  /** 所有卡片共享的 props（与具体槽位无关）：useMemo 保证引用稳定 */
+  const sharedCardProps = useMemo(
+    () => ({
+      loop: settings.loop,
+      muted: settings.mutedAll,
+      focusMode: mode === 'focus',
+      lockControls: settings.lockControls,
+      dragActive: gridDrag,
+      globalAspect: settings.aspect,
+      globalCustomRatio: settings.customRatio,
+      showTitles: settings.showTitles,
+      showInfo: settings.showInfo,
+      showIndex: settings.showIndex,
+      letterboxFill: settings.letterboxFill,
+      htmlScale: settings.htmlScale,
+      titleAlign: settings.titleAlign,
+      titleFontSize: settings.titleFontSize,
+      titlePosition: settings.titlePosition,
+      titleWeight: settings.titleWeight,
+      titleColor: settings.titleColor,
+      refreshSignal: htmlRefreshTick,
+      onAspectOverride: handleSlotAspect,
+      onFiles: handleCardFiles,
+      onTitleChange: handleTitleChange,
+      onClear: handleClearSlot,
+      setVideoRef,
+    }),
+    [
+      settings, mode, gridDrag, htmlRefreshTick,
+      handleSlotAspect, handleCardFiles, handleTitleChange, handleClearSlot, setVideoRef,
+    ],
+  );
 
-  /* 水印蒙版层对齐视频墙：巡游范围 = 墙的实际渲染区域（单视频=单卡、多视频=整墙），
-     而不是整个内容区（避免巡到墙外空白处）。墙尺寸/位置变化（增删内容、autoFit 求解、
-     工作室/专注模式切换、窗口缩放）都通过 RO + resize 重算。
-     坐标换算：墙 rect 视口坐标 − main rect 视口坐标 = 相对 main（水印层的 offsetParent）偏移 */
-  useEffect(() => {
-    const wall = wallRef.current;
-    const layer = wmLayerRef.current;
-    if (!wall || !layer) return;
-    const sync = () => {
-      const wallRect = wall.getBoundingClientRect();
-      const parent = layer.offsetParent;
-      if (!parent) return;
-      const parentRect = parent.getBoundingClientRect();
-      layer.style.top = `${wallRect.top - parentRect.top}px`;
-      layer.style.left = `${wallRect.left - parentRect.left}px`;
-      layer.style.width = `${wallRect.width}px`;
-      layer.style.height = `${wallRect.height}px`;
-    };
-    sync();
-    const ro = new ResizeObserver(sync);
-    ro.observe(wall);
-    window.addEventListener('resize', sync);
-    // capture=true 捕获内部容器滚动（main/墙滚动时墙的视口位置变化，RO 不触发）
-    window.addEventListener('scroll', sync, true);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', sync);
-      window.removeEventListener('scroll', sync, true);
-    };
-  }, [wmShow, view, filledCount, mode]);
-
-  /* 渲染列数：auto 模式窄屏收窄到 2 列竖向堆叠（蓝图 §12）；手动模式保持存储矩阵。
-     整墙缩放：autoFit 生效时宽度取求解值 fitWidth（null = 满宽 100%），
-     未启用时回落 wallScale 手动档（grid 容器宽度按档位缩放并居中，100% 与引入前行为一致） */
+  /* 渲染列数：auto 模式窄屏收窄到 2 列竖向堆叠；整墙缩放宽度取求解值或手动档 */
   const gridCols = layoutMode === 'auto' && narrow ? Math.min(layout.cols, 2) : layout.cols;
   const gridStyle = {
     gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
-    width: fitActive ? (fitWidth !== null ? `${fitWidth}px` : '100%') : `${wallScale}%`,
+    width: fitActive ? (fitWidth !== null ? `${fitWidth}px` : '100%') : `${settings.wallScale}%`,
   } as const;
   const padCellCount = Math.max(0, layout.rows * layout.cols - slots.length);
 
   /* ---------- 渲染 ---------- */
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      {/* 顶部：品牌 + 全局控制（仅 Studio 渲染）。固定两行结构（震动根治）：无论项目内容是视频还是网页、
-          播放/刷新按钮组如何显隐，顶栏恒为「品牌行 + 功能行」两行、高度不变，
-          主体内容不再被顶栏行数变化推动上下跳动。
-          专注模式整体隐藏顶栏（零干扰观看），退出入口固定在页面右下角圆形按钮 */}
+      {/* 顶部控制栏（仅 Studio 渲染；专注模式整体隐藏，退出入口在右下角圆形按钮） */}
       {mode === 'studio' && (
-      <header ref={headerRef} className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
-        <div
-          className={cn(
-            'mx-auto flex w-full flex-col gap-2 px-3 py-3 sm:px-6',
-            !sidebarOpen ? 'max-w-[1800px]' : 'max-w-[1400px]',
-          )}
-        >
-          {/* 第一行：品牌 + 项目切换 + 使用须知 + 主题（高度恒定） */}
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
-              <Clapperboard className="h-5 w-5" aria-hidden />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-base font-bold leading-tight tracking-wide sm:text-lg">OmniCompare</h1>
-              {mode === 'studio' && (
-                <p className="text-[11px] leading-tight text-muted-foreground sm:text-xs">
-                  灵动对比 · 多内容并行对比工作台
-                </p>
-              )}
-            </div>
-
-          {/* 项目切换器（Step 8 多项目） */}
-          {mode === 'studio' && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  disabled={busy}
-                  title="切换项目"
-                  aria-label={`当前项目：${projectName}，点击切换`}
-                  className="inline-flex h-9 max-w-[180px] items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-[13px] font-semibold text-foreground/90 transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[240px]"
-                >
-                  <span className="truncate">{projectName}</span>
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="min-w-[15rem] border-border bg-card">
-                {(['active', 'draft', 'archived'] as const).map((st) => {
-                  const group = projects.filter((p) => p.status === st);
-                  if (group.length === 0) return null;
-                  return (
-                    <div key={st}>
-                      <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                        {STATUS_META[st].label}
-                      </p>
-                      {group.map((p) => {
-                        const vc = p.items.filter((it) => it.kind === 'video').length;
-                        const hc = p.items.filter((it) => it.kind === 'html').length;
-                        const ic = p.items.filter((it) => it.kind === 'image').length;
-                        return (
-                          <DropdownMenuItem
-                            key={p.id}
-                            onClick={() => switchProject(p.id)}
-                            className={cn('gap-2 text-[13px]', p.id === projectId && 'font-semibold text-primary')}
-                          >
-                            <span
-                              className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATUS_META[st].dot)}
-                              aria-hidden
-                            />
-                            <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                            {/* 内容类型徽标：切换前即可预知顶栏形态（有视频→播放组；纯网页→刷新组） */}
-                            {vc > 0 && (
-                              <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border px-1 text-[10px] tabular-nums text-muted-foreground" title={`${vc} 个视频`}>
-                                <Film className="h-2.5 w-2.5" aria-hidden />
-                                {vc}
-                              </span>
-                            )}
-                            {hc > 0 && (
-                              <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border px-1 text-[10px] tabular-nums text-muted-foreground" title={`${hc} 个网页`}>
-                                <Code2 className="h-2.5 w-2.5" aria-hidden />
-                                {hc}
-                              </span>
-                            )}
-                            {ic > 0 && (
-                              <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border px-1 text-[10px] tabular-nums text-muted-foreground" title={`${ic} 张图片`}>
-                                <ImageIcon className="h-2.5 w-2.5" aria-hidden />
-                                {ic}
-                              </span>
-                            )}
-                          </DropdownMenuItem>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-                <div className="mt-1.5 border-t border-border/70 pt-1.5">
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setNewName('');
-                      setCreating(true);
-                    }}
-                    className="text-[13px] font-semibold text-primary"
-                  >
-                    <FolderPlus className="mr-1.5 h-4 w-4" aria-hidden />
-                    新建项目
-                  </DropdownMenuItem>
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-
-          {/* 使用须知：紧贴项目切换器右侧，点击弹出（原底部常驻说明改为按需查看，不再占页面高度） */}
-          {mode === 'studio' && (
-            <button
-              type="button"
-              onClick={() => setNotesOpen(true)}
-              title="使用须知"
-              aria-label="查看使用须知"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-            >
-              <BookOpen className="h-[18px] w-[18px]" aria-hidden />
-            </button>
-          )}
-
-          {/* 第一行右上角：明暗主题（无框只有太阳/月亮） */}
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={toggleTheme}
-              /* title 与图标一样受 themeMounted 门控：服务端与水合首帧统一渲染暗色文案，
-                 避免 next-themes 客户端同步读主题导致的水合属性不一致（控制台警告） */
-              title={themeMounted && resolvedTheme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-              aria-label="切换明暗主题"
-              className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-            >
-              {themeMounted && resolvedTheme === 'dark' ? (
-                <Sun className="h-[18px] w-[18px]" aria-hidden />
-              ) : (
-                <Moon className="h-[18px] w-[18px]" aria-hidden />
-              )}
-            </button>
-          </div>
-          </div>
-
-          {/* 第二行：功能按钮行——不换行、窄屏横向滑动，任何项目切换/按钮显隐下高度恒定（震动根治）。
-              库视图下只展示库上下文动作（新建项目），高度仍由 h-10 按钮撑起不变 */}
-          <div className="no-scrollbar -mx-1 flex min-w-0 items-center gap-1.5 overflow-x-auto px-1 [&>*]:shrink-0 sm:gap-2">
-
-            {/* 项目库视图：库标签 + 新建项目（保持功能行高度恒定） */}
-            {view === 'library' && (
-              <>
-                <span className="inline-flex h-10 items-center gap-1.5 px-1 text-[13px] font-semibold text-muted-foreground">
-                  <Library className="h-4 w-4" aria-hidden />
-                  项目库
-                  <span className="tabular-nums text-muted-foreground/60">· {projects.length} 个项目</span>
-                </span>
-                <Divider />
-                {mode === 'studio' && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      setNewName('');
-                      setCreating(true);
-                    }}
-                    className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4"
-                  >
-                    <FolderPlus className="h-4 w-4" aria-hidden />
-                    新建项目
-                  </button>
-                )}
-                <Divider />
-              </>
-            )}
-
-            {/* 播放控制组：纯 HTML 项目没有播放语义，整组隐藏 */}
-            {view === 'workspace' && hasVideo && (
-              <>
-                <button
-                  type="button"
-                  onClick={handlePlayAll}
-                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 sm:px-4"
-                >
-                  <Play className="h-4 w-4 fill-current" aria-hidden />
-                  同时播放
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handlePauseAll}
-                  className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
-                  title="全部暂停"
-                  aria-label="全部暂停"
-                >
-                  <Pause className="h-4 w-4" aria-hidden />
-                  <span className="hidden sm:inline">暂停</span>
-                </button>
-
-                <Divider />
-              </>
-            )}
-
-            {/* 纯 HTML 项目：页面打开即自动运行，等价的主动作是「刷新全部页面」，
-                与视频项目的播放组占用同一槽位——顶栏逻辑随内容自动适配（D11） */}
-            {view === 'workspace' && hasHtml && !hasVideo && filledCount > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setHtmlRefreshTick((t) => t + 1)}
-                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 sm:px-4"
-                  title="重新加载全部 HTML 页面，回到各自初始状态"
-                  aria-label="刷新全部页面"
-                >
-                  <RefreshCw className="h-4 w-4" aria-hidden />
-                  刷新全部
-                </button>
-
-                <Divider />
-              </>
-            )}
-            {view === 'workspace' && (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    className={cn(
-                      ctlBtn,
-                      'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
-                    )}
-                    title="设置内容位数量与排列矩阵"
-                    aria-label="设置内容位数量与排列矩阵"
-                  >
-                    <LayoutGrid className="h-4 w-4" aria-hidden />
-                    <span className="hidden sm:inline">布局</span>
-                    <span className="inline-block min-w-[4ch] text-center text-[11px] font-semibold tabular-nums text-primary">
-                      {layoutMode === 'auto' ? '自动' : `${layout.rows}×${layout.cols}`}
-                    </span>
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent
-                  align="end"
-                  className="max-h-[calc(100vh-6rem)] w-80 overflow-y-auto border-border bg-card p-4 text-card-foreground"
-                >
-                  <p className="text-xs font-semibold tracking-wide text-muted-foreground">内容位数量</p>
-                  <div className="mt-2 grid grid-cols-6 gap-1.5">
-                    {Array.from({ length: SLOT_MAX }, (_, i) => i + 1).map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => handleCountSelect(n)}
-                        disabled={busy}
-                        aria-pressed={n === count}
-                        className={cn(
-                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50',
-                          n === count
-                            ? 'border-primary bg-primary/20 text-primary'
-                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
-                        )}
-                      >
-                        {n}
-                      </button>
-                    ))}
-                  </div>
-
-                  <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
-                    排列矩阵
-                    <span className="ml-1 font-normal text-muted-foreground/70">（行 × 列）</span>
-                  </p>
-                  {/* 自动排列：矩阵随数量自动计算（默认），任何手动选择都会覆盖并记住 */}
-                  <button
-                    type="button"
-                    onClick={handleAutoSelect}
-                    disabled={busy}
-                    aria-pressed={layoutMode === 'auto'}
-                    className={cn(
-                      'mt-2 flex h-9 w-full items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50',
-                      layoutMode === 'auto'
-                        ? 'border-primary bg-primary/15 text-primary'
-                        : 'border-border bg-muted/40 text-foreground/80 hover:border-muted-foreground/40 hover:bg-accent',
-                    )}
-                  >
-                    <Wand2 className="h-3.5 w-3.5" aria-hidden />
-                    自动排列
-                    {layoutMode === 'auto' && (
-                      <span className="rounded border border-primary/40 bg-primary/10 px-1 py-px tabular-nums text-primary">
-                        {layout.rows}×{layout.cols}
-                      </span>
-                    )}
-                    <span className="ml-auto text-[10px] font-normal text-muted-foreground">
-                      随数量自动计算
-                    </span>
-                  </button>
-                  <div className="mt-2 grid grid-cols-3 gap-2">
-                    {layoutOptionsFor(count).map((l) => (
-                      <MatrixOption
-                        key={`${l.rows}x${l.cols}`}
-                        layout={l}
-                        count={count}
-                        active={layoutMode === 'manual' && l.rows === layout.rows && l.cols === layout.cols}
-                        onSelect={() => handleLayoutSelect(l)}
-                      />
-                    ))}
-                  </div>
-                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
-                    {layoutMode === 'manual' && layout.rows * layout.cols > count
-                      ? '标注「补」的矩阵无法整除，会在末尾留出空格子。'
-                      : '选择具体行列后即固定为手动模式，可随时切回自动。'}
-                  </p>
-
-                  <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
-                    内容比例
-                    <span className="ml-1 font-normal text-muted-foreground/70">（卡片框，内容不裁切）</span>
-                  </p>
-                  <div className="mt-2 grid grid-cols-4 gap-1.5">
-                    {(['original', '16:9', '9:16', '1:1'] as AspectRatio[]).map((a) => (
-                      <button
-                        key={a}
-                        type="button"
-                        onClick={() => void updateSettings({ aspectRatio: a })}
-                        aria-pressed={aspect === a}
-                        className={cn(
-                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                          aspect === a
-                            ? 'border-primary bg-primary/20 text-primary'
-                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
-                        )}
-                      >
-                        {aspectLabel(a)}
-                      </button>
-                    ))}
-                  </div>
-                  {/* 自定义比例（蓝图 §13）：宽高比直接写进卡片容器的 aspect-ratio */}
-                  <div className="mt-2 flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => void updateSettings({ aspectRatio: 'custom' })}
-                      aria-pressed={aspect === 'custom'}
-                      className={cn(
-                        'h-8 shrink-0 rounded-md border px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                        aspect === 'custom'
-                          ? 'border-primary bg-primary/20 text-primary'
-                          : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
-                      )}
-                    >
-                      自定义
-                    </button>
-                    <Input
-                      value={ratioDraft.w}
-                      onChange={(e) => setRatioDraft((d) => ({ ...d, w: e.target.value }))}
-                      onBlur={applyCustomRatio}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          applyCustomRatio();
-                        }
-                      }}
-                      inputMode="numeric"
-                      aria-label="自定义比例宽"
-                      className="h-8 w-full min-w-0 text-center text-xs tabular-nums"
-                    />
-                    <span className="shrink-0 text-xs text-muted-foreground">:</span>
-                    <Input
-                      value={ratioDraft.h}
-                      onChange={(e) => setRatioDraft((d) => ({ ...d, h: e.target.value }))}
-                      onBlur={applyCustomRatio}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          applyCustomRatio();
-                        }
-                      }}
-                      inputMode="numeric"
-                      aria-label="自定义比例高"
-                      className="h-8 w-full min-w-0 text-center text-xs tabular-nums"
-                    />
-                  </div>
-                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
-                    「原始」为 16:9 容器等比容纳；竖版内容选 9:16 可减少留白，单卡可在信息行单独覆盖。
-                    自定义比例填宽 : 高（如 21 : 9），失焦或回车即保存。
-                  </p>
-
-                  {/* 自动适配视口（全局同步）：整墙超出视口自动缩小同屏，截图/录屏全入镜。
-                      专注模式恒定生效；开启时优先于下方整体大小手动档 */}
-                  <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
-                    自动适配视口
-                    <span className="ml-1 font-normal text-muted-foreground/70">（超出即缩，整墙同屏）</span>
-                  </p>
-                  <div className="mt-2 grid grid-cols-2 gap-1.5">
-                    {([true, false] as const).map((v) => (
-                      <button
-                        key={String(v)}
-                        type="button"
-                        onClick={() => void updateSettings({ autoFit: v })}
-                        aria-pressed={autoFit === v}
-                        className={cn(
-                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                          autoFit === v
-                            ? 'border-primary bg-primary/20 text-primary'
-                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
-                        )}
-                      >
-                        {v ? '开启' : '关闭'}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
-                    {autoFit
-                      ? '整墙高度超出浏览器视口时自动等比缩小到恰好同屏（两视频纵向布局也能一屏截全）；专注模式始终自动适配并居中显示。'
-                      : '已关闭：按下方「整体大小」手动档位缩放整墙。专注模式下仍会自动适配。'}
-                  </p>
-
-                  {/* 整体大小（全局同步）：整墙宽度按档位缩放并居中，格子高度随之等比缩小。
-                      解决纵向多行布局（如 2×1）每格过大、整墙超出视口无法同屏截图的问题。
-                      autoFit 开启时由自动缩放接管，手动档暂停生效 */}
-                  <p className={cn('mt-4 text-xs font-semibold tracking-wide text-muted-foreground', autoFit && 'opacity-50')}>
-                    整体大小
-                    <span className="ml-1 font-normal text-muted-foreground/70">
-                      （{autoFit ? '自动适配已接管' : '缩放整墙，同屏可见'}）
-                    </span>
-                  </p>
-                  <div className="mt-2 grid grid-cols-5 gap-1.5">
-                    {SCALE_STEPS.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        disabled={autoFit}
-                        onClick={() => void updateSettings({ wallScale: s })}
-                        aria-pressed={wallScale === s}
-                        className={cn(
-                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-40',
-                          wallScale === s
-                            ? 'border-primary bg-primary/20 text-primary'
-                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
-                        )}
-                      >
-                        {s}%
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
-                    {autoFit
-                      ? '自动适配开启中，此档位暂停生效；关闭自动适配后可手动选择缩放比例。'
-                      : wallScale === 100
-                        ? '100% 为原始大小；纵向多行布局截图时可选 50% / 33% 缩小整墙。'
-                        : `当前整墙缩放至 ${wallScale}%，格子随宽度等比缩小，纵向布局也能一屏截全。`}
-                  </p>
-
-                  {/* 页面缩放（全局同步，仅 HTML 卡片生效）：iframe 以放大视口渲染页面再等比缩回，
-                      页面内容整体缩小后完整可见，缓解固定尺寸网页在小卡片内被裁切/滚动的问题 */}
-                  <p className="mt-4 text-xs font-semibold tracking-wide text-muted-foreground">
-                    页面缩放
-                    <span className="ml-1 font-normal text-muted-foreground/70">（仅网页卡片生效）</span>
-                  </p>
-                  <div className="mt-2 grid grid-cols-5 gap-1.5">
-                    {SCALE_STEPS.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => void updateSettings({ htmlScale: s })}
-                        aria-pressed={htmlScale === s}
-                        className={cn(
-                          'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                          htmlScale === s
-                            ? 'border-primary bg-primary/20 text-primary'
-                            : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
-                        )}
-                      >
-                        {s}%
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground/70">
-                    {htmlScale === 100
-                      ? '100% 为原始大小；网页内容被裁切时可选 75% / 50% 看到更完整的页面。'
-                      : `网页以 ${100 / (htmlScale / 100)}% 宽高的视口渲染后缩至 ${htmlScale}% 显示，内容更完整。`}
-                  </p>
-                </PopoverContent>
-              </Popover>
-            )}
-
-            {/* 播放下拉（拆分按钮 1/3）：循环/静音/播放速度三件套；纯 HTML 项目无播放语义，整组隐藏 */}
-            {view === 'workspace' && hasVideo && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className={cn(
-                    ctlBtn,
-                    'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
-                  )}
-                  title="循环播放、全部静音与播放速度"
-                  aria-label="播放设置"
-                >
-                  <Play className="h-4 w-4" aria-hidden />
-                  <span className="hidden sm:inline">播放</span>
-                  <span className="inline-block min-w-[3ch] text-center text-[11px] font-semibold tabular-nums text-primary">
-                    {rate}×
-                  </span>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[12rem] border-border bg-card">
-                <DropdownMenuCheckboxItem
-                  checked={loop}
-                  onCheckedChange={(v) => void updateSettings({ loop: v === true })}
-                  className="text-[13px]"
-                >
-                  循环播放
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem
-                  checked={mutedAll}
-                  onCheckedChange={(v) => void updateSettings({ muted: v === true })}
-                  className="text-[13px]"
-                >
-                  全部静音
-                </DropdownMenuCheckboxItem>
-                {/* 一键重置：视频归零、网页重载、背景音乐归零；录屏前备场用 */}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => handleResetAll(false)} className="text-[13px]">
-                  <RotateCcw className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                  全部归零并暂停
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleResetAll(true)} className="text-[13px]">
-                  <Play className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                  全部归零并播放
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="text-[13px]">
-                    <Gauge className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    播放速度
-                    <span className="ml-auto pl-2 text-[11px] tabular-nums text-muted-foreground">
-                      {rate}×
-                    </span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="min-w-[8rem] border-border bg-card">
-                    {[0.5, 1, 1.25, 1.5, 2].map((r) => (
-                      <DropdownMenuItem
-                        key={r}
-                        onClick={() => void updateSettings({ playbackRate: r })}
-                        className={cn('text-[13px]', r === rate && 'font-semibold text-primary')}
-                      >
-                        {r === 1 ? '常速（1×）' : `${r}×`}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                {/* 背景音乐：上传/更换、移除与音量（全局唯一一轨，存项目 settings） */}
-                <DropdownMenuSeparator />
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="text-[13px]">
-                    <Music className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    背景音乐
-                    <span className="ml-auto max-w-[10rem] truncate pl-2 text-[11px] text-muted-foreground">
-                      {bgm ? bgm.originalName : '未设置'}
-                    </span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="min-w-[13rem] border-border bg-card">
-                    {bgm ? (
-                      <>
-                        <div className="px-2 py-1.5 text-[11px] text-muted-foreground" title={bgm.originalName}>
-                          <span className="block truncate">当前：{bgm.originalName}</span>
-                        </div>
-                        <div className="px-2 py-2">
-                          <div className="mb-1 flex items-center justify-between text-[12px] text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              <Volume2 className="h-3.5 w-3.5" aria-hidden />
-                              音量
-                            </span>
-                            <span className="tabular-nums">{bgmVolume}%</span>
-                          </div>
-                          <input
-                            type="range"
-                            min={0}
-                            max={100}
-                            step={1}
-                            value={bgmVolume}
-                            onChange={(e) => setBgmVolume(Number(e.target.value))}
-                            onPointerUp={() => void updateSettings({ bgmVolume })}
-                            onKeyUp={() => void updateSettings({ bgmVolume })}
-                            aria-label="背景音乐音量"
-                            className="w-full accent-[var(--primary)]"
-                          />
-                        </div>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          disabled={bgmUploading}
-                          onClick={() => bgmInputRef.current?.click()}
-                          className="text-[13px]"
-                        >
-                          <Music className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                          {bgmUploading ? '上传中…' : '换一首'}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => void handleRemoveBgm()} className="text-[13px] text-destructive">
-                          移除背景音乐
-                        </DropdownMenuItem>
-                      </>
-                    ) : (
-                      <DropdownMenuItem
-                        disabled={bgmUploading}
-                        onClick={() => bgmInputRef.current?.click()}
-                        className="text-[13px]"
-                      >
-                        <Music className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                        {bgmUploading ? '上传中…' : '上传背景音乐'}
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            )}
-
-            {/* 标题下拉（拆分按钮 2/3）：标题/属性信息显隐 + 位置/对齐/字号/粗细/颜色五组全局格式 */}
-            {view === 'workspace' && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className={cn(
-                    ctlBtn,
-                    'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
-                  )}
-                  title="标题与属性信息的显隐、位置、对齐、字号、粗细与颜色"
-                  aria-label="标题设置"
-                >
-                  <Type className="h-4 w-4" aria-hidden />
-                  <span className="hidden sm:inline">标题</span>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[12rem] border-border bg-card">
-                <DropdownMenuCheckboxItem
-                  checked={showTitles}
-                  onCheckedChange={(v) => void updateSettings({ showTitles: v === true })}
-                  className="text-[13px]"
-                >
-                  显示标题
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem
-                  checked={showInfo}
-                  onCheckedChange={(v) => void updateSettings({ showInfo: v === true })}
-                  className="text-[13px]"
-                >
-                  显示属性信息
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem
-                  checked={showIndex}
-                  onCheckedChange={(v) => void updateSettings({ showIndex: v === true })}
-                  className="text-[13px]"
-                >
-                  显示位置编号
-                </DropdownMenuCheckboxItem>
-                {/* 提示词与署名（矩阵下方，录屏入镜用）：显隐随项目存服务端 */}
-                <DropdownMenuSeparator />
-                <DropdownMenuCheckboxItem
-                  checked={showPrompt}
-                  onCheckedChange={(v) => void updateSettings({ showPrompt: v === true })}
-                  className="text-[13px]"
-                >
-                  显示提示词
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuCheckboxItem
-                  checked={showByline}
-                  onCheckedChange={(v) => void updateSettings({ showByline: v === true })}
-                  className="text-[13px]"
-                >
-                  显示署名
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuSeparator />
-                {/* 标题格式（全局同步）：一次调节，所有卡片标题同时生效（存项目 settings） */}
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger
-                    disabled={!showTitles}
-                    className="text-[13px]"
-                  >
-                    <AlignCenter className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    标题对齐
-                    <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
-                      {titleAlign === 'left' ? '居左' : titleAlign === 'right' ? '居右' : '居中'}
-                    </span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="min-w-[8rem] border-border bg-card">
-                    {TITLE_ALIGNS.map((a) => (
-                      <DropdownMenuItem
-                        key={a}
-                        onClick={() => void updateSettings({ titleAlign: a })}
-                        className={cn('text-[13px]', a === titleAlign && 'font-semibold text-primary')}
-                      >
-                        {a === 'left' ? (
-                          <AlignLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                        ) : a === 'right' ? (
-                          <AlignRight className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                        ) : (
-                          <AlignCenter className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                        )}
-                        {a === 'left' ? '居左' : a === 'right' ? '居右' : '居中'}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger
-                    disabled={!showTitles}
-                    className="text-[13px]"
-                  >
-                    <Type className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    标题字号
-                    <span className="ml-auto pl-2 text-[11px] tabular-nums text-muted-foreground">
-                      {titleFontSize}px
-                    </span>
-                  </DropdownMenuSubTrigger>
-                  {/* onSelect preventDefault 保持菜单展开，可连续点按微调 */}
-                  <DropdownMenuSubContent className="min-w-[12rem] border-border bg-card">
-                    {/* 常用字号快捷档：一键跳档（16→60 只需一点），避免连点微调过久；
-                        普通按钮不触发 onSelect，点击后菜单保持展开 */}
-                    <div className="grid grid-cols-3 gap-1 px-2 pb-1 pt-1" role="group" aria-label="常用字号快捷档">
-                      {TITLE_FONT_PRESETS.map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          onClick={() => void updateSettings({ titleFontSize: n })}
-                          aria-pressed={titleFontSize === n}
-                          className={cn(
-                            'rounded-md px-1 py-1 text-[12px] font-semibold tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                            titleFontSize === n
-                              ? 'bg-primary/15 text-primary'
-                              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                          )}
-                        >
-                          {n}px
-                        </button>
-                      ))}
-                    </div>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onSelect={(e) => {
-                        e.preventDefault();
-                        void updateSettings({ titleFontSize: Math.max(TITLE_FONT_MIN, titleFontSize - 1) });
-                      }}
-                      disabled={titleFontSize <= TITLE_FONT_MIN}
-                      className="text-[13px]"
-                    >
-                      <Minus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                      减小字号
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={(e) => {
-                        e.preventDefault();
-                        void updateSettings({ titleFontSize: Math.min(TITLE_FONT_MAX, titleFontSize + 1) });
-                      }}
-                      disabled={titleFontSize >= TITLE_FONT_MAX}
-                      className="text-[13px]"
-                    >
-                      <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                      增大字号
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onSelect={(e) => {
-                        e.preventDefault();
-                        void updateSettings({ titleFontSize: TITLE_FONT_DEFAULT });
-                      }}
-                      disabled={titleFontSize === TITLE_FONT_DEFAULT}
-                      className="text-[13px]"
-                    >
-                      恢复默认（{TITLE_FONT_DEFAULT}px）
-                    </DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger disabled={!showTitles} className="text-[13px]">
-                    <ArrowDownToLine className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    标题位置
-                    <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
-                      {titlePosition === 'overlay' ? '顶部叠加' : '内容下方'}
-                    </span>
-                  </DropdownMenuSubTrigger>
-                  {/* 两种位置排他显示：below = 现有下方编辑框；overlay = 内容顶部叠加（点击可编辑） */}
-                  <DropdownMenuSubContent className="min-w-[9rem] border-border bg-card">
-                    {TITLE_POSITIONS.map((p) => (
-                      <DropdownMenuItem
-                        key={p}
-                        onClick={() => void updateSettings({ titlePosition: p })}
-                        className={cn('text-[13px]', p === titlePosition && 'font-semibold text-primary')}
-                      >
-                        {p === 'overlay' ? '内容顶部叠加' : '内容下方（默认）'}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger disabled={!showTitles} className="text-[13px]">
-                    <Bold className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    标题粗细
-                    <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
-                      {titleWeight === 'bold' ? '加粗' : titleWeight === 'medium' ? '中等' : '正常'}
-                    </span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="min-w-[8rem] border-border bg-card">
-                    {TITLE_WEIGHTS.map((w) => (
-                      <DropdownMenuItem
-                        key={w}
-                        onClick={() => void updateSettings({ titleWeight: w })}
-                        className={cn('text-[13px]', w === titleWeight && 'font-semibold text-primary')}
-                      >
-                        <span
-                          className="mr-1"
-                          style={{ fontWeight: w === 'bold' ? 700 : w === 'medium' ? 500 : 400 }}
-                        >
-                          Aa
-                        </span>
-                        {w === 'bold' ? '加粗' : w === 'medium' ? '中等' : '正常'}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger disabled={!showTitles} className="text-[13px]">
-                    <Palette className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-                    标题颜色
-                    <span
-                      aria-hidden
-                      className="ml-auto inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-border"
-                      style={{
-                        background:
-                          titleColor === TITLE_COLOR_DEFAULT
-                            ? 'linear-gradient(135deg, #fff 0%, #fff 50%, #171717 50%, #171717 100%)'
-                            : titleColor,
-                      }}
-                    />
-                  </DropdownMenuSubTrigger>
-                  {/* 色板白名单（防任意 CSS 注入）；跟随主题 = below 用前景色 / overlay 用白色+投影 */}
-                  <DropdownMenuSubContent className="min-w-[9rem] border-border bg-card">
-                    <DropdownMenuItem
-                      onClick={() => void updateSettings({ titleColor: TITLE_COLOR_DEFAULT })}
-                      className={cn(
-                        'text-[13px]',
-                        titleColor === TITLE_COLOR_DEFAULT && 'font-semibold text-primary',
-                      )}
-                    >
-                      跟随主题
-                    </DropdownMenuItem>
-                    {TITLE_COLOR_PALETTE.map((c) => (
-                      <DropdownMenuItem
-                        key={c}
-                        onClick={() => void updateSettings({ titleColor: c })}
-                        className={cn('text-[13px]', titleColor === c && 'font-semibold text-primary')}
-                      >
-                        <span
-                          aria-hidden
-                          className="mr-1.5 inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-border"
-                          style={{ background: c }}
-                        />
-                        {c}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            )}
-
-            {/* 黑边填充下拉（拆分按钮 3/3）：三选一直列少一层跳转；仅视频/图片生效，纯网页项目隐藏 */}
-            {view === 'workspace' && (hasVideo || hasImage) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className={cn(
-                    ctlBtn,
-                    'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground',
-                  )}
-                  title="黑边填充方式：留黑边 / 模糊填充 / 铺满裁切（铺满会等比放大裁掉超出部分）"
-                  aria-label="黑边填充设置"
-                >
-                  {letterboxFill === 'cover' ? (
-                    <Crop className="h-4 w-4" aria-hidden />
-                  ) : letterboxFill === 'blur' ? (
-                    <Droplets className="h-4 w-4" aria-hidden />
-                  ) : (
-                    <Expand className="h-4 w-4" aria-hidden />
-                  )}
-                  <span className="hidden sm:inline">填充</span>
-                  <span className="inline-block text-[11px] font-semibold text-primary">
-                    {letterboxFill === 'cover' ? '铺满' : letterboxFill === 'blur' ? '模糊' : '黑边'}
-                  </span>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[13rem] border-border bg-card">
-                {LETTERBOX_FILLS.map((f) => (
-                  <DropdownMenuItem
-                    key={f}
-                    onClick={() => void updateSettings({ letterboxFill: f })}
-                    className={cn('text-[13px]', f === letterboxFill && 'font-semibold text-primary')}
-                  >
-                    {f === 'cover' ? (
-                      <Crop className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                    ) : f === 'blur' ? (
-                      <Droplets className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                    ) : (
-                      <Expand className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                    )}
-                    {f === 'cover' ? '铺满裁切（无黑边）' : f === 'blur' ? '模糊填充' : '留黑边（默认）'}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            )}
-
-            {view === 'workspace' && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => importInputRef.current?.click()}
-                  disabled={busy}
-                  className={cn(ctlBtn, 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20')}
-                  title="上传视频、图片、HTML 或 zip 页面包：按顺序填入空位，不会覆盖已有内容"
-                  aria-label="上传内容文件"
-                >
-                  <UploadCloud className="h-4 w-4" aria-hidden />
-                  <span>上传</span>
-                </button>
-
-                {/* 背景音乐快捷入口：琥珀色系与「上传」主色区分；点击直接选文件（已有则更换），
-                    音量与移除仍在「播放 → 背景音乐」子菜单管理 */}
-                <button
-                  type="button"
-                  onClick={() => bgmInputRef.current?.click()}
-                  disabled={bgmUploading}
-                  className={cn(
-                    ctlBtn,
-                    'border-amber-500/40 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 dark:text-amber-400',
-                  )}
-                  title={bgm ? `背景音乐：${bgm.originalName}（点击更换）` : '上传背景音乐：支持 mp3、wav、flac、m4a 等，50MB 内'}
-                  aria-label="上传背景音乐"
-                >
-                  <Music className="h-4 w-4" aria-hidden />
-                  <span>{bgmUploading ? '上传中…' : '音乐'}</span>
-                  {bgm && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" aria-hidden />}
-                </button>
-
-                {/* 水印（防伪）：完整功能面板挂在顶栏按钮上（与「标题」菜单解耦）：
-                    启用/文字/字号/颜色深浅/不透明度/加粗/字体形式，全部随项目存服务端。
-                    violet 色系与「音乐」琥珀色区分；状态点表示水印开启中 */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(
-                        ctlBtn,
-                        'border-violet-500/40 bg-violet-500/10 text-violet-600 hover:bg-violet-500/20 dark:text-violet-400',
-                      )}
-                      title="水印：防伪标志盖在视频区上方缓慢巡游（点击设置）"
-                      aria-label="水印设置"
-                    >
-                      <Stamp className="h-4 w-4" aria-hidden />
-                      <span>水印</span>
-                      {wmShow && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-violet-500 dark:bg-violet-400" aria-hidden />
-                      )}
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-64 border-border bg-card">
-                    <DropdownMenuCheckboxItem
-                      checked={wmShow}
-                      onCheckedChange={(v) => {
-                        const on = v === true;
-                        void updateSettings({ showWatermark: on });
-                        // 首次开启且还没设文字：直接带出文字编辑，避免空水印挂在屏幕上
-                        if (on && !wmText) {
-                          setWmDraft('');
-                          setWmDialogEnable(true);
-                          setWmDialogOpen(true);
-                        }
-                      }}
-                      className="text-[13px]"
-                    >
-                      启用水印
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setWmDraft(wmText);
-                        setWmDialogEnable(false);
-                        setWmDialogOpen(true);
-                      }}
-                      className="text-[13px]"
-                    >
-                      水印文字…
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <div className="px-2 py-2">
-                      <div className="mb-1 flex items-center justify-between text-[12px] text-muted-foreground">
-                        <span>字号</span>
-                        <span className="tabular-nums">{wmFontSize}px</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={WATERMARK_FONT_MIN}
-                        max={WATERMARK_FONT_MAX}
-                        step={2}
-                        value={wmFontSize}
-                        onChange={(e) => setWmFontSize(Number(e.target.value))}
-                        onPointerUp={() => void updateSettings({ watermarkFontSize: wmFontSize })}
-                        onKeyUp={() => void updateSettings({ watermarkFontSize: wmFontSize })}
-                        aria-label="水印字号"
-                        className="w-full accent-[var(--primary)]"
-                      />
-                      <div className="mb-1 mt-3 flex items-center justify-between text-[12px] text-muted-foreground">
-                        <span>颜色深浅</span>
-                      </div>
-                      <div className="flex gap-1" role="radiogroup" aria-label="水印颜色深浅">
-                        {WATERMARK_COLORS.map((c) => (
-                          <button
-                            key={c}
-                            type="button"
-                            role="radio"
-                            aria-checked={wmColor === c}
-                            onClick={() => void updateSettings({ watermarkColor: c })}
-                            className={cn(
-                              'flex-1 rounded-md border px-1 py-1 text-[12px] transition-colors',
-                              wmColor === c
-                                ? 'border-violet-500/60 bg-violet-500/15 text-violet-600 dark:text-violet-300'
-                                : 'border-border/60 text-muted-foreground hover:bg-muted/60',
-                            )}
-                          >
-                            {c === 'auto' ? '跟随主题' : c === 'white' ? '白' : '黑'}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mb-1 mt-3 flex items-center justify-between text-[12px] text-muted-foreground">
-                        <span>巡游速度</span>
-                      </div>
-                      <div className="flex gap-1" role="radiogroup" aria-label="水印巡游速度">
-                        {WATERMARK_SPEEDS.map((s) => (
-                          <button
-                            key={s}
-                            type="button"
-                            role="radio"
-                            aria-checked={wmSpeed === s}
-                            onClick={() => void updateSettings({ watermarkSpeed: s })}
-                            className={cn(
-                              'flex-1 rounded-md border px-1 py-1 text-[12px] transition-colors',
-                              wmSpeed === s
-                                ? 'border-violet-500/60 bg-violet-500/15 text-violet-600 dark:text-violet-300'
-                                : 'border-border/60 text-muted-foreground hover:bg-muted/60',
-                            )}
-                          >
-                            {s === 'slow' ? '慢' : s === 'normal' ? '标准' : '快'}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="mb-1 mt-3 flex items-center justify-between text-[12px] text-muted-foreground">
-                        <span>不透明度</span>
-                        <span className="tabular-nums">{wmOpacity}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={WATERMARK_OPACITY_MIN}
-                        max={WATERMARK_OPACITY_MAX}
-                        step={1}
-                        value={wmOpacity}
-                        onChange={(e) => setWmOpacity(Number(e.target.value))}
-                        onPointerUp={() => void updateSettings({ watermarkOpacity: wmOpacity })}
-                        onKeyUp={() => void updateSettings({ watermarkOpacity: wmOpacity })}
-                        aria-label="水印不透明度"
-                        className="w-full accent-[var(--primary)]"
-                      />
-                    </div>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuCheckboxItem
-                      checked={wmWeight === 'bold'}
-                      onCheckedChange={(v) =>
-                        void updateSettings({ watermarkFontWeight: v === true ? 'bold' : 'normal' })
-                      }
-                      className="text-[13px]"
-                    >
-                      加粗
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger className="text-[13px]">字体形式</DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="min-w-[9rem] border-border bg-card">
-                        <DropdownMenuRadioGroup
-                          value={wmFamily}
-                          onValueChange={(v) => void updateSettings({ watermarkFontFamily: v as WatermarkFamily })}
-                        >
-                          <DropdownMenuRadioItem value="default" className="text-[13px]">
-                            默认
-                          </DropdownMenuRadioItem>
-                          <DropdownMenuRadioItem value="serif" className="text-[13px]">
-                            衬线
-                          </DropdownMenuRadioItem>
-                          <DropdownMenuRadioItem value="hand" className="text-[13px]">
-                            手写
-                          </DropdownMenuRadioItem>
-                          <DropdownMenuRadioItem value="mono" className="text-[13px]">
-                            等宽
-                          </DropdownMenuRadioItem>
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                {/* 录屏模式（锁定控件）：开启后专注模式下无论鼠标怎么悬停都不显示视频控件，
-                    录屏画面干净；工作室模式不受影响（仍可 hover 操作）。随项目保存。
-                    cyan 青色系与「音乐」琥珀、「水印」紫区分；状态点表示开启中 */}
-                <button
-                  type="button"
-                  onClick={() => void updateSettings({ lockControls: !lockControls })}
-                  className={cn(
-                    ctlBtn,
-                    'border-cyan-500/40 bg-cyan-500/10 text-cyan-600 hover:bg-cyan-500/20 dark:text-cyan-400',
-                  )}
-                  title={
-                    lockControls
-                      ? '录屏模式已开：专注模式下视频控件锁定，悬停不再显示（点击关闭）'
-                      : '录屏模式：专注模式下锁定视频控件，鼠标悬停不再显示进度条'
-                  }
-                  aria-label="录屏模式"
-                  aria-pressed={lockControls}
-                >
-                  <Video className="h-4 w-4" aria-hidden />
-                  <span>录屏</span>
-                  {lockControls && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 dark:bg-cyan-400" aria-hidden />
-                  )}
-                </button>
-
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      className={cn(
-                        ctlBtn,
-                        'border-transparent bg-transparent px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:px-2.5',
-                      )}
-                      title="清空全部内容"
-                      aria-label="清空全部内容"
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden />
-                    </button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>清空全部内容？</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        将移除全部 {filledCount} 个内容及其标题，此操作无法恢复。
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>取消</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={handleClearAll}
-                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive"
-                      >
-                        确认清空
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </>
-            )}
-
-            <Divider />
-
-            {/* 进入专注模式（退出入口移至右下角圆形按钮，不占顶栏；库视图进入专注会同时切回工作空间） */}
-            {mode === 'studio' && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (view === 'library') setView('workspace');
-                  setMode('focus');
-                }}
-                className={cn(ctlBtn, 'border-primary/50 bg-primary/10 text-primary hover:bg-primary/20')}
-                title="进入专注模式：隐藏顶栏与全部管理控件，专心观看对比"
-                aria-label="进入专注模式"
-              >
-                <Expand className="h-4 w-4" aria-hidden />
-                <span className="hidden sm:inline">专注</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </header>
+        <TopBar
+          headerRef={headerRef}
+          mode={mode}
+          view={view}
+          sidebarOpen={sidebarOpen}
+          busy={busy}
+          filledCount={filledCount}
+          hasVideo={hasVideo}
+          hasHtml={hasHtml}
+          hasImage={hasImage}
+          projectName={projectName}
+          projects={projects}
+          projectId={projectId}
+          onSwitchProject={projectApi.switchProject}
+          onNewProject={() => {
+            projectApi.setNewName('');
+            projectApi.setCreating(true);
+          }}
+          themeMounted={themeMounted}
+          resolvedTheme={resolvedTheme}
+          onToggleTheme={toggleTheme}
+          onOpenNotes={() => setNotesOpen(true)}
+          count={count}
+          layout={layout}
+          layoutMode={layoutMode}
+          onCountSelect={handleCountSelect}
+          onLayoutSelect={handleLayoutSelect}
+          onAutoSelect={handleAutoSelect}
+          settings={settings}
+          updateSettings={updateSettings}
+          patchLocal={patchLocal}
+          ratioDraft={ratioDraft}
+          onRatioDraftChange={setRatioDraft}
+          onApplyCustomRatio={applyCustomRatio}
+          onPlayAll={handlePlayAll}
+          onPauseAll={handlePauseAll}
+          onResetAll={handleResetAll}
+          onImportClick={() => importInputRef.current?.click()}
+          onBgmClick={() => bgmInputRef.current?.click()}
+          bgmUploading={bgmUploading}
+          onRemoveBgm={() => void handleRemoveBgm()}
+          onEditWatermarkText={() => {
+            setWmDraft(settings.wmText);
+            setWmDialogEnable(false);
+            setWmDialogOpen(true);
+          }}
+          onClearAll={() => void handleClearAll()}
+          onEnterFocus={() => {
+            if (view === 'library') setView('workspace');
+            setMode('focus');
+          }}
+          onHtmlRefresh={() => setHtmlRefreshTick((t) => t + 1)}
+        />
       )}
 
-      {/* 专注模式操作区：右下角竖排圆形按钮（从头循环播放在上，退出在下），
-          默认半透明低调隐蔽，hover/focus 时显形 */}
+      {/* 专注模式操作区：右下角竖排圆形按钮（从头循环播放在上，退出在下） */}
       {mode === 'focus' && (
         <button
           type="button"
@@ -2828,8 +1080,8 @@ export function VideoWall() {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) endGridDrag();
         }}
         onDropCapture={() => {
-          // 捕获阶段兜底：卡片级 handleDrop 会 stopPropagation（防重复导入），冒泡层 onDrop
-          // 收不到；捕获阶段先于目标阶段执行，保证任何卡内松手都立即复位拖拽提示
+          // 捕获阶段兜底：卡片级 handleDrop 会 stopPropagation（防重复导入），
+          // 捕获阶段先于目标阶段执行，保证任何卡内松手都立即复位拖拽提示
           endGridDrag();
         }}
         onDrop={(e) => {
@@ -2840,756 +1092,157 @@ export function VideoWall() {
           if (files.length > 0) void distributeFiles(files);
         }}
       >
-        {/* 左侧栏：仅 Studio + 桌面端（项目卡已随 Step 8 接活；库/设置视图仍为占位）。
-            侧栏开关不占顶栏——做成贴在侧栏右缘的长条把手，垂直居中于视口可区。
-            容器定高（视口高 - 顶栏下沿 130px - 底部留白 16px）保证把手位置不随侧栏内容/收起状态变化；
-            sticky 使把手在页面滚动时始终钉在视口垂直中部。 */}
+        {/* 左侧栏：仅 Studio + 桌面端 */}
         {mode === 'studio' && (
-          <div className="sticky top-[130px] hidden h-[calc(100dvh-146px)] shrink-0 items-start lg:flex" data-sidebar-root>
-            {sidebarOpen && (
-              <aside className="flex w-60 flex-col gap-4 pb-6" aria-label="工作台侧栏">
-            {/* 项目卡（Step 8 动态化：当前项目 + 状态 + 管理入口） */}
-            <div className="rounded-xl border border-border bg-card p-3.5">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                  <Clapperboard className="h-[18px] w-[18px]" aria-hidden />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold" title={projectName}>
-                    {projectName}
-                  </p>
-                  <p className="text-[11px] leading-tight text-muted-foreground">
-                    {filledCount} / {count} 个内容位
-                  </p>
-                </div>
-              </div>
-              {/* 内容构成小结：视频 x · 网页 y · 图片 z——与顶栏自动适配逻辑呼应（有视频出播放组，纯网页出刷新组，图片无播放语义） */}
-              {filledCount > 0 && (
-                <p className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-                  <span className="inline-flex items-center gap-1">
-                    <Film className="h-3 w-3" aria-hidden />
-                    {slots.filter((s) => s.video).length} 视频
-                  </span>
-                  <span className="text-border" aria-hidden>
-                    |
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <Code2 className="h-3 w-3" aria-hidden />
-                    {slots.filter((s) => s.kind === 'html' && s.html).length} 网页
-                  </span>
-                  {slots.some((s) => s.kind === 'image' && s.image) && (
-                    <>
-                      <span className="text-border" aria-hidden>
-                        |
-                      </span>
-                      <span className="inline-flex items-center gap-1">
-                        <ImageIcon className="h-3 w-3" aria-hidden />
-                        {slots.filter((s) => s.kind === 'image' && s.image).length} 图片
-                      </span>
-                    </>
-                  )}
-                </p>
-              )}
-              <div className="mt-3 flex items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
-                  <span
-                    className={cn('h-1.5 w-1.5 rounded-full', STATUS_META[currentProject?.status ?? 'active'].dot)}
-                    aria-hidden
-                  />
-                  {STATUS_META[currentProject?.status ?? 'active'].label}
-                </span>
-                <Popover onOpenChange={(open) => open && setRenameDraft(currentProject?.name ?? projectName)}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                    >
-                      管理
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-72 border-border bg-card p-3.5">
-                    {/* 改名 */}
-                    <p className="text-xs font-semibold tracking-wide text-muted-foreground">项目名称</p>
-                    <div className="mt-1.5 flex gap-1.5">
-                      <Input
-                        value={renameDraft}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        maxLength={100}
-                        placeholder="项目名称"
-                        aria-label="项目名称"
-                        className="h-8 text-[13px]"
-                      />
-                      <button
-                        type="button"
-                        disabled={
-                          !currentProject ||
-                          projectBusy ||
-                          !renameDraft.trim() ||
-                          renameDraft.trim() === currentProject.name
-                        }
-                        onClick={() => currentProject && void updateProject(currentProject.id, { name: renameDraft.trim() })}
-                        className="h-8 shrink-0 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        保存
-                      </button>
-                    </div>
-                    {/* 状态 */}
-                    <p className="mt-3 text-xs font-semibold tracking-wide text-muted-foreground">项目状态</p>
-                    <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-                      {(['active', 'draft', 'archived'] as const).map((st) => (
-                        <button
-                          key={st}
-                          type="button"
-                          disabled={!currentProject}
-                          aria-pressed={currentProject?.status === st}
-                          onClick={() => currentProject && void updateProject(currentProject.id, { status: st })}
-                          className={cn(
-                            'h-8 rounded-md border text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50',
-                            currentProject?.status === st
-                              ? 'border-primary bg-primary/20 text-primary'
-                              : 'border-border bg-muted/60 text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground',
-                          )}
-                        >
-                          {STATUS_META[st].label}
-                        </button>
-                      ))}
-                    </div>
-                    {/* 删除（默认项目受保护） */}
-                    {currentProject && currentProject.id !== DEFAULT_PROJECT_ID ? (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <button
-                            type="button"
-                            className="mt-3 h-8 w-full rounded-lg border border-destructive/40 text-xs font-semibold text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/50"
-                          >
-                            删除项目
-                          </button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>删除项目「{currentProject.name}」？</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              将删除该项目的全部内容文件与设置，此操作无法恢复。
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>取消</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => void deleteProject(currentProject.id)}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive"
-                            >
-                              确认删除
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    ) : (
-                      <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/60">
-                        默认项目不可删除；删除其他项目会连同其内容文件一并移除。
-                      </p>
-                    )}
-                  </PopoverContent>
-                </Popover>
-              </div>
-            </div>
-
-            {/* 添加内容：与顶栏「一键导入」同源，多选后按顺序填充空位 */}
-            <button
-              type="button"
-              onClick={() => importInputRef.current?.click()}
-              disabled={busy}
-              className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <UploadCloud className="h-4 w-4" aria-hidden />
-              添加内容
-            </button>
-
-            {/* 视图导航（工作空间 / 项目库；设置入口评估后维持占位，见 BLUEPRINT D13） */}
-            <nav className="flex flex-col gap-1" aria-label="视图切换">
-              <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">视图</p>
-              <button
-                type="button"
-                onClick={() => setView('workspace')}
-                aria-current={view === 'workspace' ? 'page' : undefined}
-                className={cn(
-                  'flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                  view === 'workspace'
-                    ? 'bg-primary/15 text-primary'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                )}
-              >
-                <LayoutGrid className="h-4 w-4" aria-hidden />
-                工作空间
-              </button>
-              <button
-                type="button"
-                onClick={() => setView('library')}
-                aria-current={view === 'library' ? 'page' : undefined}
-                className={cn(
-                  'flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                  view === 'library'
-                    ? 'bg-primary/15 text-primary'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                )}
-              >
-                <Library className="h-4 w-4" aria-hidden />
-                库
-                <span className="ml-auto text-[10px] font-normal text-muted-foreground/60 tabular-nums">
-                  {projects.length} 个项目
-                </span>
-              </button>
-              <button
-                type="button"
-                disabled
-                title="设置已收编于顶栏「布局」「播放」「标题」「填充」弹层，暂不提供独立页面（D13）"
-                className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-muted-foreground/50"
-              >
-                <Settings className="h-4 w-4" aria-hidden />
-                设置
-                <span className="ml-auto text-[10px] font-normal text-muted-foreground/40">收编于顶栏</span>
-              </button>
-            </nav>
-
-            {/* 当前活动窗格：点击滚动定位并短暂高亮对应卡片 */}
-            <div className="min-h-0">
-              <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                当前活动窗格（{count}）
-              </p>
-              <div className="mt-1.5 max-h-[320px] space-y-0.5 overflow-y-auto pr-1">
-                {slots.map((s) => (
-                  <button
-                    key={s.index}
-                    type="button"
-                    onClick={() => focusSlot(s.index)}
-                    aria-label={`定位到窗格 ${s.index + 1}`}
-                    className={cn(
-                      'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent',
-                      highlight === s.index && 'bg-primary/10',
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'h-1.5 w-1.5 shrink-0 rounded-full',
-                        s.kind === 'html'
-                          ? 'bg-sky-500'
-                          : s.kind === 'image'
-                            ? 'bg-violet-500'
-                            : s.video
-                              ? 'bg-emerald-500'
-                              : 'bg-muted-foreground/30',
-                      )}
-                      aria-hidden
-                    />
-                    <span className="min-w-0 flex-1 truncate text-xs text-foreground/80">
-                      {s.title || s.video?.originalName || s.html?.originalName || s.image?.originalName || `空位 ${s.index + 1}`}
-                    </span>
-                    {s.kind === 'html' && (
-                      <span className="shrink-0 rounded border border-border px-1 text-[9px] font-semibold leading-4 text-muted-foreground/70">
-                        HTML
-                      </span>
-                    )}
-                    {s.kind === 'image' && (
-                      <span className="shrink-0 rounded border border-border px-1 text-[9px] font-semibold leading-4 text-muted-foreground/70">
-                        图片
-                      </span>
-                    )}
-                    <span
-                      className={cn(
-                        'shrink-0 text-[10px] tabular-nums',
-                        s.video ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground/40',
-                      )}
-                    >
-                      {s.index + 1}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-              </aside>
-            )}
-            {/* 侧栏开关：长条把手贴在侧栏右缘、垂直居中（不占顶栏），收起后仍在原位，点击随时展开 */}
-            <button
-              type="button"
-              onClick={() => setSidebarOpen((v) => !v)}
-              aria-pressed={sidebarOpen}
-              title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
-              aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
-              className="flex h-16 w-5 shrink-0 self-center items-center justify-center rounded-r-lg border border-l-0 border-border bg-card text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-            >
-              {sidebarOpen ? (
-                <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-              )}
-            </button>
-          </div>
+          <Sidebar
+            open={sidebarOpen}
+            onToggle={() => setSidebarOpen((v) => !v)}
+            currentProject={currentProject}
+            projectName={projectName}
+            filledCount={filledCount}
+            count={count}
+            slots={slots}
+            highlight={highlight}
+            view={view}
+            projectsCount={projects.length}
+            renameDraft={projectApi.renameDraft}
+            projectBusy={projectApi.projectBusy}
+            busy={busy}
+            onRenameDraftChange={projectApi.setRenameDraft}
+            onUpdateProject={projectApi.updateProject}
+            onDeleteProject={projectApi.deleteProject}
+            onImportClick={() => importInputRef.current?.click()}
+            onSetView={setView}
+            onFocusSlot={focusSlot}
+          />
         )}
 
         <main
           ref={mainRef}
           className={cn(
-            // focus 下 flex-col：网格 my-auto 垂直居中（内容不足一屏时上下均分留白，
-            // 正好放下时贴边）；studio 保持块级布局零变化。
-            // focus 内边距收窄（py-3/py-4），「正好放下」时上下留白更少
+            // focus 下 flex-col：网格 my-auto 垂直居中；studio 保持块级布局零变化
             'relative min-w-0 flex-1 transition-opacity duration-300',
             mode === 'focus' ? 'flex flex-col py-3 sm:py-4' : 'py-4 sm:py-7',
             switching && 'pointer-events-none opacity-45',
           )}
         >
-        {view === 'library' ? (
-          /* 项目库（Step D）：项目卡片网格，点击卡片打开对应工作台。
-             排序：进行中 > 草稿 > 已归档，同组内按更新时间倒序 */
-          <section className="w-full" aria-label="项目库">
-            <div className="flex items-baseline justify-between gap-3">
-              <p className="text-[13px] text-muted-foreground">
-                点击卡片打开对应工作台；新建项目在顶栏，改名/归档/删除在打开项目后的侧栏「管理」。
-              </p>
-            </div>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {[...projects]
-                .sort((a, b) => {
-                  const order = { active: 0, draft: 1, archived: 2 } as const;
-                  if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
-                  return (b.updatedAt > a.updatedAt ? 1 : -1);
-                })
-                .map((p) => {
-                  const vc = p.items.filter((it) => it.kind === 'video').length;
-                  const hc = p.items.filter((it) => it.kind === 'html').length;
-                  const ic = p.items.filter((it) => it.kind === 'image').length;
-                  const isCurrent = p.id === projectId;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => openFromLibrary(p.id)}
-                      className={cn(
-                        'group flex flex-col gap-3 rounded-2xl border bg-card p-5 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/10',
-                        isCurrent ? 'border-primary/70 ring-2 ring-primary/40' : 'border-border hover:border-primary/50',
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-[15px] font-bold text-foreground" title={p.name}>
-                            {p.name}
-                          </p>
-                          <p className="mt-0.5 text-[11px] text-muted-foreground/70">
-                            更新于 {new Date(p.updatedAt).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
-                            {isCurrent && <span className="ml-1.5 font-semibold text-primary">· 当前打开</span>}
-                          </p>
-                        </div>
-                        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
-                          <span className={cn('h-1.5 w-1.5 rounded-full', STATUS_META[p.status].dot)} aria-hidden />
-                          {STATUS_META[p.status].label}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                        <span className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5" title={`${vc} 个视频`}>
-                          <Film className="h-3 w-3" aria-hidden />{vc}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5" title={`${hc} 个网页`}>
-                          <Code2 className="h-3 w-3" aria-hidden />{hc}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5" title={`${ic} 张图片`}>
-                          <ImageIcon className="h-3 w-3" aria-hidden />{ic}
-                        </span>
-                        <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-primary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                          打开工作台
-                          <ChevronRight className="h-3 w-3" aria-hidden />
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
-            </div>
-          </section>
-        ) : loading ? (
-          <div className="grid gap-3 sm:gap-5" style={gridStyle}>
-            {slots.map((s) => (
-              <div
-                key={s.index}
-                className="overflow-hidden rounded-2xl border border-border bg-card"
-              >
-                <div className="aspect-video w-full animate-pulse bg-muted" />
-                <div className="p-3">
-                  <div className="h-6 w-full animate-pulse rounded-lg bg-muted" />
+          {view === 'library' ? (
+            <ProjectLibrary projects={projects} projectId={projectId} onOpen={openFromLibrary} />
+          ) : loading ? (
+            <div className="grid gap-3 sm:gap-5" style={gridStyle}>
+              {slots.map((s) => (
+                <div key={s.index} className="overflow-hidden rounded-2xl border border-border bg-card">
+                  <div className="aspect-video w-full animate-pulse bg-muted" />
+                  <div className="p-3">
+                    <div className="h-6 w-full animate-pulse rounded-lg bg-muted" />
+                  </div>
                 </div>
+              ))}
+            </div>
+          ) : filledCount === 0 ? (
+            /* 空状态引导（D7：仅简单文字提示 + 最小上传入口） */
+            <div className="flex min-h-[420px] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/70 bg-card/40 px-6 py-14 text-center">
+              <span className="flex h-14 w-14 items-center justify-center rounded-full border border-dashed border-muted-foreground/40 text-muted-foreground/60">
+                <UploadCloud className="h-6 w-6" aria-hidden />
+              </span>
+              <div className="space-y-1">
+                <p className="text-base font-semibold text-foreground/90">「{projectName}」暂无内容</p>
+                <p className="mx-auto max-w-md text-[13px] leading-relaxed text-muted-foreground">
+                  把视频、图片或 HTML 文件拖到页面任意位置，或点击下方按钮选择文件，内容将按顺序填入内容位
+                </p>
               </div>
-            ))}
-          </div>
-        ) : filledCount === 0 ? (
-          /* 空状态引导（D7：仅简单文字提示 + 最小上传入口，不做花哨插画） */
-          <div className="flex min-h-[420px] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/70 bg-card/40 px-6 py-14 text-center">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full border border-dashed border-muted-foreground/40 text-muted-foreground/60">
-              <UploadCloud className="h-6 w-6" aria-hidden />
-            </span>
-            <div className="space-y-1">
-              <p className="text-base font-semibold text-foreground/90">「{projectName}」暂无内容</p>
-              <p className="mx-auto max-w-md text-[13px] leading-relaxed text-muted-foreground">
-                把视频、图片或 HTML 文件拖到页面任意位置，或点击下方按钮选择文件，内容将按顺序填入内容位
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                disabled={busy}
+                className="mt-1 inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <UploadCloud className="h-4 w-4" aria-hidden />
+                选择文件导入
+              </button>
+              <p className="text-[11px] text-muted-foreground/60">
+                支持视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）、单文件 HTML 与 zip 页面包（含 index.html）；内容超过内容位数量时会自动扩位
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => importInputRef.current?.click()}
-              disabled={busy}
-              className="mt-1 inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <UploadCloud className="h-4 w-4" aria-hidden />
-              选择文件导入
-            </button>
-            <p className="text-[11px] text-muted-foreground/60">
-              支持视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）、单文件 HTML 与 zip 页面包（含 index.html）；内容超过内容位数量时会自动扩位
-            </p>
-          </div>
-        ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
-              {/* ref=自动适配测量锚点；focus 下 my-auto 垂直居中 + shrink-0 防被 flex 压缩 */}
-              <div
-                ref={wallRef}
-                className={cn('mx-auto grid gap-3 sm:gap-5', mode === 'focus' && 'my-auto shrink-0')}
-                style={gridStyle}
-              >
-                {slots.map((slot) => {
-                  const isFilled = !!(slot.video || slot.html || slot.image);
-                  const cardProps = {
-                    uploading: !!uploading[slot.index],
-                    loop,
-                    muted: mutedAll,
-                    focusMode: mode === 'focus',
-                    lockControls,
-                    highlighted: highlight === slot.index,
-                    dragActive: gridDrag,
-                    globalAspect: aspect,
-                    globalCustomRatio: customRatio,
-                    showTitles,
-                    showInfo,
-                    showIndex,
-                    letterboxFill,
-                    htmlScale,
-                    titleAlign,
-                    titleFontSize,
-                    titlePosition,
-                    titleWeight,
-                    titleColor,
-                    refreshSignal: htmlRefreshTick,
-                    onAspectOverride: handleSlotAspect,
-                    onFiles: (files: File[], primary?: number) => void distributeFiles(files, primary),
-                    onTitleChange: handleTitleChange,
-                    onClear: handleClearSlot,
-                    setVideoRef,
-                  } as const;
-                  /* key 用稳定文件名：排序后 DOM 节点被移动而非复用重建，视频播放不中断；
-                     空位卡片不注册 sortable，永远留在末尾 */
-                  return isFilled ? (
-                    <SortableCard key={sortableIdOf(slot)} slot={slot} {...cardProps} />
-                  ) : (
-                    <VideoCard key={`empty-${slot.index}`} slot={slot} {...cardProps} />
-                  );
-                })}
-                {/* 矩阵容量大于内容数时，末尾留空的占位格 */}
-                {Array.from({ length: padCellCount }).map((_, i) => (
-                  <div
-                    key={`pad-${i}`}
-                    aria-hidden
-                    style={{ aspectRatio: aspectCss(aspect, customRatio) }}
-                    className="rounded-2xl border border-dashed border-border/60 bg-muted/20"
-                  />
-                ))}
-              </div>
-            </SortableContext>
-          </DndContext>
-        )}
+          ) : (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
+                {/* ref=自动适配测量锚点；focus 下 my-auto 垂直居中 + shrink-0 防被 flex 压缩 */}
+                <div
+                  ref={wallRef}
+                  className={cn('mx-auto grid gap-3 sm:gap-5', mode === 'focus' && 'my-auto shrink-0')}
+                  style={gridStyle}
+                >
+                  {slots.map((slot) => {
+                    const isFilled = !!(slot.video || slot.html || slot.image);
+                    /* 槽位差异化 props（上传中/高亮）叠加在共享 props 上；
+                       key 用稳定文件名：DOM 节点被移动而非复用重建，视频播放不中断 */
+                    const cardProps = {
+                      ...sharedCardProps,
+                      uploading: !!uploading[slot.index],
+                      highlighted: highlight === slot.index,
+                    };
+                    return isFilled ? (
+                      <SortableCard key={sortableIdOf(slot)} slot={slot} {...cardProps} />
+                    ) : (
+                      <VideoCard key={`empty-${slot.index}`} slot={slot} {...cardProps} />
+                    );
+                  })}
+                  {/* 矩阵容量大于内容数时，末尾留空的占位格 */}
+                  {Array.from({ length: padCellCount }).map((_, i) => (
+                    <div
+                      key={`pad-${i}`}
+                      aria-hidden
+                      style={{ aspectRatio: aspectCss(settings.aspect, settings.customRatio) }}
+                      className="rounded-2xl border border-dashed border-border/60 bg-muted/20"
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          )}
 
-        {/* 提示词与署名（录屏入镜用）：显隐开关在顶栏「标题」菜单，文本点击即编辑、失焦自动保存，
-            随项目存服务端；宽度由 effect 同步为视频墙实际渲染宽度（窄墙窄、宽墙宽），高度随内容自适应 */}
-        {view === 'workspace' && filledCount > 0 && (showPrompt || showByline) && (
-          <div
-            ref={promptBarRef}
-            className={cn('mx-auto shrink-0', mode === 'focus' ? 'mt-3' : 'mt-4')}
-          >
-            {showPrompt && (
-              <div className="rounded-xl border border-border/70 bg-card/60 px-4 py-3">
-                <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  <MessageSquareQuote className="h-3 w-3" aria-hidden />
-                  提示词
-                </p>
-                <textarea
-                  value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
-                  onBlur={() => {
-                    if (promptText !== promptSavedRef.current) {
-                      promptSavedRef.current = promptText;
-                      void updateSettings({ promptText });
-                    }
-                  }}
-                  rows={2}
-                  maxLength={PROMPT_MAX}
-                  placeholder="粘贴本次对比使用的提示词（录屏时可一并入镜）…"
-                  aria-label="提示词"
-                  /* field-sizing-content：高度随内容自适应（Chrome/Edge 123+）；rows=2 为不支持浏览器的兜底，
-                     45vh 封顶防止超长提示词独占屏幕 */
-                  className="w-full resize-none field-sizing-content max-h-[45vh] overflow-y-auto bg-transparent text-[13px] leading-relaxed text-foreground/90 outline-none placeholder:text-muted-foreground/40"
-                />
-              </div>
-            )}
-            {showByline && (
-              <div
-                className={cn(
-                  'flex items-center gap-2 rounded-xl border border-border/70 bg-card/60 px-4 py-2',
-                  showPrompt && 'mt-2',
-                )}
-              >
-                <PenLine className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
-                <input
-                  value={bylineText}
-                  onChange={(e) => setBylineText(e.target.value)}
-                  onBlur={() => {
-                    if (bylineText !== bylineSavedRef.current) {
-                      bylineSavedRef.current = bylineText;
-                      void updateSettings({ bylineText });
-                    }
-                  }}
-                  maxLength={BYLINE_MAX}
-                  placeholder="署名：测评博主 @账号 #标签 …"
-                  aria-label="署名"
-                  className="w-full bg-transparent text-[12px] text-foreground/80 outline-none placeholder:text-muted-foreground/40"
-                />
-              </div>
-            )}
-          </div>
-        )}
+          {/* 提示词与署名（录屏入镜用） */}
+          {promptVisible && (
+            <PromptBar
+              mode={mode}
+              showPrompt={settings.showPrompt}
+              showByline={settings.showByline}
+              promptText={settings.promptText}
+              bylineText={settings.bylineText}
+              onPromptChange={(text) => patchLocal({ promptText: text })}
+              onBylineChange={(text) => patchLocal({ bylineText: text })}
+              onPromptBlur={savePromptIfChanged}
+              onBylineBlur={saveBylineIfChanged}
+              barRef={promptBarRef}
+            />
+          )}
 
-        {/* 防伪水印：蒙版层由 effect 实时对齐视频墙（巡游范围 = 墙的实际区域：
-            单视频=单卡、多视频=整墙），水印在其上屏保式巡游（防搬运）。
-            z-30 压过所有视频卡片（卡片常态无 z、拖拽时才临时 z-30），水印永远在视频上层；
-            pointer-events-none 不挡视频点击/拖拽；绝对定位不占布局、不干扰 autoFit 测量。
-            全部设置收在顶栏「水印」按钮 */}
-        {view === 'workspace' && filledCount > 0 && wmShow && (
-          <div ref={wmLayerRef} aria-hidden className="pointer-events-none absolute z-30 overflow-hidden">
-            <div className="flex h-full w-full items-start justify-center pt-[4%]">
-              <span
-                className={cn(
-                  'watermark-screensaver max-w-[80%] select-none whitespace-pre-wrap break-words text-center',
-                  wmFamily === 'serif' && 'font-serif',
-                  wmFamily === 'hand' && 'font-hand',
-                  wmFamily === 'mono' && 'font-mono',
-                  wmColor === 'white' ? 'text-white' : wmColor === 'black' ? 'text-black' : 'text-foreground',
-                  wmWeight === 'bold' ? 'font-bold' : 'font-normal',
-                )}
-                style={{
-                  fontSize: `${wmFontSize}px`,
-                  opacity: wmOpacity / 100,
-                  animationDuration: `${WATERMARK_SPEED_SECONDS[wmSpeed]}s`,
-                  /* 双向描影保证明暗视频上都可辨 */
-                  textShadow: '0 1px 3px rgb(0 0 0 / 0.25), 0 0 1px rgb(255 255 255 / 0.18)',
-                }}
-              >
-                {wmText}
-              </span>
-            </div>
-          </div>
-        )}
-      </main>
+          {/* 防伪水印蒙版层 */}
+          {wmVisible && <WatermarkLayer settings={settings} layerRef={wmLayerRef} />}
+        </main>
       </div>
 
-      {/* 注意事项已移至顶栏书本按钮的「使用须知」弹窗（原常驻 footer 占位过高，按需查看） */}
-
       {/* 缩减数量确认框 */}
-      <AlertDialog
-        open={pendingCount !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingCount(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>缩减内容位数量？</AlertDialogTitle>
-            <AlertDialogDescription>
-              缩减到 {pendingCount} 个将移除末尾多余的{' '}
-              {removedContentCount(pendingCount ?? 0)} 个内容及其标题，且无法恢复。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmShrink}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive"
-            >
-              确认缩减
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ShrinkConfirmDialog
+        pendingCount={pendingCount}
+        removedCount={removedContentCount(pendingCount ?? 0)}
+        onConfirm={confirmShrink}
+        onCancel={() => setPendingCount(null)}
+      />
 
       {/* 新建项目（Step 8 多项目）：创建后立即切换到新项目 */}
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="border-border bg-card text-card-foreground sm:max-w-[24rem]">
-          <DialogHeader>
-            <DialogTitle>新建项目</DialogTitle>
-            <DialogDescription>
-              为一批新内容创建独立工作台：内容、布局与设置互相隔离，可随时在顶栏切换。
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void createProject();
-              }
-            }}
-            maxLength={100}
-            placeholder="项目名称（留空则自动命名）"
-            aria-label="项目名称"
-            autoFocus
-          />
-          <DialogFooter className="gap-2">
-            <button
-              type="button"
-              onClick={() => setCreating(false)}
-              className="inline-flex h-9 items-center rounded-lg border border-border bg-card px-4 text-[13px] font-medium text-foreground/90 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              disabled={projectBusy}
-              onClick={() => void createProject()}
-              className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {projectBusy ? '创建中…' : '创建并切换'}
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CreateProjectDialog
+        open={projectApi.creating}
+        name={projectApi.newName}
+        busy={projectApi.projectBusy}
+        onNameChange={projectApi.setNewName}
+        onCreate={() => void projectApi.createProject()}
+        onClose={() => projectApi.setCreating(false)}
+      />
 
-      {/* 使用须知弹窗（原底部注意事项）：点空白处、Esc 或右上角/底部关闭按钮均可关闭。
-          编号圆标 + 条目化排版：每个要点一个序号，标题加粗、说明正文两段式，扫读更清晰 */}
-      <Dialog open={notesOpen} onOpenChange={setNotesOpen}>
-        <DialogContent className="border-border bg-card text-card-foreground sm:max-w-[32rem]">
-          <DialogHeader>
-            <DialogTitle>使用须知</DialogTitle>
-            <DialogDescription>
-              关于布局、导入、播放与多项目的 6 个要点。
-            </DialogDescription>
-          </DialogHeader>
-          <ol className="flex max-h-[60vh] flex-col gap-3.5 overflow-y-auto pr-1 text-[13px] leading-relaxed text-muted-foreground">
-            <li className="flex items-start gap-2.5">
-              <span
-                aria-hidden
-                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
-              >
-                1
-              </span>
-              <p className="min-w-0 flex-1">
-                <strong className="font-semibold text-foreground/90">布局与排序</strong>
-                <br />
-                矩阵默认自动排列，可在顶栏「布局」中固定行列与内容比例。抓住卡片左上角编号即可
-                <strong className="font-semibold text-foreground/90">拖动排序</strong>
-                ；截图需要干净画面时，可在「标题」菜单中隐藏编号。
-              </p>
-            </li>
-            <li className="flex items-start gap-2.5">
-              <span
-                aria-hidden
-                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
-              >
-                2
-              </span>
-              <p className="min-w-0 flex-1">
-                <strong className="font-semibold text-foreground/90">导入内容</strong>
-                <br />
-                点击空位或把文件拖进页面即可上传，支持
-                <strong className="font-semibold text-foreground/90">
-                  视频（MP4 / MOV / WebM 等）、图片（PNG / JPG / WebP / SVG 等）、单文件 HTML 与 zip 页面包
-                </strong>
-                。上传几个就显示几个内容框，超出时自动扩位；文件拖到已占用的卡片上会自动放入下一个空位，
-                不会覆盖已有内容，替换内容请用卡片信息行的「替换」按钮；依赖同目录资源的页面请打成 zip 包导入。
-              </p>
-            </li>
-            <li className="flex items-start gap-2.5">
-              <span
-                aria-hidden
-                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
-              >
-                3
-              </span>
-              <p className="min-w-0 flex-1">
-                <strong className="font-semibold text-foreground/90">播放与展示</strong>
-                <br />
-                内容下方可填写标题与介绍；顶栏「播放」「标题」「填充」三个按钮分别控制
-                <strong className="font-semibold text-foreground/90">循环/静音/倍速、标题样式与黑边填充</strong>
-                ，对全部卡片同时生效。
-              </p>
-            </li>
-            <li className="flex items-start gap-2.5">
-              <span
-                aria-hidden
-                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
-              >
-                4
-              </span>
-              <p className="min-w-0 flex-1">
-                <strong className="font-semibold text-foreground/90">顶栏随内容自动适配</strong>
-                <br />
-                <strong className="font-semibold text-foreground/90">含视频的项目</strong>
-                显示「同时播放 / 暂停」；
-                <strong className="font-semibold text-foreground/90">纯网页项目</strong>
-                没有播放概念，主动作变为「刷新全部」；混合项目两者并存（播放仅对视频生效）。无需手动选择模式。
-              </p>
-            </li>
-            <li className="flex items-start gap-2.5">
-              <span
-                aria-hidden
-                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
-              >
-                5
-              </span>
-              <p className="min-w-0 flex-1">
-                <strong className="font-semibold text-foreground/90">多项目管理</strong>
-                <br />
-                顶栏左上角可切换项目（项目名右侧的
-                <strong className="font-semibold text-foreground/90">角标</strong>
-                标明内容构成），支持新建、重命名、归档与删除；各项目的
-                <strong className="font-semibold text-foreground/90">内容、布局与设置互相隔离</strong>
-                。
-              </p>
-            </li>
-            <li className="flex items-start gap-2.5">
-              <span
-                aria-hidden
-                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[11px] font-bold tabular-nums text-primary"
-              >
-                6
-              </span>
-              <p className="min-w-0 flex-1">
-                <strong className="font-semibold text-foreground/90">数据安全</strong>
-                <br />
-                内容与设置均
-                <strong className="font-semibold text-foreground/90">保存在服务器</strong>
-                ，刷新页面或换设备打开都不会丢失；HTML 页面在
-                <strong className="font-semibold text-foreground/90">独立沙箱</strong>
-                中运行，无法访问本站数据。
-              </p>
-            </li>
-          </ol>
-          <DialogFooter>
-            <button
-              type="button"
-              onClick={() => setNotesOpen(false)}
-              className="inline-flex h-9 items-center rounded-lg bg-primary px-5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            >
-              知道了
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* 使用须知弹窗 */}
+      <NotesDialog open={notesOpen} onClose={() => setNotesOpen(false)} />
 
       {/* 一键导入的隐藏文件选择框（视频、图片与单文件 HTML） */}
       <input
@@ -3605,7 +1258,7 @@ export function VideoWall() {
         }}
       />
 
-      {/* 背景音乐的隐藏文件选择框（「播放 → 背景音乐」菜单入口） */}
+      {/* 背景音乐的隐藏文件选择框 */}
       <input
         ref={bgmInputRef}
         type="file"
@@ -3618,48 +1271,39 @@ export function VideoWall() {
         }}
       />
 
-      {/* 背景音乐元素：loop 恒开（循环由元素自身保证）；src 跟随项目 settings.bgm，
-          未设置时不渲染音源；音量/倍速由上方 effect 同步 */}
-      <audio ref={audioRef} loop preload="auto" src={bgm ? `/api/files/${bgm.filename}` : undefined} className="hidden" />
+      {/* 背景音乐元素：loop 恒开；src 跟随项目 settings.bgm，音量/倍速由 effect 同步 */}
+      <audio
+        ref={audioRef}
+        loop
+        preload="auto"
+        src={settings.bgm ? `/api/files/${settings.bgm.filename}` : undefined}
+        className="hidden"
+      />
 
       {/* 水印文字编辑：确认才提交（取消/Esc 丢弃草稿）；顶栏按钮首次启用时保存会连带开启水印 */}
-      <AlertDialog
+      <WatermarkTextDialog
         open={wmDialogOpen}
+        draft={wmDraft}
+        onDraftChange={setWmDraft}
         onOpenChange={(open) => {
           setWmDialogOpen(open);
           if (!open) setWmDialogEnable(false);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>水印文字</AlertDialogTitle>
-            <AlertDialogDescription>
-              显示在视频区上方的防伪标志，屏保式缓慢巡游、随当前项目保存，最长 60 字。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <Input
-            value={wmDraft}
-            onChange={(e) => setWmDraft(e.target.value)}
-            maxLength={WATERMARK_MAX}
-            placeholder="例如：@你的频道名 · 未经授权禁止搬运"
-            aria-label="水印文字"
-          />
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                const text = wmDraft.trim();
-                setWmText(text);
-                void updateSettings(
-                  wmDialogEnable && text ? { watermarkText: text, showWatermark: true } : { watermarkText: text },
-                );
-              }}
-            >
-              保存
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        onSave={(text) => {
+          patchLocal({ wmText: text });
+          void updateSettings(
+            wmDialogEnable && text
+              ? { watermarkText: text, showWatermark: true }
+              : { watermarkText: text },
+          );
+        }}
+      />
     </div>
   );
+
+  /** 打开项目库中的某个项目：切换项目并回到工作空间视图 */
+  function openFromLibrary(id: string) {
+    if (id !== projectId) projectApi.switchProject(id);
+    setView('workspace');
+  }
 }

@@ -467,6 +467,43 @@ export interface Project {
 /** 默认项目 id：v1 数据迁移的目标项目，API 兼容层的操作对象 */
 export const DEFAULT_PROJECT_ID = 'default';
 
+/**
+ * 项目摘要（GET /api/projects 列表项）：
+ * 只携带列表与切换 UI 需要的字段（名称 / 状态 / 更新时间 / 内容构成计数），
+ * 不含 items 明细与 settings——避免每个项目全量读盘与归一化的读放大，
+ * 响应体也不再随条目数线性膨胀。
+ */
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  status: Project['status'];
+  createdAt: string;
+  updatedAt: string;
+  /** 内容条目总数（= items.length，非 slotCount） */
+  itemCount: number;
+  /** 视频条目数（顶栏自动适配：>0 显示播放组） */
+  videoCount: number;
+  /** 网页条目数（纯网页项目顶栏出「刷新全部」） */
+  htmlCount: number;
+  /** 图片条目数 */
+  imageCount: number;
+}
+
+/** 从完整项目提取列表摘要（纯函数） */
+export function toProjectSummary(p: Project): ProjectSummary {
+  return {
+    id: p.id,
+    name: p.name,
+    status: p.status,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+    itemCount: p.items.length,
+    videoCount: p.items.filter((it) => it.kind === 'video').length,
+    htmlCount: p.items.filter((it) => it.kind === 'html').length,
+    imageCount: p.items.filter((it) => it.kind === 'image').length,
+  };
+}
+
 export function defaultSettings(): ProjectSettings {
   return {
     aspectRatio: 'original',
