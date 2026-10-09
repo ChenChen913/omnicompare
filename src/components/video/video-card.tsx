@@ -12,6 +12,7 @@ import {
   TitleWeight,
   TITLE_COLOR_DEFAULT,
   TITLE_FONT_DEFAULT,
+  TITLE_FONT_MAX,
   TITLE_WEIGHT_DEFAULT,
   aspectCss,
   aspectLabel,
@@ -93,6 +94,11 @@ type HtmlStatus = 'loading' | 'ready' | 'error';
 /** iframe 加载超时（毫秒）：超时仍未 onload 判定为失败（BLUEPRINT §10） */
 const HTML_LOAD_TIMEOUT = 15000;
 
+/** above 标题带头像框宽度硬上限（px）：超宽横幅 logo 到此封顶，保证标题输入区保底宽度 */
+const ICON_BOX_MAX_W = 208;
+/** above 标题带头像框高度下限（px）：字号很小时也保持可点击的舒展尺寸（上限复用 TITLE_FONT_MAX） */
+const ICON_BOX_MIN_H = 48;
+
 /**
  * 单格卡片：视频/图片/HTML 三种内容形态的展示与交互。
  * 包裹 memo：十二张卡片的墙中，任意全局 state（水印不透明度拖动、高亮等）变化
@@ -165,6 +171,11 @@ export const VideoCard = memo(function VideoCard({
   const aboveMode = showTitles && titlePosition === 'above';
   const belowMode = showTitles && titlePosition === 'below';
   const titleColorCss = titleColor !== TITLE_COLOR_DEFAULT ? titleColor : undefined;
+
+  /** 头像/图标展示框（above 标题带）：高度随标题字号自适应（约一行文字高，48~96px 与字号上限同频）；
+   *  宽度不定死——按图片原始宽高比自动伸展，object-contain 完整显示不裁切（宽幅 logo 不再被裁掉） */
+  const iconBoxSize = Math.min(TITLE_FONT_MAX, Math.max(ICON_BOX_MIN_H, Math.round(titleFontSize * 1.5)));
+  const iconRenderable = !!iconFile && !iconError;
 
   /** 把主视频的播放态镜像到模糊背景层（播放/暂停/拖动/倍速/换源）；失败静默。
    *  顺带驱动 selfPlaying：onPlay/onPause 都会路过这里 */
@@ -363,7 +374,7 @@ export const VideoCard = memo(function VideoCard({
       )}
 
       {/* above 高级标题带（titlePosition='above'）：内容上方独立标题区，不遮内容、不占内容比例。
-          排行榜式布局：内联序号角标（兼拖拽手柄）+ 圆形内容头像（可上传/替换/移除）+ 标题输入区；
+          排行榜式布局：内联序号角标（兼拖拽手柄）+ 内容头像（可上传/替换/移除）+ 标题输入区；
           视觉：圆角卡片式条体（渐变底 + 细描边 + 暗色内高光），深浅主题各自成立。
           头像仅在有内容时展示（图标依附于内容，空位隐藏）；标题空位也渲染（与 below 一致的编辑可供性） */}
       {aboveMode && (
@@ -389,8 +400,10 @@ export const VideoCard = memo(function VideoCard({
               {index + 1}
             </span>
 
-            {/* 内容头像/图标：44px 圆形；未设置时显示上传占位，下拉菜单提供 上传/替换/移除。
-                图标依附内容（空位不显示头像），替换内容不清除图标（模型头像跨视频保留） */}
+            {/* 内容头像/图标：圆角矩形自适应框——高度随标题字号（48~96px），宽度按图片原始宽高比
+                自动伸展 + object-contain 完整显示不裁切（各元素偏大的图/宽幅 logo 不再被圆形裁掉），
+                超宽图由 max-width（208px 且不超标题带一半）封顶让位标题；未设置时显示方形上传占位，
+                下拉菜单提供 上传/替换/移除。图标依附内容（空位不显示头像），替换内容不清除图标（模型头像跨视频保留） */}
             {(video || htmlFile || imageFile) && onIconFiles && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -399,18 +412,24 @@ export const VideoCard = memo(function VideoCard({
                     disabled={uploading}
                     title={iconFile ? '内容图标：点击替换或移除' : '上传内容图标/头像（展示在标题左侧）'}
                     aria-label={`位置 ${index + 1} 的图标，${iconFile ? '点击替换或移除' : '点击上传'}`}
-                    className="group relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted ring-1 ring-border transition-shadow hover:ring-2 hover:ring-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 dark:ring-white/15 dark:hover:ring-primary/70"
+                    className="group relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted ring-1 ring-border transition-shadow hover:ring-2 hover:ring-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 dark:ring-white/15 dark:hover:ring-primary/70"
+                    style={{
+                      height: iconBoxSize,
+                      maxWidth: `min(${ICON_BOX_MAX_W}px, 50%)`,
+                      // 占位态定宽方形；有图时宽度交给图片原始宽高比（auto）
+                      ...(iconRenderable ? {} : { width: iconBoxSize }),
+                    }}
                   >
-                    {iconFile && !iconError ? (
+                    {iconRenderable ? (
                       <img
                         src={`/api/files/${encodeURIComponent(iconFile.filename)}`}
                         alt=""
                         loading="lazy"
                         onError={() => setIconError(true)}
-                        className="h-full w-full object-cover"
+                        className="h-full w-auto max-w-full object-contain"
                       />
                     ) : (
-                      <ImagePlus className="h-4.5 w-4.5 text-muted-foreground/70 transition-colors group-hover:text-muted-foreground" aria-hidden />
+                      <ImagePlus className="h-5 w-5 text-muted-foreground/70 transition-colors group-hover:text-muted-foreground" aria-hidden />
                     )}
                   </button>
                 </DropdownMenuTrigger>

@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 # above 高级标题带端到端验证（单次调用内完成 server + 浏览器操作）
-# 覆盖：premium bar 结构 / 头像上传 UI 全链路 / 字重滑杆与快捷档 / 视觉截图 / 恢复默认
+# 覆盖：premium bar 结构 / 头像上传 UI 全链路 / 头像自适应完整显示（object-contain、非圆形裁切）/
+#       字重滑杆与快捷档 / 视觉截图 / 恢复默认
 set -u
 cd "$(dirname "$0")/.."
 BASE="http://127.0.0.1:3000"
-AVATAR=".tmp-avatar/avatar-a.png"
 PASS=0; FAIL=0
 
 ok()   { PASS=$((PASS+1)); echo "PASS  $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "FAIL  $1"; }
+
+# ---------- 0.1 测试头像素材（自包含生成：脚本末尾会清理 .tmp-avatar，不能依赖外部残留文件）----------
+# 200x120（5:3 宽幅）+ 四角元素：验证「按原始宽高比完整显示」——若被圆形/方形裁切，角上元素会丢
+mkdir -p .tmp-avatar
+python3 - <<'PY'
+from PIL import Image, ImageDraw
+img = Image.new('RGBA', (200, 120), (79, 70, 229, 255))
+d = ImageDraw.Draw(img)
+d.rounded_rectangle([8, 8, 191, 111], radius=16, outline=(255, 255, 255, 235), width=6)
+d.ellipse([12, 12, 42, 42], fill=(244, 114, 182, 255))
+d.ellipse([158, 78, 188, 108], fill=(250, 204, 21, 255))
+img.save('.tmp-avatar/avatar-a.png')
+PY
+AVATAR=".tmp-avatar/avatar-a.png"
 
 # ---------- 0. server ----------
 # 先清理可能的孤儿进程（npx 被 kill 时子进程 next-server 可能存活并持旧编译产物）
@@ -91,19 +105,26 @@ echo "  $R"
 echo "$R" | grep -q '"barExists":true'          && ok "高级标题带存在"                 || bad "高级标题带存在"
 echo "$R" | grep -q '"textareaInBar":true'       && ok "标题输入框在带内"               || bad "标题输入框在带内"
 echo "$R" | grep -q '"avatarPlaceholder":true'  && ok "头像占位按钮存在"               || bad "头像占位按钮存在"
-echo "$R" | grep -q '"avatarSize":44'           && ok "头像 44px"                      || bad "头像 44px ($R)"
+echo "$R" | grep -q '"avatarSize":48'           && ok "头像占位 48px（自适应下限）"      || bad "头像占位 48px ($R)"
 echo "$R" | grep -q '"inlineBadgeInBar":true'   && ok "编号角标内联在带内"             || bad "编号角标内联在带内"
 echo "$R" | grep -q '"noAbsBadge":true'         && ok "绝对定位角标已隐藏"             || bad "绝对定位角标已隐藏"
 echo "$R" | grep -q '"fontWeight":"800"'        && ok "字重 800 生效"                  || bad "字重 800 生效 ($R)"
 echo "$R" | grep -q '"fontSize":"32px"'         && ok "字号 32px 生效"                 || bad "字号 32px 生效 ($R)"
 echo "$R" | grep -q '"barAboveContent":true'    && ok "标题带位于内容上方"             || bad "标题带位于内容上方"
 
-# ---------- 4. 头像菜单（上传/替换/移除选项存在）----------
+# ---------- 4. 头像菜单（上传/替换/移除选项存在；首轮点击偶发竞态未展开时重试）----------
 AV_REF=$(agent-browser snapshot -i 2>/dev/null | grep "的图标" | grep -o 'ref=e[0-9]*' | cut -d= -f2 | head -1)
 echo "  头像按钮 ref: $AV_REF"
-agent-browser click "@$AV_REF" > /dev/null 2>&1
-agent-browser wait 1200 > /dev/null 2>&1
-S=$(agent-browser snapshot -i 2>/dev/null | grep -c "上传图标")
+S=0
+for ATTEMPT in 1 2 3; do
+  agent-browser click "@$AV_REF" > /dev/null 2>&1
+  agent-browser wait 1200 > /dev/null 2>&1
+  S=$(agent-browser snapshot -i 2>/dev/null | grep -c "上传图标")
+  [ "$S" -ge 1 ] && break
+  echo "[e2e] 头像菜单未展开（第 ${ATTEMPT} 次），重试…"
+  agent-browser press Escape > /dev/null 2>&1
+  agent-browser wait 400 > /dev/null 2>&1
+done
 [ "$S" -ge 1 ] && ok "头像菜单含「上传图标」" || bad "头像菜单含「上传图标」"
 agent-browser press Escape > /dev/null 2>&1
 agent-browser wait 300 > /dev/null 2>&1
@@ -127,11 +148,28 @@ echo "  set: $R"
 agent-browser wait 2500 > /dev/null 2>&1
 R=$(agent-browser eval "(() => {
   const img = document.querySelector('article .rounded-xl button img');
-  return JSON.stringify({ iconImg: !!img, src: img ? img.src : null, w: img ? img.getBoundingClientRect().width : null });
+  const btn = img ? img.closest('button') : null;
+  const st = img ? getComputedStyle(img) : null;
+  const bst = btn ? getComputedStyle(btn) : null;
+  const r = img ? img.getBoundingClientRect() : null;
+  return JSON.stringify({ iconImg: !!img, src: img ? img.src : null, w: r ? r.width : null,
+    h: r ? r.height : null, fit: st ? st.objectFit : null, radius: bst ? bst.borderRadius : null,
+    isCircle: bst ? (bst.borderRadius === '9999px' || bst.borderRadius === '50%') : null });
 })()" 2>/dev/null | sed 's/\\//g')
 echo "  $R"
-echo "$R" | grep -q '"iconImg":true' && ok "头像图片已渲染（UI 上传链路通）" || bad "头像图片已渲染 ($R)"
-echo "$R" | grep -q '/api/files/'   && ok "头像 src 指向 /api/files"        || bad "头像 src 指向 /api/files"
+echo "$R" | grep -q '"iconImg":true'       && ok "头像图片已渲染（UI 上传链路通）"   || bad "头像图片已渲染 ($R)"
+echo "$R" | grep -q '/api/files/'         && ok "头像 src 指向 /api/files"           || bad "头像 src 指向 /api/files"
+echo "$R" | grep -q '"fit":"contain"'    && ok "object-contain 完整显示不裁切"     || bad "object-contain 完整显示 ($R)"
+echo "$R" | grep -q '"isCircle":false'   && ok "圆角矩形展示（非圆形裁切）"         || bad "圆角矩形展示 ($R)"
+# 宽高比断言：素材 200x120（5:3 ≈ 1.667），渲染应保持原始比例（高度 48、宽度 ≈ 80）
+IMG_W=$(echo "$R" | grep -o '"w":[0-9.]*' | cut -d: -f2)
+IMG_H=$(echo "$R" | grep -o '"h":[0-9.]*' | cut -d: -f2)
+if awk "BEGIN{exit !($IMG_W>0 && $IMG_H>0)}" 2>/dev/null; then
+  awk "BEGIN{exit !($IMG_H>=46 && $IMG_H<=50)}" && ok "头像高度 48px（随字号自适应）" || bad "头像高度 48px (h=$IMG_H)"
+  awk "BEGIN{exit !($IMG_W/$IMG_H>=1.55 && $IMG_W/$IMG_H<=1.80)}" && ok "宽幅图标按 5:3 原始比例伸展" || bad "宽幅图标按原始比例伸展 (w=$IMG_W h=$IMG_H)"
+else
+  bad "头像尺寸读取失败 (w=$IMG_W h=$IMG_H)"
+fi
 ICON_URL=$(echo "$R" | grep -o 'src":"[^"]*' | cut -d'"' -f3)
 
 # ---------- 6. 字重滑杆 + 快捷档（菜单 UI）----------
@@ -172,7 +210,11 @@ ERRS=$(agent-browser errors 2>/dev/null | rg -c "error|Error" || echo 0)
 [ "$ERRS" = "0" ] && ok "浏览器零控制台错误" || bad "浏览器控制台错误 ($ERRS)"
 
 # ---------- 9. 恢复默认 + 关闭 ----------
-curl -s -X DELETE "$BASE/api/videos/icon?slot=0" -o /dev/null
+# 清全部槽位图标（DELETE 幂等，无图标/越界槽位安全返回）：防御历史残留
+# （旧版只清 slot=0，曾漏掉其它槽位的测试图标；越界 slot 返 400，输出忽略即可）
+for SLOT_I in $(seq 0 11); do
+  curl -s -X DELETE "$BASE/api/videos/icon?slot=$SLOT_I" -o /dev/null
+done
 curl -s -X PATCH -H 'Content-Type: application/json' \
   -d '{"titlePosition":"below","titleFontSize":16,"titleWeight":400}' \
   $BASE/api/videos/settings -o /dev/null
