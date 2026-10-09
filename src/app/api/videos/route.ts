@@ -107,12 +107,14 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json(await readManifest(p.id), { headers: noStore });
     }
 
-    const slot = Number(searchParams.get('slot'));
-    if (
-      !Number.isInteger(slot) ||
-      slot < 0 ||
-      slot >= manifest.count
-    ) {
+    // 严格校验 slot 字符串形态：Number(null) === 0 会把缺失参数静默当成位置 0，
+    // Number('') === 0 同理——两者都会误删第一个位置的内容（与 upload 路由同一防御）
+    const slotRaw = searchParams.get('slot');
+    if (slotRaw === null || !/^\d{1,2}$/.test(slotRaw)) {
+      return badRequest('缺少或无效的视频位置');
+    }
+    const slot = Number(slotRaw);
+    if (slot >= manifest.count) {
       return badRequest('无效的视频位置');
     }
 

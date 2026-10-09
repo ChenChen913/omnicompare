@@ -221,13 +221,20 @@ async function main() {
   /* ---------------------------------------------------------------- */
   section('P0-3 zip 解包限额（流式，越限即拒）');
   {
+    // slot 必须落在当前 count 内（v1 路由拒收越界位置）：固定写 '1' / '2' 会在
+    // 全新环境（默认项目 count=1）里因"无效的内容位置"而 400，让正常包被误判
+    // 为拒绝、炸弹的拒绝原因断言失真——与 P3-11 节注释警示的坑同源，取末位即可
+    const probeManifest = await req('GET', '/api/videos');
+    const probeCount = Number(probeManifest.body?.count) || 1;
+    const zipSlot = String(Math.max(0, probeCount - 1));
+
     // 解压后 ~40MB（低于 120MB 上限，应成功）——顺带确认正常包没被误伤
     const okZip = makeZip({
       'index.html': strToU8('<html>ok</html>'),
       'data.txt': new Uint8Array(8 * 1024 * 1024),
     });
     const upOk = await req('POST', '/api/videos/upload', {
-      form: { file: namedBlob(okZip, 'sized-ok.zip'), slot: '1' },
+      form: { file: namedBlob(okZip, 'sized-ok.zip'), slot: zipSlot },
     });
     check('8MB 载荷的 zip 正常通过', upOk.status === 200, `实际：${upOk.status}`);
 
@@ -238,7 +245,7 @@ async function main() {
     });
     const t0 = Date.now();
     const upBomb = await req('POST', '/api/videos/upload', {
-      form: { file: namedBlob(bomb, 'bomb.zip'), slot: '2' },
+      form: { file: namedBlob(bomb, 'bomb.zip'), slot: zipSlot },
     });
     const ms = Date.now() - t0;
     check('zip 炸弹被拒绝', upBomb.status === 400, `实际：${upBomb.status}`);
@@ -256,6 +263,11 @@ async function main() {
   /* ---------------------------------------------------------------- */
   section('P0-3 zip 路径与类型白名单');
   {
+    // 同 P0-3 解包限额节：slot 取当前 count 内的末位，保证 400 断言命中的是
+    // zip 校验本身而非"无效的内容位置"（断言才有区分度）
+    const probeManifest = await req('GET', '/api/videos');
+    const probeCount = Number(probeManifest.body?.count) || 1;
+    const badSlot = String(Math.max(0, probeCount - 1));
     const cases = [
       ['路径穿越 ../', { 'index.html': strToU8('x'), '../evil.css': strToU8('a') }],
       ['绝对路径 /etc', { 'index.html': strToU8('x'), '/etc/passwd': strToU8('a') }],
@@ -264,18 +276,18 @@ async function main() {
     ];
     for (const [label, entries] of cases) {
       const r = await req('POST', '/api/videos/upload', {
-        form: { file: namedBlob(makeZip(entries), 'bad.zip'), slot: '3' },
+        form: { file: namedBlob(makeZip(entries), 'bad.zip'), slot: badSlot },
       });
       check(`拒收：${label}`, r.status === 400, `实际：${r.status}`);
     }
     const noEntry = await req('POST', '/api/videos/upload', {
-      form: { file: namedBlob(makeZip({ 'other.html': strToU8('x') }), 'noentry.zip'), slot: '3' },
+      form: { file: namedBlob(makeZip({ 'other.html': strToU8('x') }), 'noentry.zip'), slot: badSlot },
     });
     check('拒收：缺少根级 index.html', noEntry.status === 400, `实际：${noEntry.status}`);
 
     // 类型与扩展名不一致：zip 二进制挂着 .html 扩展名（MIME + 扩展名双判的一致性检查）
     const mislabeled = await req('POST', '/api/videos/upload', {
-      form: { file: namedBlob(makeZip({ 'index.html': strToU8('x') }), 'mislabeled.html'), slot: '3' },
+      form: { file: namedBlob(makeZip({ 'index.html': strToU8('x') }), 'mislabeled.html'), slot: badSlot },
     });
     check(
       '拒收：zip 内容却用 .html 命名（双判不一致）',
@@ -365,6 +377,36 @@ async function main() {
     check('不存在的文件 404', missing.status === 404, `实际：${missing.status}`);
     const trav = await req('GET', '/api/files/..%2F..%2Fpackage.json');
     check('文件路径穿越 404', trav.status === 404, `实际：${trav.status}`);
+  }
+
+  /* ---------------------------------------------------------------- */
+  section('2026-10 修复：DELETE 缺失/空 slot 不得静默删除位置 0');
+  {
+    // 历史缺陷：Number(null) === 0 与 Number('') === 0 使「DELETE /api/videos」
+    // 不带参数时静默删掉 slot 0 的内容并返回 200（upload 路由有同款防御，DELETE 漏防）。
+    // 先上传一个探针内容，再发缺参/空参 DELETE，断言 400 且内容完好。
+    const probeManifest = await req('GET', '/api/videos');
+    const probeCount = Number(probeManifest.body?.count) || 1;
+    const up = await req('POST', '/api/videos/upload', {
+      form: {
+        file: namedBlob(new Blob([PNG_1PX], { type: 'image/png' }), 'delete-guard.png'),
+        slot: String(Math.max(0, probeCount - 1)),
+      },
+    });
+    check('准备：探针内容上传成功', up.status === 200, `实际：${up.status}`);
+
+    const noParam = await req('DELETE', '/api/videos');
+    check('DELETE 不带 slot 参数被拒（400）', noParam.status === 400, `实际：${noParam.status}`);
+    const emptyParam = await req('DELETE', '/api/videos?slot=');
+    check('DELETE 空 slot 参数被拒（400）', emptyParam.status === 400, `实际：${emptyParam.status}`);
+    const badParam = await req('DELETE', '/api/videos?slot=abc');
+    check('DELETE 非数字 slot 被拒（400）', badParam.status === 400, `实际：${badParam.status}`);
+
+    const after = await req('GET', '/api/videos');
+    const survived = (after.body?.slots ?? []).some(
+      (s) => s.image?.originalName === 'delete-guard.png' || s.video || s.html,
+    );
+    check('探针内容未被误删', survived, '内容意外丢失');
   }
 
   /* ---------------------------------------------------------------- */
