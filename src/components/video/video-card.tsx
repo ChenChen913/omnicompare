@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Code2, Image as ImageIcon, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -87,7 +87,13 @@ type HtmlStatus = 'loading' | 'ready' | 'error';
 /** iframe 加载超时（毫秒）：超时仍未 onload 判定为失败（BLUEPRINT §10） */
 const HTML_LOAD_TIMEOUT = 15000;
 
-export function VideoCard({
+/**
+ * 单格卡片：视频/图片/HTML 三种内容形态的展示与交互。
+ * 包裹 memo：十二张卡片的墙中，任意全局 state（水印不透明度拖动、高亮等）变化
+ * 都会触发整个墙重渲染——memo 后 props 未变的卡片（公共 props 全部引用稳定）
+ * 直接跳过重渲，只有自身 state（hover/上传中/标题）变化的卡片重渲。
+ */
+export const VideoCard = memo(function VideoCard({
   slot,
   uploading,
   loop,
@@ -693,4 +699,4 @@ export function VideoCard({
       />
     </article>
   );
-}
+});
