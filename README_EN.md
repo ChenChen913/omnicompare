@@ -72,6 +72,8 @@ bun run dev
 
 Open <http://localhost:3000> and drag videos, images, or HTML files onto the page.
 
+`bun run dev` does not open a browser. If you would rather not type the URL, use `bun run dev:open`: once the server actually accepts connections it opens <http://localhost:3000> in your default browser and prints a prominent access-address banner (also written to `dev.log`, so it is there even if the terminal fails to repaint).
+
 If you do not want to install anything, [`standalone.html`](./standalone.html) at the repository root is a
 zero-dependency single-file version: put it next to `video1.mp4` … `video6.mp4`, open it in a browser, and you get a
 3 × 2 video matrix with synchronized start. It only plays videos, keeps titles in browser local storage, and does not
@@ -188,6 +190,7 @@ These documents are written in Chinese.
 
 ```sh
 bun run dev          # dev server, logs to both the terminal and dev.log
+bun run dev:open     # same, plus auto-open the browser once the server is ready
 bun run typecheck    # tsc --noEmit
 bun run lint         # eslint .
 bun run build        # production build (with a standalone copy self-check)

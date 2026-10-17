@@ -18,6 +18,7 @@
   },
   "scripts": {
     "dev": "node scripts/run-with-log.mjs dev.log --port 3000 -- next dev",
+    "dev:open": "node scripts/run-with-log.mjs dev.log --port 3000 --open -- next dev",
     "build": "next build && node scripts/copy-standalone.mjs",
     "start": "node scripts/run-with-log.mjs server.log --port 3000 --env NODE_ENV=production -- node .next/standalone/server.js",
     "lint": "eslint .",

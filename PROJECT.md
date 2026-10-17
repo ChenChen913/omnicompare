@@ -189,10 +189,13 @@ data/                             # 运行时数据（gitignore，不入库）
 ```bash
 bun install          # 或 npm install
 bun run dev          # 或 npm run dev，监听 http://localhost:3000
+bun run dev:open     # 同上，并在服务就绪后自动打开浏览器（--open）
 ```
 
 开发模式会同时把日志写到终端与 `dev.log`，由 `scripts/run-with-log.mjs` 实现（该文件已 gitignore）。
-该脚本还会**预检端口**并给出可执行的处置建议，见 5.6。
+该脚本还会**预检端口**并给出可执行的处置建议，见 5.6。`--open` 只在显式传入时生效：轮询
+`127.0.0.1:<端口>` 直到能建立 TCP 连接，等 Next 打出 `Ready in` 后打印访问地址并调用系统默认浏览器
+打开；不传 `--open` 时行为与原来完全一致。
 
 > 历史坑：这三个脚本原先写作 `next dev -p 3000 2>&1 | tee dev.log` / `cp -r ...` / `NODE_ENV=production bun ...`，
 > 全是 Unix 专有写法 —— Windows 上服务能起来但 `dev.log` 恒为 0 字节，`build` 会在 `next build` 成功之后

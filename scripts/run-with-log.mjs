@@ -14,7 +14,13 @@
  * `--port` 会在启动前预检端口并给出可执行的处置建议。
  *
  * 用法：
- *   node scripts/run-with-log.mjs <日志文件> [--env KEY=VALUE ...] [--port N] -- <命令> [参数...]
+ *   node scripts/run-with-log.mjs <日志文件> [--env KEY=VALUE ...] [--port N] [--open] -- <命令> [参数...]
+ *
+ * `--open` 的行为：
+ *   - 启动后轮询 127.0.0.1:<端口>，能建立 TCP 连接（= 服务真在监听）后打印一段醒目的
+ *     访问地址提示，并调用系统默认浏览器打开它。
+ *   - 只开一次；超时（120 秒）仍连不上就报错并提示去看日志，不会一直挂着。
+ *   - 不传 `--open` 时脚本行为与之前完全一致（`npm run dev` 不受影响）。
  *
  * `--port N` 的行为：
  *   - 端口实际取值 = 环境变量 PORT（若设置）> N
@@ -27,7 +33,7 @@
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { createWriteStream, mkdirSync, existsSync } from 'node:fs';
-import { createServer } from 'node:net';
+import { createServer, connect } from 'node:net';
 import { dirname, join } from 'node:path';
 
 /* ------------------------------- 参数解析 ------------------------------- */
@@ -35,7 +41,7 @@ import { dirname, join } from 'node:path';
 const argv = process.argv.slice(2);
 const separator = argv.indexOf('--');
 if (separator <= 0) {
-  console.error('用法: node scripts/run-with-log.mjs <日志文件> [--env K=V ...] [--port N] -- <命令> [参数...]');
+  console.error('用法: node scripts/run-with-log.mjs <日志文件> [--env K=V ...] [--port N] [--open] -- <命令> [参数...]');
   process.exit(2);
 }
 
@@ -49,6 +55,8 @@ if (!command) {
 
 const env = { ...process.env };
 let port = null;
+let openOnReady = false;
+let effectivePort = null;
 for (let i = 0; i < options.length; i += 1) {
   const key = options[i];
   if (key === '--env') {
@@ -70,6 +78,10 @@ for (let i = 0; i < options.length; i += 1) {
     }
     port = value;
     i += 1;
+    continue;
+  }
+  if (key === '--open') {
+    openOnReady = true;
     continue;
   }
   console.error(`未知参数：${key}`);
@@ -139,6 +151,7 @@ if (port !== null) {
     process.exit(1);
   }
   env.PORT = String(resolved);
+  effectivePort = resolved;
 
   // next dev 用 .next/dev/lock 做单实例保护。端口不同（例如上面被 PORT 覆盖过）时
   // 端口检查拦不住同一个项目里的另一个实例，报出来的是 Next 那句不太好懂的锁冲突。
@@ -147,6 +160,11 @@ if (port !== null) {
     console.error('ℹ 检测到 .next/dev/lock —— 可能已有另一个 dev 实例在跑这个项目（或上次异常退出留下的锁）。');
     console.error('  若稍后报 "Unable to acquire lock"，先关掉旧实例；确认没有旧实例时可删除该文件后重试。');
   }
+}
+
+// --open 需要知道等哪个端口。没走 --port 时按 next dev 的默认值兜底（PORT 环境变量优先）。
+if (openOnReady && effectivePort === null) {
+  effectivePort = Number(env.PORT) > 0 ? Number(env.PORT) : 3000;
 }
 
 /* ---------------------------- 命令解析（避开 shell） ---------------------------- */
@@ -192,6 +210,15 @@ function tee(stream, sink) {
 tee(child.stdout, process.stdout);
 tee(child.stderr, process.stderr);
 
+// Next 会先监听端口、后打印 "Ready in ..."。记一下这句话有没有出现过，
+// 让 --open 的提示排在它后面，而不是抢在 "Starting..." 前面。
+let sawReadyBanner = false;
+for (const stream of [child.stdout, child.stderr]) {
+  stream.on('data', (chunk) => {
+    if (!sawReadyBanner && /Ready in [\d.]+/i.test(chunk.toString())) sawReadyBanner = true;
+  });
+}
+
 let finished = false;
 function finish(code) {
   if (finished) return;
@@ -213,4 +240,96 @@ child.on('error', (err) => {
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => child.kill(signal));
+}
+
+/* --------------------------- 就绪检测与自动开浏览器 --------------------------- */
+
+const READY_TIMEOUT_MS = 120_000;
+const READY_POLL_INTERVAL_MS = 250;
+
+/** 能建立 TCP 连接就说明服务已在监听 —— 比"端口被 bind"更贴近"浏览器真的能打开" */
+function connectProbe(p) {
+  return new Promise((resolve) => {
+    const socket = connect({ port: p, host: '127.0.0.1' });
+    const settle = (ok) => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(1000);
+    socket.once('connect', () => settle(true));
+    socket.once('timeout', () => settle(false));
+    socket.once('error', () => settle(false));
+  });
+}
+
+async function waitForServer(p) {
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  while (!finished && Date.now() < deadline) {
+    if (await connectProbe(p)) return true;
+    if (finished) return false;
+    await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
+  }
+  return false;
+}
+
+function openInBrowser(url) {
+  const options = { stdio: 'ignore', detached: true, windowsHide: true };
+  try {
+    let opener;
+    if (process.platform === 'win32') {
+      // 经 cmd 调用 start；空字符串是 start 的窗口标题占位，否则它会把 URL 当标题。
+      opener = spawn('cmd', ['/c', 'start', '', url], options);
+    } else if (process.platform === 'darwin') {
+      opener = spawn('open', [url], options);
+    } else {
+      opener = spawn('xdg-open', [url], options);
+    }
+    // spawn 的失败是异步的 'error' 事件；不接住会掀翻整个进程。
+    opener.on('error', (err) => console.error(`  自动打开浏览器失败：${err.message}`));
+    opener.unref();
+    return true;
+  } catch (err) {
+    console.error(`  自动打开浏览器失败：${err.message}`);
+    return false;
+  }
+}
+
+function announceReady(url, opened) {
+  const lines = [
+    '',
+    '  ============================================================',
+    `  已就绪，访问地址：${url}`,
+    opened ? '  已尝试用默认浏览器打开（没弹出来就手动点上面的地址）' : '  自动打开失败，请手动在浏览器打开上面的地址',
+    `  终端没显示这段也没关系，${logFile} 里同样有记录`,
+    '  ============================================================',
+    '',
+  ];
+  for (const line of lines) {
+    console.log(line);
+    // 子进程可能刚好在这一瞬间退出并关掉日志流，写已结束的流会抛错。
+    if (!log.writableEnded) log.write(`${line}\n`);
+  }
+}
+
+if (openOnReady) {
+  const url = `http://localhost:${effectivePort}`;
+  void (async () => {
+    const ready = await waitForServer(effectivePort);
+    if (finished) return; // 子进程已退出，别再报"等待超时"
+    if (!ready) {
+      console.error('');
+      console.error(`⚠ 等了 ${Math.round(READY_TIMEOUT_MS / 1000)} 秒，${url} 仍然连不上。`);
+      console.error('  服务可能还在首次编译，也可能启动失败了 —— 请把上面的终端输出发我。');
+      console.error('');
+      return;
+    }
+    // 端口通了但横幅可能还没打出来，最多再等 2 秒让 Next 自己把 "Ready in" 说完；
+    // 不是 Next 这类会报告就绪的进程，就等满 2 秒后直接提示。
+    const settleStart = Date.now();
+    while (!finished && !sawReadyBanner && Date.now() - settleStart < 2000) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (finished) return;
+    announceReady(url, openInBrowser(url));
+  })();
 }

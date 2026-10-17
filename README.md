@@ -71,6 +71,8 @@ bun run dev
 
 打开 <http://localhost:3000>，把视频、图片或 HTML 文件拖进页面即可开始对比。
 
+`bun run dev` 不会自动打开浏览器。不想自己去敲地址就用 `bun run dev:open`：它会在服务真正能连上之后自动用默认浏览器打开 <http://localhost:3000>，并在终端打出一段醒目的访问地址提示（这段同时写进 `dev.log`，终端万一没刷出来也能去日志里查）。
+
 不想装环境时，仓库根目录的 `standalone.html` 是零依赖单页精简版：把它与 `video1.mp4` ~ `video6.mp4` 放在同一目录，用浏览器直接打开，即可得到 3 × 2 视频矩阵与同步起播。它只播放视频、标题存在浏览器本地，与主应用互不依赖。
 
 ## 用法
@@ -182,6 +184,7 @@ standalone.html                   # 免部署单页精简版
 
 ```sh
 bun run dev          # 开发服务器，日志同时写终端与 dev.log
+bun run dev:open     # 同上，并在服务就绪后自动打开浏览器
 bun run typecheck    # tsc --noEmit
 bun run lint         # eslint .
 bun run build        # 生产构建（含 standalone 拷贝自检）
