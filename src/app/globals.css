@@ -202,6 +202,7 @@ html body[data-scroll-locked] {
 }
 
 /* Record stage: seamless panels (no rounded corners/borders/shadows). */
+[data-record-stage='true'] *,
 [data-record-stage='true'] > * {
   border-radius: 0 !important;
   border-color: transparent !important;

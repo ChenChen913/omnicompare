@@ -43,6 +43,7 @@ import {
   validateClientFile,
 } from '@/lib/types';
 import { VideoCard } from './video-card';
+import { createTabRecorder, downloadRecording, recordingFilename, requestTabCapture } from '@/lib/screen-recorder';
 import { useWallSettings } from './wall/use-wall-settings';
 import { useProjects } from './wall/use-projects';
 import { useAutoFit } from './wall/use-autofit';
@@ -106,6 +107,11 @@ export function VideoWall() {
   const [recording, setRecording] = useState(false);
   const [recPhase, setRecPhase] = useState<'idle' | 'loading' | 'countdown' | 'live'>('idle');
   const [recCount, setRecCount] = useState(3);
+  /** 应用内录屏是否真的在写数据（用于退出按钮文案） */
+  const [recActive, setRecActive] = useState(false);
+  const recStreamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recChunksRef = useRef<Blob[]>([]);
   /** 水印文字编辑对话框：open 状态与草稿（确认才提交，取消/Esc 丢弃草稿）；
    *  enable：本次保存是否连带启用水印 */
   const [wmDialogOpen, setWmDialogOpen] = useState(false);
@@ -952,18 +958,72 @@ export function VideoWall() {
   }, [htmlSyncPending, htmlReadySet, htmlCount, sendHtmlCommand]);
 
   /* ---------- 录制舞台 ---------- */
+  /** 停止录制：onstop 里统一生成 Blob 并下载 */
+  const stopRecorder = useCallback(() => {
+    const rec = recorderRef.current;
+    if (rec && rec.state !== 'inactive') rec.stop();
+    recorderRef.current = null;
+    setRecActive(false);
+    recStreamRef.current?.getTracks().forEach((t) => t.stop());
+    recStreamRef.current = null;
+  }, []);
+
+  /** 倒计时归零时才开始写数据：此时舞台已干净，录到的第一帧就是动画起点 */
+  const beginRecorder = useCallback(() => {
+    const stream = recStreamRef.current;
+    if (!stream || recorderRef.current) return;
+    const rec = createTabRecorder(stream);
+    if (!rec) return;
+    recChunksRef.current = [];
+    rec.ondataavailable = (e) => {
+      if (e.data.size > 0) recChunksRef.current.push(e.data);
+    };
+    rec.onstop = () => {
+      const blob = new Blob(recChunksRef.current, { type: rec.mimeType || 'video/webm' });
+      recChunksRef.current = [];
+      if (blob.size > 0) {
+        downloadRecording(blob, recordingFilename());
+        toast.success('录制已保存为 WebM', { id: 'record-save' });
+      }
+    };
+    rec.start(1000);
+    recorderRef.current = rec;
+    setRecActive(true);
+  }, []);
+
   const exitRecording = useCallback(() => {
+    stopRecorder();
     setRecording(false);
     setRecPhase('idle');
     setRecCount(3);
-  }, []);
+  }, [stopRecorder]);
 
-  /** 进入录制：HTML 先以 hold 重载备场；纯视频直接倒计时 */
-  const handleEnterRecord = useCallback(() => {
+  /** 进入录制：先请求标签页捕获（点击是用户手势），失败则继续舞台并用 OBS 兜底 */
+  const handleEnterRecord = useCallback(async () => {
+    if (recording) return;
     if (filledCount === 0) {
       toast.error('还没有可录制的内容，请先上传', { id: 'record' });
       return;
     }
+
+    toast.loading('请求屏幕捕获：请选择当前标签页…', { id: 'record-capture' });
+    let stream: MediaStream | null = null;
+    try {
+      stream = await requestTabCapture();
+    } catch {
+      stream = null;
+    }
+    if (stream) {
+      recStreamRef.current = stream;
+      toast.success('已捕获当前标签页，倒计时后自动开录', { id: 'record-capture' });
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        stopRecorder();
+        toast.info('屏幕捕获已停止', { id: 'record-capture' });
+      });
+    } else {
+      toast.info('未开启应用内录屏：仍可排练，或用 OBS 捕获本窗口', { id: 'record-capture' });
+    }
+
     setRecording(true);
     setRecCount(3);
     window.scrollTo({ top: 0 });
@@ -979,7 +1039,7 @@ export function VideoWall() {
     } else {
       setRecPhase('countdown');
     }
-  }, [filledCount, htmlCount]);
+  }, [recording, filledCount, htmlCount, stopRecorder]);
 
   // 备场完成 → 倒计时（12 秒兜底，避免某张页面卡住）
   useEffect(() => {
@@ -992,7 +1052,7 @@ export function VideoWall() {
     return () => clearTimeout(timer);
   }, [recording, recPhase, htmlReadySet, htmlCount]);
 
-  // 倒计时 3-2-1 → 同帧开演：HTML 统一 play，视频/BGM 归零起播
+  // 倒计时 3-2-1 → 开录 + 同帧开演：HTML 统一 play，视频/BGM 归零起播
   useEffect(() => {
     if (!recording || recPhase !== 'countdown') return;
     setRecCount(3);
@@ -1003,25 +1063,56 @@ export function VideoWall() {
       if (n <= 0) {
         clearInterval(timer);
         setRecPhase('live');
+        beginRecorder();
         if (htmlCount > 0) sendHtmlCommand('play', Date.now() + 100);
         const active = getActiveVideos();
         if (active.length > 0 || settings.bgm) restartAndPlay(active);
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [recording, recPhase, htmlCount, sendHtmlCommand, getActiveVideos, restartAndPlay, settings.bgm]);
+  }, [recording, recPhase, htmlCount, sendHtmlCommand, getActiveVideos, restartAndPlay, settings.bgm, beginRecorder]);
 
-  // Esc 退出录制
+  // 录制态键盘：Esc 停止保存；live 后空格暂停/继续、R 重来
   useEffect(() => {
     if (!recording) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      exitRecording();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        exitRecording();
+        return;
+      }
+      if (recPhase !== 'live') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (htmlPaused) handleHtmlResume();
+        else handleHtmlPause();
+        const vids = getActiveVideos();
+        if (vids.some((v) => !v.paused)) {
+          vids.forEach((v) => {
+            try { v.pause(); } catch {}
+          });
+          try { audioRef.current?.pause(); } catch {}
+        } else {
+          vids.forEach((v) => { void v.play().catch(() => {}); });
+          if (settings.bgm) void audioRef.current?.play().catch(() => {});
+        }
+        return;
+      }
+      if (e.code === 'KeyR') {
+        e.preventDefault();
+        if (htmlCount > 0) handleHtmlRestart();
+        const vids = getActiveVideos();
+        if (vids.length > 0 || settings.bgm) restartAndPlay(vids);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [recording, exitRecording]);
+  }, [
+    recording, recPhase, exitRecording, htmlPaused, handleHtmlPause, handleHtmlResume,
+    handleHtmlRestart, getActiveVideos, settings.bgm, restartAndPlay, htmlCount,
+  ]);
 
   /* ---------- 背景音乐（BGM）----------
      全局唯一一轨：文件经 /api/videos/bgm 上传/移除，音量经 settings PATCH 持久化。
@@ -1501,10 +1592,11 @@ export function VideoWall() {
               type="button"
               onClick={exitRecording}
               className="rounded-full border border-white/15 bg-black/50 px-3 py-1.5 text-xs text-white/70 opacity-0 backdrop-blur transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
-              title="退出录制舞台（Esc）"
-              aria-label="退出录制舞台"
+              title={recActive ? '停止录制并保存 WebM（Esc）' : '退出录制舞台（Esc）'}
+              aria-label={recActive ? '停止录制并保存' : '退出录制舞台'}
             >
-              退出录制 · Esc
+              {recActive && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-rose-500 align-middle" aria-hidden />}
+              {recActive ? '停止并保存 · Esc' : '退出录制 · Esc'}
             </button>
           </div>
         </>

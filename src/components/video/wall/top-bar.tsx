@@ -286,6 +286,8 @@ export function TopBar(props: TopBarProps) {
               <button
                 type="button"
                 onClick={onPlayAll}
+                title="同时播放：所有视频归零后一起起播"
+                aria-label="同时播放"
                 className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 sm:px-4"
               >
                 <Play className="h-4 w-4 fill-current" aria-hidden />
