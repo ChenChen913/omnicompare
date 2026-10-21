@@ -135,7 +135,8 @@ MVP 阶段默认单项目 + 草稿/归档状态；多项目列表页第二阶段
 
 ## 10. HTML 功能逻辑
 
-- 展示即运行：iframe 加载服务端 URL，页面自动执行（CSS 动画、JS 交互），**不做**动画同步/暂停/时间轴控制
+- 展示即运行：iframe 加载服务端 URL，页面自动执行（CSS 动画、JS 交互）
+- 播放控制（2026-10 新增，详见 `docs/HTML-ANIMATION-CONTROL.md`）：服务端注入运行时，支持「同步开始 / 暂停·继续 / 重来」；暂停按时间源分层接管 rAF / CSS/WAAPI / SMIL / 媒体 / 定时器 / `Date.now` / shadow DOM。GIF、`<img>` 里的 SVG 等硬边界只承诺「重来」，由能力探测在卡片上标注
 - 状态机：`loading`（iframe 挂载中，卡片显示 spinner）→ `ready`（onload）→ `error`（onerror 或超时 15s，显示错误态 + 重试）
 - 卡片信息条：文件名 + 状态点（复用原型 3 的状态 chip 样式）
 - 替换/删除与视频一致；替换后 iframe key 变更强制重挂载

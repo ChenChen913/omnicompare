@@ -1,6 +1,6 @@
 # HTML 动画播放控制：调研、决策与实施
 
-> 状态（2026-10-21）：调研完成；v3 运行时在 24 页语料上验证通过；**服务端注入已落地**（`src/lib/html-control.ts` + `/api/files` + `/api/bundles`）；前端控制 UI 尚未接入。
+> 状态（2026-10-21）：调研完成；v3 运行时在 24 页语料上验证通过；**服务端注入与前端控制 UI 均已落地**（`src/lib/html-control.ts` + `/api/files` + `/api/bundles` + 卡片/顶栏/专注模式控制）；真实项目 `html-test` 端到端验证通过。
 
 ## 1. 问题
 
@@ -112,13 +112,18 @@ reset:   父页面重载 iframe（oc_hold=1 时先备场再释放）
 
 实测（dev server）：HTML 响应 `200`、`205895` 字节（原文 `198188` + 运行时 `7707`）、CSP 保留、marker 位于 `<head>` 后；MP4 Range 仍 `206`。
 
-## 7. 前端接入（待做）
+## 7. 前端接入（已落地）
 
-- 卡片：持有 iframe ref 与 token；监听 message；角标显示 ready/paused/unsupported；hover 暂停/继续。
-- 顶栏（纯 HTML 与混合项目）：`同步开始`（重载 + hold + 等全部 ready + 同帧 play）、`暂停/继续`、`重来`。
-- 专注模式：空格 = 暂停/继续；R = 重来。
-- 能力标注：`capabilities.gif/svgImage > 0` 或无法暂停的页面显示「仅重来」。
-- 混合项目：与视频统一控制（播放组同时作用于视频与 HTML）。
+- 卡片 `video-card.tsx`：`useId` token、iframe 消息监听（source + token 双重校验）、卡片悬浮暂停/继续、`ready/paused/resumed/capabilities` 状态、能力角标「仅重来」。
+- 顶栏 `top-bar.tsx`：纯 HTML 与混合项目显示 `同步开始` / `暂停·继续` / `重来`。
+- `video-wall.tsx`：`syncStart` 先让全部卡片以 `oc_hold=1` 重载并备场，收齐 `ready` 后广播同一 `at` 释放（12 秒兜底）；暂停/继续走命令广播；专注模式空格/R 同时作用于 HTML。
+- 单卡暂停只影响该卡；混合项目的视频组与 HTML 组各管各的内容类型。
+
+真实 UI 实测（项目 `html-test`，两张 Three.js 页面）：
+- 点「同步开始」后两个 iframe 的 `src` 均切为 `oc_hold=1`；
+- 点「暂停全部页面」后，1.6 秒内两帧截图 **0.000%** 像素变化；
+- 点「继续」后同一区域 11.7% 像素变化，确认恢复；
+- 同步前/暂停后画面 9.98% 差异，确认暂停确实发生在动画中途。
 
 ## 8. 验收
 

@@ -95,6 +95,13 @@ export function VideoWall() {
   const [notesOpen, setNotesOpen] = useState(false);
   /** 「刷新全部页面」信号：自增触发所有 HTML 卡片重载 iframe（纯 HTML 项目的等价播放操作） */
   const [htmlRefreshTick, setHtmlRefreshTick] = useState(0);
+  /** HTML 播放控制：命令广播（id 变化才执行）、重载/备场信号、暂停态、同步开始屏障 */
+  const [htmlCommand, setHtmlCommand] = useState<{ id: number; action: 'pause' | 'play'; at?: number } | null>(null);
+  const [htmlReload, setHtmlReload] = useState<{ tick: number; hold: boolean }>({ tick: 0, hold: false });
+  const [htmlPaused, setHtmlPaused] = useState(false);
+  const [htmlSyncPending, setHtmlSyncPending] = useState(false);
+  const [htmlReadySet, setHtmlReadySet] = useState<number[]>([]);
+  const htmlCommandId = useRef(0);
   /** 水印文字编辑对话框：open 状态与草稿（确认才提交，取消/Esc 丢弃草稿）；
    *  enable：本次保存是否连带启用水印 */
   const [wmDialogOpen, setWmDialogOpen] = useState(false);
@@ -140,6 +147,8 @@ export function VideoWall() {
   const hasVideo = slots.some((s) => !!s.video);
   /** 当前项目是否含 HTML 页面：纯 HTML 项目用「刷新全部页面」替代播放组 */
   const hasHtml = slots.some((s) => s.kind === 'html' && !!s.html);
+  /** HTML 卡片数量：同步开始要等这么多张卡报告 ready */
+  const htmlCount = slots.filter((s) => s.kind === 'html' && !!s.html).length;
   /** 当前项目是否含图片：模糊填充仅对视频/图片生效（Step C） */
   const hasImage = slots.some((s) => s.kind === 'image' && !!s.image);
 
@@ -849,6 +858,7 @@ export function VideoWall() {
       }
       // 网页"从头开始" = 重载 iframe（与「刷新全部页面」同一信号）
       setHtmlRefreshTick((n) => n + 1);
+      setHtmlPaused(false);
       if (!play) {
         // 仅归零暂停：视频与背景音乐归零，不起播
         active.forEach((v) => {
@@ -880,6 +890,63 @@ export function VideoWall() {
     restartAndPlay(active);
   }, [getActiveVideos, settings.bgm, restartAndPlay]);
 
+  /* ---------- HTML 播放控制 ---------- */
+  /** 广播一条暂停/继续命令：id 自增，卡片据此只执行一次 */
+  const sendHtmlCommand = useCallback((action: 'pause' | 'play', at?: number) => {
+    htmlCommandId.current += 1;
+    setHtmlCommand({ id: htmlCommandId.current, action, at });
+  }, []);
+
+  const handleHtmlPause = useCallback(() => {
+    if (!hasHtml) return;
+    sendHtmlCommand('pause');
+    setHtmlPaused(true);
+  }, [hasHtml, sendHtmlCommand]);
+
+  const handleHtmlResume = useCallback(() => {
+    if (!hasHtml) return;
+    sendHtmlCommand('play', Date.now() + 200);
+    setHtmlPaused(false);
+  }, [hasHtml, sendHtmlCommand]);
+
+  /** 重来：重载全部 iframe 并自动播放（命令式页面唯一可靠的重置方式） */
+  const handleHtmlRestart = useCallback(() => {
+    if (!hasHtml) return;
+    setHtmlPaused(false);
+    setHtmlSyncPending(false);
+    setHtmlReadySet([]);
+    setHtmlReload((prev) => ({ tick: prev.tick + 1, hold: false }));
+  }, [hasHtml]);
+
+  /** 同步开始：全部 iframe 以 hold 重载 → 各自就绪冻结 → 收齐后同一帧释放 */
+  const handleHtmlSyncStart = useCallback(() => {
+    if (!hasHtml) return;
+    setHtmlPaused(false);
+    setHtmlReadySet([]);
+    setHtmlSyncPending(true);
+    setHtmlReload((prev) => ({ tick: prev.tick + 1, hold: true }));
+  }, [hasHtml]);
+
+  /** 卡片就绪上报：去重后加入屏障集合 */
+  const handleHtmlReady = useCallback((index: number) => {
+    setHtmlReadySet((prev) => (prev.includes(index) ? prev : [...prev, index]));
+  }, []);
+
+  // 收齐所有 HTML 卡后统一释放；12 秒兜底防止某张卡永远不就绪
+  useEffect(() => {
+    if (!htmlSyncPending) return;
+    if (htmlReadySet.length >= htmlCount && htmlCount > 0) {
+      setHtmlSyncPending(false);
+      sendHtmlCommand('play', Date.now() + 300);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setHtmlSyncPending(false);
+      sendHtmlCommand('play', Date.now() + 300);
+    }, 12000);
+    return () => clearTimeout(timer);
+  }, [htmlSyncPending, htmlReadySet, htmlCount, sendHtmlCommand]);
+
   /* ---------- 背景音乐（BGM）----------
      全局唯一一轨：文件经 /api/videos/bgm 上传/移除，音量经 settings PATCH 持久化。
      <audio loop> 恒开（循环由元素自身保证），音量/倍速由下方 effect 同步到元素。 */
@@ -907,15 +974,21 @@ export function VideoWall() {
         handleResetAll(false);
         return;
       }
-      const anyPlaying =
+      const videosPlaying =
         getActiveVideos().some((v) => !v.paused)
         || (!!settings.bgm && !!audioRef.current && !audioRef.current.paused);
-      if (anyPlaying) handlePauseAll();
-      else handleLoopShow();
+      const anyPlaying = videosPlaying || (hasHtml && !htmlPaused);
+      if (anyPlaying) {
+        if (videosPlaying) handlePauseAll();
+        if (hasHtml) handleHtmlPause();
+      } else {
+        if (getActiveVideos().length > 0 || settings.bgm) handleLoopShow();
+        if (hasHtml) handleHtmlResume();
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mode, getActiveVideos, handleLoopShow, handlePauseAll, handleResetAll, settings.bgm]);
+  }, [mode, getActiveVideos, handleLoopShow, handlePauseAll, handleResetAll, settings.bgm, hasHtml, htmlPaused, handleHtmlPause, handleHtmlResume]);
 
   /** 上传/更换背景音乐：POST FormData → 响应清单回填（服务端同临界区删除旧文件） */
   const handleBgmFile = useCallback(
@@ -1004,6 +1077,9 @@ export function VideoWall() {
       titleWeight: settings.titleWeight,
       titleColor: settings.titleColor,
       refreshSignal: htmlRefreshTick,
+      htmlCommand,
+      htmlReload,
+      onHtmlReady: handleHtmlReady,
       onAspectOverride: handleSlotAspect,
       onFiles: handleCardFiles,
       onTitleChange: handleTitleChange,
@@ -1017,7 +1093,7 @@ export function VideoWall() {
       settings.customRatio, settings.showTitles, settings.showInfo, settings.showIndex,
       settings.letterboxFill, settings.htmlScale, settings.titleAlign, settings.titleFontSize,
       settings.titlePosition, settings.titleWeight, settings.titleColor,
-      mode, gridDrag, htmlRefreshTick,
+      mode, gridDrag, htmlRefreshTick, htmlCommand, htmlReload, handleHtmlReady,
       handleSlotAspect, handleCardFiles, handleTitleChange, handleIconFiles, handleIconRemove, handleClearSlot, setVideoRef,
     ],
   );
@@ -1086,7 +1162,11 @@ export function VideoWall() {
             if (view === 'library') setView('workspace');
             setMode('focus');
           }}
-          onHtmlRefresh={() => setHtmlRefreshTick((t) => t + 1)}
+          htmlPaused={htmlPaused}
+          onHtmlSyncStart={handleHtmlSyncStart}
+          onHtmlPause={handleHtmlPause}
+          onHtmlResume={handleHtmlResume}
+          onHtmlRestart={handleHtmlRestart}
         />
       )}
 

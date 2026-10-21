@@ -24,13 +24,13 @@ import {
   Library,
   Moon,
   Music,
+  Pause,
   Play,
-  RefreshCw,
+  RotateCcw,
   Sun,
   Trash2,
   UploadCloud,
   Video,
-  Pause,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -109,8 +109,12 @@ export interface TopBarProps {
   /* 清空 / 专注 */
   onClearAll: () => void;
   onEnterFocus: () => void;
-  /** 「刷新全部页面」信号（纯 HTML 项目的主动作） */
-  onHtmlRefresh: () => void;
+  /** HTML 播放控制：同步开始 / 暂停继续 / 重来 */
+  htmlPaused: boolean;
+  onHtmlSyncStart: () => void;
+  onHtmlPause: () => void;
+  onHtmlResume: () => void;
+  onHtmlRestart: () => void;
 }
 
 export function TopBar(props: TopBarProps) {
@@ -122,7 +126,8 @@ export function TopBar(props: TopBarProps) {
     settings, updateSettings, patchLocal, ratioDraft, onRatioDraftChange, onApplyCustomRatio,
     onPlayAll, onPauseAll, onResetAll,
     onImportClick, onBgmClick, bgmUploading, onRemoveBgm,
-    onEditWatermarkText, onClearAll, onEnterFocus, onHtmlRefresh,
+    onEditWatermarkText, onClearAll, onEnterFocus,
+    htmlPaused, onHtmlSyncStart, onHtmlPause, onHtmlResume, onHtmlRestart,
   } = props;
   const s = settings;
 
@@ -300,19 +305,41 @@ export function TopBar(props: TopBarProps) {
             </>
           )}
 
-          {/* 纯 HTML 项目：页面打开即自动运行，主动作是「刷新全部页面」（D11），
-              与视频项目的播放组占用同一槽位——顶栏逻辑随内容自动适配 */}
-          {view === 'workspace' && hasHtml && !hasVideo && filledCount > 0 && (
+          {/* HTML 项目：同步开始 / 暂停继续 / 重来。
+              混合项目与视频播放组并存，各管各的内容类型（D11） */}
+          {view === 'workspace' && hasHtml && filledCount > 0 && (
             <>
               <button
                 type="button"
-                onClick={onHtmlRefresh}
+                onClick={onHtmlSyncStart}
                 className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-primary-foreground shadow-lg shadow-primary/30 transition-all hover:bg-primary/90 hover:shadow-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-95 sm:px-4"
-                title="重新加载全部 HTML 页面，回到各自初始状态"
-                aria-label="刷新全部页面"
+                title="全部页面重载备场，收齐就绪后同一帧开始"
+                aria-label="同步开始"
               >
-                <RefreshCw className="h-4 w-4" aria-hidden />
-                刷新全部
+                <Play className="h-4 w-4 fill-current" aria-hidden />
+                同步开始
+              </button>
+
+              <button
+                type="button"
+                onClick={htmlPaused ? onHtmlResume : onHtmlPause}
+                className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
+                title={htmlPaused ? '继续全部页面' : '暂停全部页面'}
+                aria-label={htmlPaused ? '继续全部页面' : '暂停全部页面'}
+              >
+                {htmlPaused ? <Play className="h-4 w-4 fill-current" aria-hidden /> : <Pause className="h-4 w-4" aria-hidden />}
+                <span className="hidden sm:inline">{htmlPaused ? '继续' : '暂停'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onHtmlRestart}
+                className={cn(ctlBtn, 'border-border bg-card text-foreground/90 hover:bg-accent hover:text-accent-foreground')}
+                title="重载全部页面，从头播放"
+                aria-label="重来"
+              >
+                <RotateCcw className="h-4 w-4" aria-hidden />
+                <span className="hidden sm:inline">重来</span>
               </button>
 
               <Divider />

@@ -1,7 +1,7 @@
 'use client';
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Code2, Image as ImageIcon, ImagePlus, Loader2, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
+import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Code2, Image as ImageIcon, ImagePlus, Loader2, Pause, Play, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   AspectRatio,
@@ -67,6 +67,14 @@ export interface VideoCardProps {
   htmlScale?: number;
   /** 「刷新全部页面」信号（纯 HTML 项目顶栏主动作）：数值变化时重载本卡 iframe；0 = 从未触发 */
   refreshSignal?: number;
+  /** HTML 播放控制命令（父级广播；id 变化才执行） */
+  htmlCommand?: { id: number; action: 'pause' | 'play'; at?: number } | null;
+  /** HTML 重载信号：tick 变化时重挂 iframe；hold=true 时加载完成后先备场再等统一 play */
+  htmlReload?: { tick: number; hold: boolean };
+  /** 运行时就绪（父级用它做「同步开始」屏障） */
+  onHtmlReady?: (index: number) => void;
+  /** 运行时能力上报（GIF/`<img>` SVG 等不可暂停页面用于 UI 标注） */
+  onHtmlCaps?: (index: number, caps: HtmlCaps) => void;
   /** 单卡比例覆盖变更（null = 恢复跟随全局）；未传则不显示覆盖控件 */
   onAspectOverride?: (index: number, ar: AspectRatio | null) => void;
   /** 页面级拖拽导入进行中（用于在 iframe 上方临时铺一层可落放的护盾） */
@@ -90,6 +98,17 @@ export interface VideoCardProps {
 }
 
 type HtmlStatus = 'loading' | 'ready' | 'error';
+
+/** 运行时上报的页面能力（决定 UI 是否标注"仅重来"） */
+export interface HtmlCaps {
+  canvas: boolean;
+  media: number;
+  smil: number;
+  animations: number;
+  shadow: number;
+  gif: number;
+  svgImage: number;
+}
 
 /** iframe 加载超时（毫秒）：超时仍未 onload 判定为失败（BLUEPRINT §10） */
 const HTML_LOAD_TIMEOUT = 15000;
@@ -129,6 +148,10 @@ export const VideoCard = memo(function VideoCard({
   titleWeight = TITLE_WEIGHT_DEFAULT,
   titleColor = TITLE_COLOR_DEFAULT,
   refreshSignal = 0,
+  htmlCommand = null,
+  htmlReload,
+  onHtmlReady,
+  onHtmlCaps,
   onAspectOverride,
   onFiles,
   onTitleChange,
@@ -203,6 +226,16 @@ export const VideoCard = memo(function VideoCard({
   const [htmlStatus, setHtmlStatus] = useState<HtmlStatus>('loading');
   const [iframeNonce, setIframeNonce] = useState(0);
   const [prevHtmlName, setPrevHtmlName] = useState<string | undefined>(undefined);
+  /** 播放控制：运行时就绪 / 暂停态 / 能力（GIF、`<img>` SVG 等不可暂停） */
+  const [htmlPaused, setHtmlPaused] = useState(false);
+  const [htmlCaps, setHtmlCaps] = useState<HtmlCaps | null>(null);
+  /** 本次挂载是否备场（hold=1）：父级「同步开始」时先播到 warm 再冻结 */
+  const [htmlHold, setHtmlHold] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  // 挂载期稳定的 token（useId 在 SSR/CSR 一致，避免 iframe src 水合不匹配）。
+  // 父页面只认 source === iframe.contentWindow 且 token 匹配的消息。
+  const htmlToken = useId();
 
   // 切换 HTML 文件时在渲染期重置状态（React 推荐模式，避免额外 effect）
   if (prevHtmlName !== htmlFile?.filename) {
@@ -230,9 +263,57 @@ export const VideoCard = memo(function VideoCard({
     setPrevRefreshSignal(refreshSignal);
     if (isHtml && refreshSignal !== 0) {
       setHtmlStatus('loading');
+      setHtmlHold(false);
       setIframeNonce((n) => n + 1);
     }
   }
+
+  /** 父级「同步开始 / 重来」：tick 变化时重挂载；hold=true 时先备场，等统一 play */
+  const reloadTick = htmlReload?.tick ?? 0;
+  const [prevReloadTick, setPrevReloadTick] = useState(reloadTick);
+  if (prevReloadTick !== reloadTick) {
+    setPrevReloadTick(reloadTick);
+    if (isHtml) {
+      setHtmlStatus('loading');
+      setHtmlPaused(false);
+      setHtmlHold(!!htmlReload?.hold);
+      setIframeNonce((n) => n + 1);
+    }
+  }
+
+  /** 运行时消息：ready / paused / resumed / capabilities；source 与 token 双重校验 */
+  useEffect(() => {
+    if (!isHtml) return;
+    function onMessage(e: MessageEvent) {
+      const d = e.data as { __oc?: number; token?: string; type?: string; data?: unknown } | null;
+      if (!d || d.__oc !== 1 || d.token !== htmlToken) return;
+      if (iframeRef.current?.contentWindow !== e.source) return;
+      if (d.type === 'ready') {
+        setHtmlPaused(false);
+        onHtmlReady?.(index);
+      } else if (d.type === 'paused') {
+        setHtmlPaused(true);
+      } else if (d.type === 'resumed') {
+        setHtmlPaused(false);
+      } else if (d.type === 'capabilities') {
+        setHtmlCaps(d.data as HtmlCaps);
+        onHtmlCaps?.(index, d.data as HtmlCaps);
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [isHtml, htmlToken, index, onHtmlReady, onHtmlCaps]);
+
+  /** 父级广播的暂停/继续：id 变化才执行，避免重复下发给同一状态 */
+  useEffect(() => {
+    if (!isHtml || !htmlCommand) return;
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage(
+      { __oc: 1, token: htmlToken, action: htmlCommand.action, at: htmlCommand.at },
+      '*',
+    );
+  }, [isHtml, htmlCommand, htmlToken]);
 
   /* ---------- 视频/图片/图标错误状态：切换文件时重置 ---------- */
   if (prevFilename !== video?.filename) {
@@ -302,6 +383,11 @@ export const VideoCard = memo(function VideoCard({
           : undefined;
   const displayName = video?.originalName ?? htmlFile?.originalName ?? imageFile?.originalName ?? '';
   const displaySize = video?.size ?? htmlFile?.size ?? imageFile?.size ?? 0;
+
+  /** HTML iframe 地址：带本次挂载的 token 与 hold 标记（hold=1 时加载后先备场） */
+  const iframeSrc = htmlSrc
+    ? `${htmlSrc}${htmlSrc.includes('?') ? '&' : '?'}oc_token=${encodeURIComponent(htmlToken)}&oc_hold=${htmlHold ? '1' : '0'}`
+    : undefined;
 
   /** below/above 模式共用的标题编辑框（常驻可编辑 textarea，与 overlay 展示态排他；
    *  below 渲染在内容下方信息区，above 渲染在内容上方高级标题带内，两处互斥复用同一元素与 textareaRef；
@@ -611,8 +697,9 @@ export const VideoCard = memo(function VideoCard({
                 解决固定宽高的桌面页在小卡片内被裁切/滚动的问题；
                 scale=1（默认）时 width/height 100% 与引入前行为完全一致。 */}
             <iframe
+              ref={iframeRef}
               key={iframeNonce}
-              src={src}
+              src={iframeSrc}
               sandbox="allow-scripts"
               referrerPolicy="no-referrer"
               title={title || htmlFile.originalName}
@@ -626,6 +713,36 @@ export const VideoCard = memo(function VideoCard({
                 transformOrigin: 'top left',
               }}
             />
+            {/* 单卡暂停/继续：录屏时停在某一帧讲解；锁定控件时隐藏 */}
+            {htmlStatus === 'ready' && (!lockControls || !focusMode) && (
+              <button
+                type="button"
+                onClick={() => {
+                  const win = iframeRef.current?.contentWindow;
+                  if (!win) return;
+                  win.postMessage(
+                    {
+                      __oc: 1,
+                      token: htmlToken,
+                      action: htmlPaused ? 'play' : 'pause',
+                      at: htmlPaused ? Date.now() + 100 : undefined,
+                    },
+                    '*',
+                  );
+                }}
+                title={htmlPaused ? '继续播放' : '暂停'}
+                aria-label={htmlPaused ? '继续播放' : '暂停'}
+                className="absolute right-2.5 top-2.5 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              >
+                {htmlPaused ? <Play className="h-4 w-4 fill-current" aria-hidden /> : <Pause className="h-4 w-4" aria-hidden />}
+              </button>
+            )}
+            {/* 硬边界标注：GIF / `<img>` SVG 无法暂停，只承诺「重来」 */}
+            {isHtml && htmlCaps && (htmlCaps.gif > 0 || htmlCaps.svgImage > 0) && (
+              <span className="absolute bottom-2.5 right-2.5 z-10 rounded-md border border-amber-400/30 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-100 backdrop-blur-sm">
+                仅重来
+              </span>
+            )}
             {htmlStatus === 'loading' && (
               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-card">
                 <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden />
