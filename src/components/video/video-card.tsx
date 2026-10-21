@@ -67,6 +67,8 @@ export interface VideoCardProps {
   htmlScale?: number;
   /** 「刷新全部页面」信号（纯 HTML 项目顶栏主动作）：数值变化时重载本卡 iframe；0 = 从未触发 */
   refreshSignal?: number;
+  /** HTML 挂起（专注模式备场）：true 时不挂载 iframe，等开始键再加载 */
+  htmlSuspended?: boolean;
   /** HTML 播放控制命令（父级广播；id 变化才执行） */
   htmlCommand?: { id: number; action: 'pause' | 'play'; at?: number } | null;
   /** HTML 重载信号：tick 变化时重挂 iframe；hold=true 时加载完成后先备场再等统一 play */
@@ -148,6 +150,7 @@ export const VideoCard = memo(function VideoCard({
   titleWeight = TITLE_WEIGHT_DEFAULT,
   titleColor = TITLE_COLOR_DEFAULT,
   refreshSignal = 0,
+  htmlSuspended = false,
   htmlCommand = null,
   htmlReload,
   onHtmlReady,
@@ -689,6 +692,9 @@ export const VideoCard = memo(function VideoCard({
             )}
           </>
         ) : htmlFile ? (
+          htmlSuspended ? (
+            <div className="absolute inset-0 bg-black" aria-hidden />
+          ) : (
           <>
             {/* 沙箱渲染：仅 allow-scripts，绝不给 allow-same-origin（BLUEPRINT §11.3）；
                 服务端对该 URL 还强制 CSP sandbox + nosniff + no-store 双保险。
@@ -779,6 +785,7 @@ export const VideoCard = memo(function VideoCard({
               </div>
             )}
           </>
+          )
         ) : imageFile ? (
           <>
             {/* 模糊背景填充（Step C）：同图放大铺满 + 模糊，静态零成本 */}

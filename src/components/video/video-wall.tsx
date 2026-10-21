@@ -13,7 +13,7 @@
  * BGM 管理、键盘快捷键与整体布局编排。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Shrink, UploadCloud } from 'lucide-react';
+import { Pause, Play, Shrink, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
 import {
@@ -112,6 +112,9 @@ export function VideoWall() {
   const recStreamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recChunksRef = useRef<Blob[]>([]);
+  /** 专注模式网页备场：idle（未挂载）→ loading（挂载+hold）→ playing ⇄ paused */
+  const [focusStage, setFocusStage] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle');
+  const [focusSuspended, setFocusSuspended] = useState(false);
   /** 水印文字编辑对话框：open 状态与草稿（确认才提交，取消/Esc 丢弃草稿）；
    *  enable：本次保存是否连带启用水印 */
   const [wmDialogOpen, setWmDialogOpen] = useState(false);
@@ -957,6 +960,122 @@ export function VideoWall() {
     return () => clearTimeout(timer);
   }, [htmlSyncPending, htmlReadySet, htmlCount, sendHtmlCommand]);
 
+  /* ---------- 专注模式：网页备场 ---------- */
+  /** 进入专注先卸载 iframe、显示黑场：等空格/播放键再加载 */
+  const suspendFocusHtml = useCallback(() => {
+    setFocusStage('idle');
+    setFocusSuspended(true);
+    setHtmlReadySet([]);
+    setHtmlSyncPending(false);
+    setHtmlPaused(false);
+    getActiveVideos().forEach((v) => {
+      try { v.pause(); } catch {}
+    });
+    try { audioRef.current?.pause(); } catch {}
+  }, [getActiveVideos]);
+
+  /** 开始：挂载全部 iframe（hold=1），收齐 ready 后统一 play + 视频归零 */
+  const startFocusLoad = useCallback(() => {
+    setFocusStage('loading');
+    setFocusSuspended(false);
+    setHtmlPaused(false);
+    setHtmlReadySet([]);
+    setHtmlSyncPending(false);
+    setHtmlReload((prev) => ({ tick: prev.tick + 1, hold: true }));
+  }, []);
+
+  const startFocusPlayback = useCallback(() => {
+    sendHtmlCommand('play', Date.now() + 120);
+    setFocusStage('playing');
+    const active = getActiveVideos();
+    if (active.length > 0 || settings.bgm) restartAndPlay(active);
+  }, [sendHtmlCommand, getActiveVideos, restartAndPlay, settings.bgm]);
+
+  /** 暂停：网页冻结，视频/BGM 暂停（保留进度） */
+  const pauseFocusAll = useCallback(() => {
+    sendHtmlCommand('pause');
+    setFocusStage('paused');
+    getActiveVideos().forEach((v) => {
+      try { v.pause(); } catch {}
+    });
+    try { audioRef.current?.pause(); } catch {}
+  }, [sendHtmlCommand, getActiveVideos]);
+
+  /** 继续：网页与视频从暂停处恢复 */
+  const resumeFocusAll = useCallback(() => {
+    sendHtmlCommand('play', Date.now() + 100);
+    setFocusStage('playing');
+    getActiveVideos().forEach((v) => { void v.play().catch(() => {}); });
+    if (settings.bgm) void audioRef.current?.play().catch(() => {});
+  }, [sendHtmlCommand, getActiveVideos, settings.bgm]);
+
+  /** 专注模式播放键 / 空格：loading 忽略 → idle 挂载加载 → playing 暂停 → paused 继续 */
+  const handleFocusAction = useCallback(() => {
+    if (focusStage === 'loading') return;
+    if (focusStage === 'idle') {
+      startFocusLoad();
+      return;
+    }
+    if (focusStage === 'playing') pauseFocusAll();
+    else if (focusStage === 'paused') resumeFocusAll();
+  }, [focusStage, startFocusLoad, pauseFocusAll, resumeFocusAll]);
+
+  /** R：视频归零、网页卸载回黑场，等下一次开始重新加载 */
+  const resetVideosForFocus = useCallback(() => {
+    getActiveVideos().forEach((v) => {
+      try {
+        v.pause();
+        v.currentTime = 0;
+      } catch {}
+    });
+    try {
+      audioRef.current?.pause();
+      if (audioRef.current) audioRef.current.currentTime = 0;
+    } catch {}
+  }, [getActiveVideos]);
+
+  // 进入专注：卸载网页等开始；离开专注：恢复挂载（之前卸载过则重载自动播放）
+  const prevModeRef = useRef(mode);
+  useEffect(() => {
+    if (prevModeRef.current === mode) return;
+    prevModeRef.current = mode;
+    if (mode === 'focus' && hasHtml) {
+      suspendFocusHtml();
+    } else if (mode !== 'focus') {
+      const wasUnloaded = focusSuspended || focusStage === 'loading' || focusStage === 'idle';
+      setFocusStage('idle');
+      setFocusSuspended(false);
+      if (hasHtml && wasUnloaded) {
+        setHtmlReload((prev) => ({ tick: prev.tick + 1, hold: false }));
+      }
+    }
+  }, [mode, hasHtml, focusSuspended, focusStage, suspendFocusHtml]);
+
+  // 专注模式下项目才加载完成：同样先卸载
+  useEffect(() => {
+    if (mode === 'focus' && hasHtml && !focusSuspended && focusStage === 'idle') {
+      suspendFocusHtml();
+    }
+  }, [mode, hasHtml, focusSuspended, focusStage, suspendFocusHtml]);
+
+  // 加载完成（或 12 秒兜底）→ 同帧开演
+  useEffect(() => {
+    if (mode !== 'focus' || focusStage !== 'loading') return;
+    if (htmlCount > 0 && htmlReadySet.length >= htmlCount) {
+      startFocusPlayback();
+      return;
+    }
+    const timer = setTimeout(() => startFocusPlayback(), 12000);
+    return () => clearTimeout(timer);
+  }, [mode, focusStage, htmlReadySet, htmlCount, startFocusPlayback]);
+
+  // 迟到的 ready：已开演时补发 play，避免超时后加载完的页面停在冻结态
+  useEffect(() => {
+    if (mode === 'focus' && focusStage === 'playing' && htmlReadySet.length > 0) {
+      sendHtmlCommand('play', Date.now() + 50);
+    }
+  }, [mode, focusStage, htmlReadySet.length, sendHtmlCommand]);
+
   /* ---------- 录制舞台 ---------- */
   /** 停止录制：onstop 里统一生成 Blob 并下载 */
   const stopRecorder = useCallback(() => {
@@ -1126,7 +1245,8 @@ export function VideoWall() {
     if (audioRef.current) audioRef.current.playbackRate = settings.rate;
   }, [settings.rate, settings.bgm]);
 
-  /** 专注模式键盘快捷键：空格 / F = 播放 ⇄ 暂停；R = 全部归零并保持暂停。
+  /** 专注模式键盘快捷键：空格 / F = 开始⇄暂停；R = 归零并重新备场。
+   *  有网页时先重载冻结，空格/播放键才真正开始，与视频逻辑一致；
    *  标题/提示词输入框等聚焦时不抢键；空格默认滚动页面，需 preventDefault */
   useEffect(() => {
     if (mode !== 'focus') return;
@@ -1138,24 +1258,30 @@ export function VideoWall() {
       if (!isReset && e.code !== 'Space' && e.key !== 'f' && e.key !== 'F') return;
       e.preventDefault();
       if (isReset) {
-        handleResetAll(false);
+        if (hasHtml) {
+          resetVideosForFocus();
+          suspendFocusHtml();
+        } else {
+          handleResetAll(false);
+        }
         return;
       }
-      const videosPlaying =
+      if (hasHtml) {
+        handleFocusAction();
+        return;
+      }
+      const anyPlaying =
         getActiveVideos().some((v) => !v.paused)
         || (!!settings.bgm && !!audioRef.current && !audioRef.current.paused);
-      const anyPlaying = videosPlaying || (hasHtml && !htmlPaused);
-      if (anyPlaying) {
-        if (videosPlaying) handlePauseAll();
-        if (hasHtml) handleHtmlPause();
-      } else {
-        if (getActiveVideos().length > 0 || settings.bgm) handleLoopShow();
-        if (hasHtml) handleHtmlResume();
-      }
+      if (anyPlaying) handlePauseAll();
+      else handleLoopShow();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mode, getActiveVideos, handleLoopShow, handlePauseAll, handleResetAll, settings.bgm, hasHtml, htmlPaused, handleHtmlPause, handleHtmlResume]);
+  }, [
+    mode, hasHtml, handleFocusAction, resetVideosForFocus, suspendFocusHtml, handleResetAll,
+    getActiveVideos, handlePauseAll, handleLoopShow, settings.bgm,
+  ]);
 
   /** 上传/更换背景音乐：POST FormData → 响应清单回填（服务端同临界区删除旧文件） */
   const handleBgmFile = useCallback(
@@ -1244,6 +1370,7 @@ export function VideoWall() {
       titleWeight: settings.titleWeight,
       titleColor: settings.titleColor,
       refreshSignal: htmlRefreshTick,
+      htmlSuspended: focusSuspended,
       htmlCommand,
       htmlReload,
       onHtmlReady: handleHtmlReady,
@@ -1260,7 +1387,7 @@ export function VideoWall() {
       settings.customRatio, settings.showTitles, settings.showInfo, settings.showIndex,
       settings.letterboxFill, settings.htmlScale, settings.titleAlign, settings.titleFontSize,
       settings.titlePosition, settings.titleWeight, settings.titleColor,
-      mode, gridDrag, htmlRefreshTick, htmlCommand, htmlReload, handleHtmlReady,
+      mode, gridDrag, htmlRefreshTick, htmlCommand, htmlReload, handleHtmlReady, focusSuspended,
       handleSlotAspect, handleCardFiles, handleTitleChange, handleIconFiles, handleIconRemove, handleClearSlot, setVideoRef,
     ],
   );
@@ -1365,12 +1492,27 @@ export function VideoWall() {
         >
           <button
             type="button"
-            onClick={handleLoopShow}
-            title="从头循环播放：视频与背景音乐同步开始并循环"
-            aria-label="从头循环播放"
-            className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border border-primary/40 bg-primary/15 text-primary opacity-40 shadow-lg backdrop-blur transition-all hover:bg-primary/25 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            onClick={hasHtml ? handleFocusAction : handleLoopShow}
+            disabled={hasHtml && focusStage === 'loading'}
+            title={
+              hasHtml
+                ? focusStage === 'loading'
+                  ? '页面加载中…'
+                  : focusStage === 'playing'
+                    ? '暂停全部内容'
+                    : focusStage === 'paused'
+                      ? '继续播放'
+                      : '开始：加载全部页面并同步播放'
+                : '从头循环播放：视频与背景音乐同步开始并循环'
+            }
+            aria-label={hasHtml ? (focusStage === 'playing' ? '暂停全部内容' : '开始播放') : '从头循环播放'}
+            className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border border-primary/40 bg-primary/15 text-primary opacity-40 shadow-lg backdrop-blur transition-all hover:bg-primary/25 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-wait"
           >
-            <Play className="h-[18px] w-[18px] fill-current" aria-hidden />
+            {hasHtml && focusStage === 'playing' ? (
+              <Pause className="h-[18px] w-[18px]" aria-hidden />
+            ) : (
+              <Play className="h-[18px] w-[18px] fill-current" aria-hidden />
+            )}
           </button>
           <button
             type="button"
@@ -1381,6 +1523,13 @@ export function VideoWall() {
           >
             <Shrink className="h-[18px] w-[18px]" aria-hidden />
           </button>
+        </div>
+      )}
+
+      {/* 专注模式网页备场提示：未挂载时提示开始，加载中提示等待 */}
+      {mode === 'focus' && !recording && hasHtml && (focusStage === 'idle' || focusStage === 'loading') && (
+        <div className="pointer-events-none fixed bottom-7 left-1/2 z-40 -translate-x-1/2 rounded-full border border-primary/30 bg-black/65 px-4 py-2 text-xs font-medium text-white/90 shadow-lg backdrop-blur">
+          {focusStage === 'loading' ? '页面加载中…' : '按空格或点右下角 ▶ 开始（将加载全部页面）'}
         </div>
       )}
 
