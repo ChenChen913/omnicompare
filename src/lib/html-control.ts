@@ -237,6 +237,29 @@ const HTML_CONTROL_SCRIPT = `(function () {
     };
   }
 
+  /** 全屏不透明遮罩（preloader / 白幕）：等它淡出再冻结，避免录到纯白帧 */
+  function coveringOverlay() {
+    try {
+      var bodyOp = parseFloat(getComputedStyle(document.body).opacity);
+      if (bodyOp < 0.9) return true;
+      var el = document.elementFromPoint(Math.floor(innerWidth / 2), Math.floor(innerHeight / 2));
+      var guard = 0;
+      while (el && guard++ < 10) {
+        var cs = getComputedStyle(el);
+        var r = el.getBoundingClientRect();
+        var covers = r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9;
+        var fixed = cs.position === 'fixed' || cs.position === 'absolute';
+        var opaque = parseFloat(cs.opacity) > 0.15;
+        var bg = cs.backgroundColor;
+        var hasBg = bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)';
+        var media = el.querySelector && !!el.querySelector('canvas,img,svg,video');
+        if (covers && fixed && opaque && hasBg && !media) return true;
+        el = el.parentElement;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   function markReady() {
     if (sentReady) return;
     sentReady = true;
@@ -245,8 +268,17 @@ const HTML_CONTROL_SCRIPT = `(function () {
     if (hold) pause('ready');
   }
 
-  if (document.readyState === 'complete') setTimeout(function () { markReady(); }, warm);
-  else window.addEventListener('load', function () { setTimeout(function () { markReady(); }, warm); });
+  /** 就绪 = load + warm，且没有全屏遮罩挡着；遮罩最多再等 10 秒 */
+  function armReady() {
+    var started = realNow();
+    function attempt() {
+      if (!coveringOverlay() || realNow() - started > 10000) { markReady(); return; }
+      setTimeout(attempt, 250);
+    }
+    setTimeout(attempt, warm);
+  }
+  if (document.readyState === 'complete') armReady();
+  else window.addEventListener('load', armReady);
   setTimeout(function () { markReady(); }, Math.max(25000, warm + 15000));
 
   window.addEventListener('message', function (e) {

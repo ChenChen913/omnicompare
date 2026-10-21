@@ -130,6 +130,7 @@ reset:   父页面重载 iframe（oc_hold=1 时先备场再释放）
 - 4 路异构（CSS/Canvas/Three/视频）恢复帧时间差 ≤1ms（已由第一阶段验证：0ms）。
 - 暂停 30 秒后恢复，虚拟时间前进 ≤2 帧（已验证 10.8–20.5ms）。
 - 暂停后画面逐像素不变（已验证 0.000%）。
+- preloader：全屏遮罩淡出到 opacity ≤0.15 后才冻结；生产运行时实测 `ready` 时幕布 0.04、1.5 秒内探针完全不变。
 - 能力标注与实际行为一致。
 - `lint` / `tsc` / `build` 通过；HTML 安全响应头不变。
 
@@ -137,7 +138,7 @@ reset:   父页面重载 iframe（oc_hold=1 时先备场再释放）
 
 - Safari / macOS 未测。
 - 4K 下 4 路 WebGL + 录屏的 GPU 上限未测。
-- 3 秒以上 preloader 的自动就绪判定（当前靠 warm 参数）。
+- 3 秒以上 preloader 的自动就绪判定：已在运行时加入"全屏遮罩检测"，遮罩淡出到 opacity ≤ 0.15 才冻结（样本：ready 1.2s → 3.98s，幕布 0.047）。
 - Rive / Spline / Web Audio / APNG 未单独建样本。
 - Worker 驱动动画仍只支持重来。
 - `getAnimations()` 对 CSS `animation-delay` 阶段的覆盖已在样本中验证可暂停，但不同浏览器可能不同。
