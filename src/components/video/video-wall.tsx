@@ -102,6 +102,10 @@ export function VideoWall() {
   const [htmlSyncPending, setHtmlSyncPending] = useState(false);
   const [htmlReadySet, setHtmlReadySet] = useState<number[]>([]);
   const htmlCommandId = useRef(0);
+  /** 录制舞台：16:9 无间隙画布；阶段机 idle → loading（HTML 备场）→ countdown → live */
+  const [recording, setRecording] = useState(false);
+  const [recPhase, setRecPhase] = useState<'idle' | 'loading' | 'countdown' | 'live'>('idle');
+  const [recCount, setRecCount] = useState(3);
   /** 水印文字编辑对话框：open 状态与草稿（确认才提交，取消/Esc 丢弃草稿）；
    *  enable：本次保存是否连带启用水印 */
   const [wmDialogOpen, setWmDialogOpen] = useState(false);
@@ -947,6 +951,78 @@ export function VideoWall() {
     return () => clearTimeout(timer);
   }, [htmlSyncPending, htmlReadySet, htmlCount, sendHtmlCommand]);
 
+  /* ---------- 录制舞台 ---------- */
+  const exitRecording = useCallback(() => {
+    setRecording(false);
+    setRecPhase('idle');
+    setRecCount(3);
+  }, []);
+
+  /** 进入录制：HTML 先以 hold 重载备场；纯视频直接倒计时 */
+  const handleEnterRecord = useCallback(() => {
+    if (filledCount === 0) {
+      toast.error('还没有可录制的内容，请先上传', { id: 'record' });
+      return;
+    }
+    setRecording(true);
+    setRecCount(3);
+    window.scrollTo({ top: 0 });
+    if (typeof document !== 'undefined' && !document.hasFocus()) {
+      toast.warning('窗口不在前台：浏览器会把动画限到约 20fps，录制前请点回本窗口', { id: 'record-focus' });
+    }
+    if (htmlCount > 0) {
+      setHtmlPaused(false);
+      setHtmlReadySet([]);
+      setHtmlSyncPending(false);
+      setHtmlReload((prev) => ({ tick: prev.tick + 1, hold: true }));
+      setRecPhase('loading');
+    } else {
+      setRecPhase('countdown');
+    }
+  }, [filledCount, htmlCount]);
+
+  // 备场完成 → 倒计时（12 秒兜底，避免某张页面卡住）
+  useEffect(() => {
+    if (!recording || recPhase !== 'loading') return;
+    if (htmlCount > 0 && htmlReadySet.length >= htmlCount) {
+      setRecPhase('countdown');
+      return;
+    }
+    const timer = setTimeout(() => setRecPhase('countdown'), 12000);
+    return () => clearTimeout(timer);
+  }, [recording, recPhase, htmlReadySet, htmlCount]);
+
+  // 倒计时 3-2-1 → 同帧开演：HTML 统一 play，视频/BGM 归零起播
+  useEffect(() => {
+    if (!recording || recPhase !== 'countdown') return;
+    setRecCount(3);
+    let n = 3;
+    const timer = setInterval(() => {
+      n -= 1;
+      setRecCount(n);
+      if (n <= 0) {
+        clearInterval(timer);
+        setRecPhase('live');
+        if (htmlCount > 0) sendHtmlCommand('play', Date.now() + 100);
+        const active = getActiveVideos();
+        if (active.length > 0 || settings.bgm) restartAndPlay(active);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [recording, recPhase, htmlCount, sendHtmlCommand, getActiveVideos, restartAndPlay, settings.bgm]);
+
+  // Esc 退出录制
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      exitRecording();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [recording, exitRecording]);
+
   /* ---------- 背景音乐（BGM）----------
      全局唯一一轨：文件经 /api/videos/bgm 上传/移除，音量经 settings PATCH 持久化。
      <audio loop> 恒开（循环由元素自身保证），音量/倍速由下方 effect 同步到元素。 */
@@ -1031,7 +1107,7 @@ export function VideoWall() {
   /* ---------- 自动适配视口（autoFit，含提示词栏宽/水印层对齐） ---------- */
   const promptVisible = view === 'workspace' && filledCount > 0 && (settings.showPrompt || settings.showByline);
   const wmVisible = view === 'workspace' && filledCount > 0 && settings.wmShow;
-  const fitActive = mode === 'focus' || settings.autoFit;
+  const fitActive = !recording && (mode === 'focus' || settings.autoFit);
   const fitWidth = useAutoFit({
     refs: fitRefs,
     fitActive,
@@ -1100,17 +1176,32 @@ export function VideoWall() {
 
   /* 渲染列数：auto 模式窄屏收窄到 2 列竖向堆叠；整墙缩放宽度取求解值或手动档 */
   const gridCols = layoutMode === 'auto' && narrow ? Math.min(layout.cols, 2) : layout.cols;
-  const gridStyle = {
-    gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
-    width: fitActive ? (fitWidth !== null ? `${fitWidth}px` : '100%') : `${settings.wallScale}%`,
-  } as const;
-  const padCellCount = Math.max(0, layout.rows * layout.cols - slots.length);
+  /** 录制舞台只渲染已填充内容，并按数量压成紧凑矩阵（4 个 = 标准 2×2） */
+  const recordSlots = slots.filter((s) => !!(s.video || s.html || s.image));
+  const recordCols =
+    recordSlots.length <= 1 ? 1 : recordSlots.length <= 4 ? 2 : Math.min(3, Math.ceil(Math.sqrt(recordSlots.length)));
+  const visibleSlots = recording ? recordSlots : slots;
+  const padCellCount = recording ? 0 : Math.max(0, layout.rows * layout.cols - slots.length);
+  /** 录制舞台：严格 16:9，紧凑矩阵无间隙铺满 */
+  const gridStyle = recording
+    ? {
+        gridTemplateColumns: `repeat(${recordCols}, minmax(0, 1fr))`,
+        gridTemplateRows: 'auto',
+        alignContent: 'center',
+        width: 'min(100vw, calc(100vh * 16 / 9))',
+        height: 'min(100vh, calc(100vw * 9 / 16))',
+        gap: 0,
+      }
+    : {
+        gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+        width: fitActive ? (fitWidth !== null ? `${fitWidth}px` : '100%') : `${settings.wallScale}%`,
+      };
 
   /* ---------- 渲染 ---------- */
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className={cn('flex min-h-screen flex-col bg-background text-foreground', recording && 'overflow-hidden bg-black')}>
       {/* 顶部控制栏（仅 Studio 渲染；专注模式整体隐藏，退出入口在右下角圆形按钮） */}
-      {mode === 'studio' && (
+      {mode === 'studio' && !recording && (
         <TopBar
           headerRef={headerRef}
           mode={mode}
@@ -1167,6 +1258,7 @@ export function VideoWall() {
           onHtmlPause={handleHtmlPause}
           onHtmlResume={handleHtmlResume}
           onHtmlRestart={handleHtmlRestart}
+          onEnterRecord={handleEnterRecord}
         />
       )}
 
@@ -1174,7 +1266,7 @@ export function VideoWall() {
           容器化 + data-focus-buttons：autoFit 求解器测量其包围盒，为按钮预留空间
           （墙的可用宽/高在按钮区方向退让，防重叠遮挡）；pointer-events-none 容器
           不拦截两按钮间隙处的点击（透传给下方视频），按钮自身恢复 auto */}
-      {mode === 'focus' && (
+      {mode === 'focus' && !recording && (
         <div
           ref={focusBtnsRef}
           data-focus-buttons
@@ -1243,7 +1335,7 @@ export function VideoWall() {
         }}
       >
         {/* 左侧栏：仅 Studio + 桌面端 */}
-        {mode === 'studio' && (
+        {mode === 'studio' && !recording && (
           <Sidebar
             open={sidebarOpen}
             onToggle={() => setSidebarOpen((v) => !v)}
@@ -1273,6 +1365,7 @@ export function VideoWall() {
             // focus 下 flex-col：网格 my-auto 垂直居中；studio 保持块级布局零变化
             'relative min-w-0 flex-1 transition-opacity duration-300',
             mode === 'focus' ? 'flex flex-col py-3 sm:py-4' : 'py-4 sm:py-7',
+            recording && 'fixed inset-0 z-[60] flex items-center justify-center bg-black py-0',
             switching && 'pointer-events-none opacity-45',
           )}
         >
@@ -1320,17 +1413,29 @@ export function VideoWall() {
                 {/* ref=自动适配测量锚点；focus 下 my-auto 垂直居中 + shrink-0 防被 flex 压缩 */}
                 <div
                   ref={wallRef}
-                  className={cn('mx-auto grid gap-3 sm:gap-5', mode === 'focus' && 'my-auto shrink-0')}
+                  data-record-stage={recording ? 'true' : undefined}
+                  className={cn('mx-auto grid gap-3 sm:gap-5', mode === 'focus' && 'my-auto shrink-0', recording && 'm-0 gap-0')}
                   style={gridStyle}
                 >
-                  {slots.map((slot) => {
+                  {visibleSlots.map((slot) => {
                     const isFilled = !!(slot.video || slot.html || slot.image);
                     /* 槽位差异化 props（上传中/高亮）叠加在共享 props 上；
                        key 用稳定文件名：DOM 节点被移动而非复用重建，视频播放不中断 */
                     const cardProps = {
                       ...sharedCardProps,
+                      ...(recording
+                        ? {
+                            showTitles: false,
+                            showInfo: false,
+                            showIndex: false,
+                            focusMode: true,
+                            lockControls: true,
+                            dragActive: false,
+                            globalAspect: '16:9' as const,
+                          }
+                        : {}),
                       uploading: !!uploading[slot.index],
-                      highlighted: highlight === slot.index,
+                      highlighted: !recording && highlight === slot.index,
                     };
                     return isFilled ? (
                       <SortableCard key={sortableIdOf(slot)} slot={slot} {...cardProps} />
@@ -1353,7 +1458,7 @@ export function VideoWall() {
           )}
 
           {/* 提示词与署名（录屏入镜用） */}
-          {promptVisible && (
+          {!recording && promptVisible && (
             <PromptBar
               mode={mode}
               showPrompt={settings.showPrompt}
@@ -1369,9 +1474,41 @@ export function VideoWall() {
           )}
 
           {/* 防伪水印蒙版层 */}
-          {wmVisible && <WatermarkLayer settings={settings} layerRef={wmLayerRef} />}
+          {!recording && wmVisible && <WatermarkLayer settings={settings} layerRef={wmLayerRef} />}
         </main>
       </div>
+
+      {/* 录制舞台遮罩：备场 / 倒计时；live 后消失（Esc 或右上角退出） */}
+      {recording && (
+        <>
+          {recPhase !== 'live' && (
+            <div className="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center bg-black/35">
+              <div className="flex min-w-[220px] flex-col items-center gap-2 rounded-3xl border border-white/10 bg-black/75 px-10 py-8 text-white shadow-2xl backdrop-blur">
+                <p className="text-xs uppercase tracking-[0.3em] text-white/60">
+                  {recPhase === 'loading' ? '页面备场中' : '准备录制'}
+                </p>
+                <p className="text-7xl font-bold tabular-nums">
+                  {recPhase === 'loading' ? '···' : Math.max(recCount, 0)}
+                </p>
+                <p className="text-[11px] text-white/50">
+                  {recPhase === 'loading' ? '全部页面就绪后自动倒计时' : '倒计时结束同帧开演'}
+                </p>
+              </div>
+            </div>
+          )}
+          <div className="fixed right-5 top-5 z-[80]">
+            <button
+              type="button"
+              onClick={exitRecording}
+              className="rounded-full border border-white/15 bg-black/50 px-3 py-1.5 text-xs text-white/70 opacity-0 backdrop-blur transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+              title="退出录制舞台（Esc）"
+              aria-label="退出录制舞台"
+            >
+              退出录制 · Esc
+            </button>
+          </div>
+        </>
+      )}
 
       {/* 缩减数量确认框 */}
       <ShrinkConfirmDialog

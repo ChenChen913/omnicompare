@@ -200,3 +200,10 @@ html body[data-scroll-locked] {
 .font-hand {
   font-family: 'Segoe Script', 'Bradley Hand', 'Comic Sans MS', KaiTi, STKaiti, cursive;
 }
+
+/* Record stage: seamless panels (no rounded corners/borders/shadows). */
+[data-record-stage='true'] > * {
+  border-radius: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}

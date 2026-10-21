@@ -115,6 +115,8 @@ export interface TopBarProps {
   onHtmlPause: () => void;
   onHtmlResume: () => void;
   onHtmlRestart: () => void;
+  /** 进入录制舞台（16:9 无间隙 + 倒计时 + 同帧开始） */
+  onEnterRecord: () => void;
 }
 
 export function TopBar(props: TopBarProps) {
@@ -127,7 +129,7 @@ export function TopBar(props: TopBarProps) {
     onPlayAll, onPauseAll, onResetAll,
     onImportClick, onBgmClick, bgmUploading, onRemoveBgm,
     onEditWatermarkText, onClearAll, onEnterFocus,
-    htmlPaused, onHtmlSyncStart, onHtmlPause, onHtmlResume, onHtmlRestart,
+    htmlPaused, onHtmlSyncStart, onHtmlPause, onHtmlResume, onHtmlRestart, onEnterRecord,
   } = props;
   const s = settings;
 
@@ -440,6 +442,22 @@ export function TopBar(props: TopBarProps) {
                 <Video className="h-4 w-4" aria-hidden />
                 <span>录屏</span>
                 {s.lockControls && <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 dark:bg-cyan-400" aria-hidden />}
+              </button>
+
+              {/* 录制舞台：16:9 无间隙舞台 + 倒计时后视频与 HTML 同帧开始 */}
+              <button
+                type="button"
+                onClick={onEnterRecord}
+                disabled={filledCount === 0}
+                className={cn(
+                  ctlBtn,
+                  'border-rose-500/40 bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 dark:text-rose-400',
+                )}
+                title="进入录制舞台：16:9 无间隙、隐藏管理 UI、倒计时后同帧开始（Esc 退出）"
+                aria-label="进入录制舞台"
+              >
+                <Clapperboard className="h-4 w-4" aria-hidden />
+                <span>录制</span>
               </button>
 
               <AlertDialog>

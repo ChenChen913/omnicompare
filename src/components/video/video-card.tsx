@@ -828,7 +828,7 @@ export const VideoCard = memo(function VideoCard({
         )}
 
         {/* HTML / 图片类型角标（内容区左上，位置角标右侧；编号隐藏时直接落在左上角） */}
-        {isHtml && !overlayMode && (
+        {isHtml && !overlayMode && showInfo && (
           <span className={cn(
             'absolute left-2.5 top-2.5 z-10 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm',
             showIndex && 'ml-9',
@@ -837,7 +837,7 @@ export const VideoCard = memo(function VideoCard({
             {isBundle ? 'HTML 包' : 'HTML'}
           </span>
         )}
-        {isImage && !overlayMode && (
+        {isImage && !overlayMode && showInfo && (
           <span className={cn(
             'absolute left-2.5 top-2.5 z-10 flex items-center gap-1 rounded-md border border-white/10 bg-black/60 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-300 backdrop-blur-sm',
             showIndex && 'ml-9',
