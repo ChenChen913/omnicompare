@@ -1143,14 +1143,20 @@ export function VideoWall() {
       return;
     }
 
-    // 全屏后视口更大，标签页捕获的源分辨率才会更高；失败不影响录制
-    try {
-      if (typeof document !== 'undefined' && !document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
-        fullscreenRef.current = true;
+    // 全屏与捕获必须在同一个用户手势里发起：这里不 await 全屏，紧接着同步调用
+    // getDisplayMedia，避免 await 消耗 transient activation 导致捕获被拒。
+    // 全屏失败不影响录制，只是捕获源小一些。
+    let fullscreenPromise: Promise<void> | null = null;
+    if (typeof document !== 'undefined' && !document.fullscreenElement) {
+      try {
+        fullscreenPromise = document.documentElement.requestFullscreen();
+        void fullscreenPromise.then(
+          () => { fullscreenRef.current = true; },
+          () => { fullscreenRef.current = false; },
+        );
+      } catch {
+        fullscreenRef.current = false;
       }
-    } catch {
-      fullscreenRef.current = false;
     }
 
     toast.loading('请求屏幕捕获：请选择当前标签页…', { id: 'record-capture' });
@@ -1159,6 +1165,13 @@ export function VideoWall() {
       stream = await requestTabCapture();
     } catch {
       stream = null;
+    }
+    if (fullscreenPromise) {
+      try {
+        await fullscreenPromise;
+      } catch {
+        /* 全屏失败继续窗口模式 */
+      }
     }
     if (stream) {
       recStreamRef.current = stream;
