@@ -22,6 +22,8 @@ export async function requestTabCapture(timeoutMs = 10000): Promise<MediaStream 
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) return null;
 
   const options: CaptureOptions = {
+    // 不指定 width/height：MDN 明确说明这两个约束是对已选画面做缩放，而不是提高源分辨率。
+    // 想要更清晰只能扩大源（全屏/放大窗口），所以这里只把帧率拉满，分辨率交给浏览器原生输出。
     video: { frameRate: { ideal: 60, max: 60 } },
     audio: true,
     preferCurrentTab: true,
@@ -64,16 +66,42 @@ export function pickRecordingMime(hasAudio = true): string {
   return (hasAudio ? withAudio : videoOnly).find((type) => MediaRecorder.isTypeSupported(type)) ?? '';
 }
 
+/** 录制的实际参数（用于 UI 展示与清晰度诊断） */
+export interface RecorderMeta {
+  width: number;
+  height: number;
+  fps: number;
+  bitrate: number;
+  mimeType: string;
+}
+
+export interface CreatedRecorder {
+  recorder: MediaRecorder;
+  meta: RecorderMeta;
+}
+
 /** 创建录制器；不支持的浏览器返回 null */
-export function createTabRecorder(stream: MediaStream): MediaRecorder | null {
+export function createTabRecorder(stream: MediaStream): CreatedRecorder | null {
   if (typeof MediaRecorder === 'undefined') return null;
+  const track = stream.getVideoTracks()[0];
+  const settings = track?.getSettings();
+  const width = Math.max(1, Number(settings?.width) || 1920);
+  const height = Math.max(1, Number(settings?.height) || 1080);
+  const fps = Math.min(60, Math.max(15, Number(settings?.frameRate) || 60));
+
+  // 目标码率按像素率算：0.25 bit/像素/帧。Chrome 的 MediaRecorder 实际会低于目标，
+  // 所以从 20Mbps 起、上限 80Mbps；1600×900@60 ≈ 21.6M，1080p60 ≈ 31M，4K60 封顶 80M。
+  const target = width * height * fps * 0.25;
+  const bitrate = Math.round(Math.min(80_000_000, Math.max(20_000_000, target)));
   const mimeType = pickRecordingMime(stream.getAudioTracks().length > 0);
+
   try {
-    return new MediaRecorder(stream, {
+    const recorder = new MediaRecorder(stream, {
       ...(mimeType ? { mimeType } : {}),
-      videoBitsPerSecond: 12_000_000,
-      audioBitsPerSecond: 128_000,
+      videoBitsPerSecond: bitrate,
+      audioBitsPerSecond: 192_000,
     });
+    return { recorder, meta: { width, height, fps, bitrate, mimeType } };
   } catch {
     return null;
   }

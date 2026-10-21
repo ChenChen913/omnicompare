@@ -43,7 +43,7 @@ import {
   validateClientFile,
 } from '@/lib/types';
 import { VideoCard } from './video-card';
-import { createTabRecorder, downloadRecording, recordingFilename, requestTabCapture } from '@/lib/screen-recorder';
+import { createTabRecorder, downloadRecording, recordingFilename, requestTabCapture, type RecorderMeta } from '@/lib/screen-recorder';
 import { useWallSettings } from './wall/use-wall-settings';
 import { useProjects } from './wall/use-projects';
 import { useAutoFit } from './wall/use-autofit';
@@ -109,9 +109,19 @@ export function VideoWall() {
   const [recCount, setRecCount] = useState(3);
   /** 应用内录屏是否真的在写数据（用于退出按钮文案） */
   const [recActive, setRecActive] = useState(false);
+  const [recPaused, setRecPaused] = useState(false);
+  /** 实际捕获参数（分辨率/帧率/目标码率），用于清晰度提示 */
+  const [recMeta, setRecMeta] = useState<RecorderMeta | null>(null);
+  /** 录制舞台比例：16:9 横屏 / 9:16 竖屏 / 1:1 方屏 */
+  const [recordAspect, setRecordAspect] = useState<'16:9' | '9:16' | '1:1'>('16:9');
+  /** 录制舞台显示卡片标题标签 */
+  const [recordLabels, setRecordLabels] = useState(true);
+  /** 空格暂停时同步暂停 MediaRecorder（把停顿从成片里剪掉） */
+  const [trimPauses, setTrimPauses] = useState(true);
   const recStreamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recChunksRef = useRef<Blob[]>([]);
+  const fullscreenRef = useRef(false);
   /** 专注模式网页备场：idle（未挂载）→ loading（挂载+hold）→ playing ⇄ paused */
   const [focusStage, setFocusStage] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle');
   const [focusSuspended, setFocusSuspended] = useState(false);
@@ -1083,6 +1093,8 @@ export function VideoWall() {
     if (rec && rec.state !== 'inactive') rec.stop();
     recorderRef.current = null;
     setRecActive(false);
+    setRecPaused(false);
+    setRecMeta(null);
     recStreamRef.current?.getTracks().forEach((t) => t.stop());
     recStreamRef.current = null;
   }, []);
@@ -1091,8 +1103,9 @@ export function VideoWall() {
   const beginRecorder = useCallback(() => {
     const stream = recStreamRef.current;
     if (!stream || recorderRef.current) return;
-    const rec = createTabRecorder(stream);
-    if (!rec) return;
+    const created = createTabRecorder(stream);
+    if (!created) return;
+    const { recorder: rec, meta } = created;
     recChunksRef.current = [];
     rec.ondataavailable = (e) => {
       if (e.data.size > 0) recChunksRef.current.push(e.data);
@@ -1107,22 +1120,37 @@ export function VideoWall() {
     };
     rec.start(1000);
     recorderRef.current = rec;
+    setRecMeta(meta);
     setRecActive(true);
   }, []);
 
   const exitRecording = useCallback(() => {
     stopRecorder();
+    if (fullscreenRef.current && typeof document !== 'undefined' && document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    }
+    fullscreenRef.current = false;
     setRecording(false);
     setRecPhase('idle');
     setRecCount(3);
   }, [stopRecorder]);
 
-  /** 进入录制：先请求标签页捕获（点击是用户手势），失败则继续舞台并用 OBS 兜底 */
+  /** 进入录制：先全屏扩大捕获源，再请求标签页捕获（点击是用户手势），失败则用 OBS 兜底 */
   const handleEnterRecord = useCallback(async () => {
     if (recording) return;
     if (filledCount === 0) {
       toast.error('还没有可录制的内容，请先上传', { id: 'record' });
       return;
+    }
+
+    // 全屏后视口更大，标签页捕获的源分辨率才会更高；失败不影响录制
+    try {
+      if (typeof document !== 'undefined' && !document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        fullscreenRef.current = true;
+      }
+    } catch {
+      fullscreenRef.current = false;
     }
 
     toast.loading('请求屏幕捕获：请选择当前标签页…', { id: 'record-capture' });
@@ -1134,7 +1162,24 @@ export function VideoWall() {
     }
     if (stream) {
       recStreamRef.current = stream;
-      toast.success('已捕获当前标签页，倒计时后自动开录', { id: 'record-capture' });
+      const s = stream.getVideoTracks()[0]?.getSettings();
+      const w = Math.round(Number(s?.width) || 0);
+      const h = Math.round(Number(s?.height) || 0);
+      const fps = Math.round(Number(s?.frameRate) || 0);
+      if (w > 0 && h > 0) {
+        const targetBitrate = Math.round(
+          Math.min(80_000_000, Math.max(20_000_000, w * h * Math.max(fps, 15) * 0.25)),
+        );
+        setRecMeta({ width: w, height: h, fps: fps || 60, bitrate: targetBitrate, mimeType: '' });
+        toast.success(`捕获 ${w}×${h} @${fps || 60}fps · 目标 ${(targetBitrate / 1e6).toFixed(1)} Mbps`, {
+          id: 'record-capture',
+        });
+        if (typeof window !== 'undefined' && w < window.innerWidth * 0.9) {
+          toast.warning('捕获分辨率低于窗口：全屏或放大窗口可提升清晰度', { id: 'record-quality' });
+        }
+      } else {
+        toast.success('已捕获当前标签页，倒计时后自动开录', { id: 'record-capture' });
+      }
       stream.getVideoTracks()[0]?.addEventListener('ended', () => {
         stopRecorder();
         toast.info('屏幕捕获已停止', { id: 'record-capture' });
@@ -1191,7 +1236,7 @@ export function VideoWall() {
     return () => clearInterval(timer);
   }, [recording, recPhase, htmlCount, sendHtmlCommand, getActiveVideos, restartAndPlay, settings.bgm, beginRecorder]);
 
-  // 录制态键盘：Esc 停止保存；live 后空格暂停/继续、R 重来
+  // 录制态键盘：Esc 停止保存；A 比例、L 标签、P 停顿剪辑；live 后空格暂停/继续、R 重来
   useEffect(() => {
     if (!recording) return;
     const onKey = (e: KeyboardEvent) => {
@@ -1200,14 +1245,44 @@ export function VideoWall() {
         exitRecording();
         return;
       }
-      if (recPhase !== 'live') return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+
+      if (e.code === 'KeyA') {
+        e.preventDefault();
+        setRecordAspect((prev) => (prev === '16:9' ? '9:16' : prev === '9:16' ? '1:1' : '16:9'));
+        return;
+      }
+      if (e.code === 'KeyL') {
+        e.preventDefault();
+        setRecordLabels((prev) => !prev);
+        return;
+      }
+      if (e.code === 'KeyP') {
+        e.preventDefault();
+        setTrimPauses((prev) => !prev);
+        return;
+      }
+
+      if (recPhase !== 'live') return;
       if (e.code === 'Space') {
         e.preventDefault();
+        const vids = getActiveVideos();
+        const videosPlaying = vids.some((v) => !v.paused);
+        const contentPlaying = (hasHtml && !htmlPaused) || videosPlaying;
+        // 停顿剪辑：暂停时同步 pause MediaRecorder，恢复时 resume，成片里不保留冻结段
+        if (trimPauses) {
+          const rec = recorderRef.current;
+          if (rec?.state === 'recording' && contentPlaying) {
+            rec.pause();
+            setRecPaused(true);
+          } else if (rec?.state === 'paused' && !contentPlaying) {
+            rec.resume();
+            setRecPaused(false);
+          }
+        }
         if (htmlPaused) handleHtmlResume();
         else handleHtmlPause();
-        const vids = getActiveVideos();
         if (vids.some((v) => !v.paused)) {
           vids.forEach((v) => {
             try { v.pause(); } catch {}
@@ -1230,7 +1305,7 @@ export function VideoWall() {
     return () => window.removeEventListener('keydown', onKey);
   }, [
     recording, recPhase, exitRecording, htmlPaused, handleHtmlPause, handleHtmlResume,
-    handleHtmlRestart, getActiveVideos, settings.bgm, restartAndPlay, htmlCount,
+    handleHtmlRestart, getActiveVideos, settings.bgm, restartAndPlay, htmlCount, trimPauses, hasHtml,
   ]);
 
   /* ---------- 背景音乐（BGM）----------
@@ -1400,14 +1475,16 @@ export function VideoWall() {
     recordSlots.length <= 1 ? 1 : recordSlots.length <= 4 ? 2 : Math.min(3, Math.ceil(Math.sqrt(recordSlots.length)));
   const visibleSlots = recording ? recordSlots : slots;
   const padCellCount = recording ? 0 : Math.max(0, layout.rows * layout.cols - slots.length);
-  /** 录制舞台：严格 16:9，紧凑矩阵无间隙铺满 */
+  const [recordAspectW, recordAspectH] =
+    recordAspect === '16:9' ? [16, 9] : recordAspect === '9:16' ? [9, 16] : [1, 1];
+  /** 录制舞台：严格按所选比例，紧凑矩阵无间隙铺满 */
   const gridStyle = recording
     ? {
         gridTemplateColumns: `repeat(${recordCols}, minmax(0, 1fr))`,
         gridTemplateRows: 'auto',
         alignContent: 'center',
-        width: 'min(100vw, calc(100vh * 16 / 9))',
-        height: 'min(100vh, calc(100vw * 9 / 16))',
+        width: `min(100vw, calc(100vh * ${recordAspectW} / ${recordAspectH}))`,
+        height: `min(100vh, calc(100vw * ${recordAspectH} / ${recordAspectW}))`,
         gap: 0,
       }
     : {
@@ -1654,6 +1731,14 @@ export function VideoWall() {
                 <div
                   ref={wallRef}
                   data-record-stage={recording ? 'true' : undefined}
+                  data-record-aspect={recording ? recordAspect : undefined}
+                  data-record-labels={recording ? String(recordLabels) : undefined}
+                  data-record-trim={recording ? String(trimPauses) : undefined}
+                  data-rec-active={recording ? String(recActive) : undefined}
+                  data-rec-paused={recording ? String(recPaused) : undefined}
+                  data-rec-meta={
+                    recMeta ? `${recMeta.width}x${recMeta.height}@${Math.round(recMeta.fps)}:${recMeta.bitrate}` : undefined
+                  }
                   className={cn('mx-auto grid gap-3 sm:gap-5', mode === 'focus' && 'my-auto shrink-0', recording && 'm-0 gap-0')}
                   style={gridStyle}
                 >
@@ -1671,7 +1756,8 @@ export function VideoWall() {
                             focusMode: true,
                             lockControls: true,
                             dragActive: false,
-                            globalAspect: '16:9' as const,
+                            globalAspect: recordAspect,
+                            recordLabel: recordLabels ? (slot.title || '').trim() || null : null,
                           }
                         : {}),
                       uploading: !!uploading[slot.index],
@@ -1733,6 +1819,9 @@ export function VideoWall() {
                 <p className="text-[11px] text-white/50">
                   {recPhase === 'loading' ? '全部页面就绪后自动倒计时' : '倒计时结束同帧开演'}
                 </p>
+                <p className="text-[10px] text-white/35">
+                  L 标签 · A 比例 · P 停顿剪辑 · 空格暂停 · Esc 保存
+                </p>
               </div>
             </div>
           )}
@@ -1741,7 +1830,11 @@ export function VideoWall() {
               type="button"
               onClick={exitRecording}
               className="rounded-full border border-white/15 bg-black/50 px-3 py-1.5 text-xs text-white/70 opacity-0 backdrop-blur transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
-              title={recActive ? '停止录制并保存 WebM（Esc）' : '退出录制舞台（Esc）'}
+              title={
+                recActive
+                  ? `${recMeta ? `${recMeta.width}×${recMeta.height} @${Math.round(recMeta.fps)}fps · ${(recMeta.bitrate / 1e6).toFixed(1)}Mbps · ` : ''}停止录制并保存（Esc）`
+                  : '退出录制舞台（Esc）'
+              }
               aria-label={recActive ? '停止录制并保存' : '退出录制舞台'}
             >
               {recActive && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-rose-500 align-middle" aria-hidden />}

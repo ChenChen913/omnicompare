@@ -69,6 +69,8 @@ export interface VideoCardProps {
   refreshSignal?: number;
   /** HTML 挂起（专注模式备场）：true 时不挂载 iframe，等开始键再加载 */
   htmlSuspended?: boolean;
+  /** 录制舞台标签（通常为模型名/标题）；null 不显示 */
+  recordLabel?: string | null;
   /** HTML 播放控制命令（父级广播；id 变化才执行） */
   htmlCommand?: { id: number; action: 'pause' | 'play'; at?: number } | null;
   /** HTML 重载信号：tick 变化时重挂 iframe；hold=true 时加载完成后先备场再等统一 play */
@@ -151,6 +153,7 @@ export const VideoCard = memo(function VideoCard({
   titleColor = TITLE_COLOR_DEFAULT,
   refreshSignal = 0,
   htmlSuspended = false,
+  recordLabel = null,
   htmlCommand = null,
   htmlReload,
   onHtmlReady,
@@ -851,6 +854,13 @@ export const VideoCard = memo(function VideoCard({
           )}>
             <ImageIcon className="h-3 w-3" aria-hidden />
             图片
+          </span>
+        )}
+
+        {/* 录制舞台模型标签：只在录制态传入，普通工作台不显示 */}
+        {recordLabel && (
+          <span className="pointer-events-none absolute bottom-2.5 left-2.5 z-20 max-w-[75%] truncate rounded-md border border-white/10 bg-black/65 px-2 py-1 text-[11px] font-semibold text-white/95 backdrop-blur-sm">
+            {recordLabel}
           </span>
         )}
 
