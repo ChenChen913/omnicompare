@@ -12,6 +12,7 @@ import { promises as fsp, createReadStream } from 'fs';
 import { Readable } from 'stream';
 import { resolveFileAnyProject } from '@/lib/project-store';
 import { mimeFromExt } from '@/lib/types';
+import { injectHtmlControl } from '@/lib/html-control';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -87,8 +88,27 @@ export async function GET(
       ? sandboxHeaders['Content-Type']
       : mimeFromExt(name),
     'Accept-Ranges': 'bytes',
+    // 沙箱 iframe 是 opaque origin：页面内的 fetch/XHR 到本站都算跨源，
+    // 没有这个头，bundle 里的 JSON / GLTF / 贴图一律读不到。
+    'Access-Control-Allow-Origin': '*',
     ...(sandboxed ? {} : { 'Cache-Control': 'public, max-age=31536000, immutable' }),
   };
+
+  // HTML：注入播放控制运行时后整文件返回（不缓存、不支持 Range）。
+  // 先于 Range 分支处理：HTML 文档不需要分段，注入后长度也会变化。
+  if (resolved.isHtml) {
+    const raw = await fsp.readFile(resolved.absolutePath);
+    const injected = injectHtmlControl(raw);
+    return new NextResponse(injected as unknown as BodyInit, {
+      status: 200,
+      headers: {
+        ...sandboxHeaders,
+        'Access-Control-Allow-Origin': '*',
+        'Accept-Ranges': 'none',
+        'Content-Length': String(injected.length),
+      },
+    });
+  }
 
   const rangeHeader = _req.headers.get('range');
   if (rangeHeader) {

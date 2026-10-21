@@ -14,6 +14,7 @@ import { promises as fsp, createReadStream } from 'fs';
 import path from 'path';
 import { resolveBundleDir } from '@/lib/project-store';
 import { mimeFromExt } from '@/lib/types';
+import { injectHtmlControl } from '@/lib/html-control';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -76,7 +77,20 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
         'Content-Type': mimeFromExt(path.basename(target)),
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'public, max-age=31536000, immutable',
+        // 沙箱 iframe 是 opaque origin：包内 fetch/XHR 到本站算跨源，
+        // 没有 ACAO，JSON/GLTF/贴图等资产读不到。
+        'Access-Control-Allow-Origin': '*',
       };
+
+  // 包的 HTML 入口：注入播放控制运行时（其余资产原样流式返回）
+  if (isHtmlEntry) {
+    const raw = await fsp.readFile(target);
+    const injected = injectHtmlControl(raw);
+    return new NextResponse(injected as unknown as BodyInit, {
+      status: 200,
+      headers: { ...headers, 'Content-Length': String(injected.length) },
+    });
+  }
 
   // 包内资产为页面级小文件（html/css/js/img/字体），整文件响应即可；视频级大文件仍走 /api/files/
   const stream = createReadStream(target);
