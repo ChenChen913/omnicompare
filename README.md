@@ -7,9 +7,9 @@ OmniCompare（灵动对比）：把多个 AI 模型产出的视频、图片与 H
 
 **简体中文** | [English](./README_EN.md)
 
-https://github.com/user-attachments/assets/94a8c775-da2a-4a25-bdb8-92f341eb76ee
+https://github.com/user-attachments/assets/493778a3-f190-48c1-88e6-edefe79b1bf2
 
-> 11 秒录屏，点开播放（含背景音乐）。
+> 25 秒录屏，点开播放（含背景音乐）。
 
 启动后的真实现场（本地实跑输出）：
 
