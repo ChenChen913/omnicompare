@@ -136,6 +136,27 @@ const positives = [
 ];
 for (const [title, id] of positives) icon(title, id);
 
+/* ---------------- 1b. 大小写：别名表统一小写只是书写约定，匹配前两侧一起归一化 ---------------- */
+const caseInsensitive = [
+  ['DEEPSEEK V3.2', 'deepseek'],
+  ['dEePsEeK', 'deepseek'],
+  ['ＤＥＥＰＳＥＥＫ－Ｒ１', 'deepseek'],
+  ['CHATGPT-5', 'chatgpt'],
+  ['QwEn3.5-Max', 'qwen'],
+  ['MIMO', 'xiaomi'],
+  ['小米 MIMO', 'xiaomi'],
+  ['GLM—4.6', 'z-ai'],
+  ['ANTHROPIC', 'claude'],
+  ['ＳＯＲＡ', 'chatgpt'],
+  ['GROK 4.7', 'grok'],
+  ['NANO BANANA', 'gemini'],
+  ['MISTRAL LARGE', 'mistral'],
+  ['KIMI K3', 'kimi'],
+  ['DOUBAO-SEEDANCE', 'doubao'],
+  ['HUNYUAN 3D', 'hunyuan'],
+];
+for (const [title, id] of caseInsensitive) icon(title, id);
+
 /* ---------------- 2. 反例：不该命中 ---------------- */
 const negatives = [
   'metadata 清理脚本',

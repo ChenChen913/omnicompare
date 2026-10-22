@@ -187,7 +187,8 @@ data/                             # 运行时数据（gitignore，不入库）
 
 - **图库**：`public/model-icons/[id].png`（17 家厂商）。命中后把 PNG **复制**进项目 `files/`（uuid 命名），挂成普通 `icon`，渲染、缓存、替换、孤儿清理全部复用既有链路；单张 7–60KB，不引入「外部图标」类型分支
 - **规则表**：`src/lib/model-icon-rules.ts`（纯函数，无 Node API）。每家的 `aliases` 收品牌名、公司名、产品线、中文名、社区俗称（DeepSeek 的「大肥鱼」「鲸鱼」、Llama 的「羊驼」、讯飞「星火」、阶跃「跃问」……）；`strictAliases` 是需要词边界的短词（`meta` / `spark` / `wan` / `seed` / `hy3`），防止 metadata、sparkling、want 之类误判
-- **归一化**：NFKC（全角→半角）+ 小写 + 只保留字母/数字/汉字。大小写、空格、`- ‐ ‑ ‒ – — ― −`、下划线、点号、斜杠、括号、中英文逗号顿号引号、emoji、零宽字符全部抹平；「Deep Seek」「deep-seek」「ＤｅｅｐＳｅｅｋ」「🐳DeepSeek」等价
+- **归一化**：NFKC（全角→半角）+ 小写 + 只保留字母/数字/汉字。大小写、空格、`- ‐ ‑ ‒ – — ― −`、下划线、点号、斜杠、括号、中英文逗号顿号引号、emoji、零宽字符全部抹平；「Deep Seek」「deep-seek」「ＤｅｅｐＳｅｅｋ」「ＤＥＥＰＳＥＥＫ」「dEePsEeK」「🐳DeepSeek」全部等价
+  （规则表里的别名统一写成小写，只是书写约定：匹配前标题和别名都会过同一次 `normalizeKey`，所以大小写、全角大写都不影响命中；展示用的 `label` 保留正常大小写）
 - **选择**：命中多个别名时取**最长**（更具体），长度相同取标题里更早出现的；纯数字别名自带数字边界（`step3` 不命中 `step30`）
 - **状态机**（`decideAutoIcon`）：无图 + 命中 → 填；`auto` 图 + 标题换了另一家 → 换图（旧图由 `writeManifest` 集中清理）；`manual` / `off` → 永不自动改；老数据有图但无 `iconMode` → 视为手动，保守不动。菜单「根据标题自动匹配」是显式动作，可覆盖 manual/off
 - **触发点**：`PATCH /api/videos` 写标题后、`POST /api/videos/upload` 猜测标题后；都在 `withManifestLock` 内，新图标先落盘、写清单失败即删，不留孤儿
