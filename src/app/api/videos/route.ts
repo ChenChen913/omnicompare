@@ -13,7 +13,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readManifest, writeManifest, withManifestLock } from '@/lib/video-store';
 import { resolveProjectParam } from '@/lib/v1-project-param';
-import { ASPECT_RATIOS, AspectRatio, TITLE_MAX } from '@/lib/types';
+import { deleteFile } from '@/lib/project-store';
+import { applyAutoIcon } from '@/lib/model-icon-store';
+import { ASPECT_RATIOS, AspectRatio, FileMeta, TITLE_MAX } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,13 +78,22 @@ export async function PATCH(req: NextRequest) {
       return badRequest('无效的视频位置');
     }
 
+    let newIcon: FileMeta | null = null;
     if (typeof title === 'string') {
       manifest.slots[slot].title = title.trim().slice(0, TITLE_MAX);
+      // 标题写好就把对应模型图标填上（手动上传/手动移除过的槽位不动；自动图会跟着换模型）
+      newIcon = await applyAutoIcon(p.id, manifest.slots[slot]);
     }
     if (aspect !== undefined) {
       manifest.slots[slot].aspectRatio = aspect;
     }
-    await writeManifest(manifest, p.id);
+    try {
+      await writeManifest(manifest, p.id);
+    } catch (err) {
+      // 清单没写成：新落盘的图标文件没人引用，立刻删掉，避免磁盘孤儿
+      if (newIcon) await deleteFile(p.id, newIcon.filename).catch(() => {});
+      throw err;
+    }
     // 重读返回：写入层会做紧凑序重排（v2 不变量），保证客户端视图与存储一致
     return NextResponse.json(await readManifest(p.id), { headers: noStore });
   });

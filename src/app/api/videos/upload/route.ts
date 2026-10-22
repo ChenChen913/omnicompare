@@ -4,7 +4,7 @@
  * kind 由服务端按 MIME + 扩展名双判（video / html / image；zip 解压为 bundle 型 html）；成功后返回最新清单
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { saveBundle } from '@/lib/project-store';
+import { deleteFile, saveBundle } from '@/lib/project-store';
 import {
   readManifest,
   writeManifest,
@@ -13,6 +13,9 @@ import {
   withManifestLock,
 } from '@/lib/video-store';
 import { resolveProjectParam } from '@/lib/v1-project-param';
+import { applyAutoIcon } from '@/lib/model-icon-store';
+import { guessTitleFromFileName } from '@/lib/file-title';
+import type { FileMeta } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -87,8 +90,23 @@ export async function POST(req: NextRequest) {
       target.kind = 'video';
       target.video = meta;
     }
+    // 标题为空时用文件名猜一个（「DeepSeek-V3.2-Exp.mp4」→「DeepSeek-V3.2-Exp」）；
+    // 已有标题（用户手写过）一律不覆盖
+    if (!target.title.trim()) {
+      const guessed = guessTitleFromFileName(file.name);
+      if (guessed) target.title = guessed;
+    }
+    // 标题有了就顺手匹配图标（手动设置/手动移除过的槽位不动）
+    const newIcon: FileMeta | null = await applyAutoIcon(p.id, target);
+
     // 被替换条目的旧文件（视频或 HTML）由 writeManifest 集中清理，无需在此处理
-    await writeManifest(manifest, p.id);
+    try {
+      await writeManifest(manifest, p.id);
+    } catch (err) {
+      // 清单没写成：新落盘的图标无人引用，删掉避免孤儿；内容文件已由既有逻辑兜底
+      if (newIcon) await deleteFile(p.id, newIcon.filename).catch(() => {});
+      throw err;
+    }
 
     // 重读返回：写入层会做紧凑序重排（v2 不变量），保证客户端视图与存储一致
     return NextResponse.json(await readManifest(p.id), { headers: noStore });

@@ -110,6 +110,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '图标保存失败，请重试' }, { status: 500, headers: noStore });
     }
     target.icon = meta;
+    // 手动上传：标记为 manual，此后改标题不再自动换图（用户的选择优先）
+    target.iconMode = 'manual';
+    delete target.iconPreset;
     try {
       await writeManifest(manifest, p.id);
     } catch (err) {
@@ -135,9 +138,13 @@ export async function DELETE(req: NextRequest) {
     if (slot >= manifest.count) {
       return NextResponse.json({ error: '无效的内容位置' }, { status: 400, headers: noStore });
     }
-    // null = 显式清除（undefined 才是"视图未携带、保留原值"）
-    if (manifest.slots[slot].icon) {
-      manifest.slots[slot].icon = null;
+    // null = 显式清除（undefined 才是"视图未携带、保留原值"）；
+    // 同时记 off：用户既然手动移除，之后改标题也不该自动把图标加回来
+    const target = manifest.slots[slot];
+    if (target.icon || target.iconMode !== 'off') {
+      target.icon = null;
+      target.iconMode = 'off';
+      delete target.iconPreset;
       await writeManifest(manifest, p.id);
     }
     return NextResponse.json(await readManifest(p.id), { headers: noStore });

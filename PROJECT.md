@@ -19,6 +19,7 @@
 - **批量播放控制**：全部播放 / 暂停 / 重新开始 / 循环 / 全局静音，只作用于视频内容
 - **标题介绍**：标题框（通常填模型名）位置三选一——内容下方 / 内容上方标题行（编号 + 头像 + 标题，无框贴边与卡片背景融为一体，不遮内容）/ 内容顶部叠加，全局同步；字重 100-900 滑杆自由调节、字号上限 96px；自动增高、防抖保存（600ms），刷新不丢
 - **卡片图标**：内容上方标题带左侧可上传头像/图标（48~96px 随字号自适应，按原始宽高比完整显示不裁切；上传后零边框零底色，与卡片背景融为一体；PNG/JPG/WebP/SVG 等，≤5MB），点击替换或移除；图标依附内容条目持久化，替换内容不清除
+- **标题自动匹配模型图标**：标题里写了模型名（「DeepSeek V3.2」「小米 MiMo-V2.6」「大肥鱼」「Ｑｗｅｎ３」……）就自动把对应厂商图标填到标题左侧——内置 17 家厂商的图库与关键词表（含中文名、系列名、产品线、社区俗称），全角/空格/各式横杠/标点/emoji 干扰一律抹平；上传文件时标题为空会先用文件名猜一个标题再匹配；手动上传/手动移除的图标永不自动覆盖，菜单里可一键「根据标题自动匹配」重新识别
 - **Studio / Focus 双模式**：Studio 完整管理，Focus 极简演示，切换不丢内容、不打断播放
 - **暗 / 亮双主题**：暗色默认，全界面语义化配色，一键切换
 - **服务端多项目持久化**：内容文件与清单按项目存服务器，刷新页面、换设备打开均不丢失
@@ -56,7 +57,9 @@ src/
 │       │   ├── upload/route.ts   # POST 上传（FormData: file + slot）
 │       │   ├── layout/route.ts   # PATCH 数量与矩阵（缩减即删内容）
 │       │   ├── reorder/route.ts  # PATCH 拖拽排序
-│       │   └── settings/route.ts # PATCH 项目级播放与展示设置
+│       │   ├── settings/route.ts # PATCH 项目级播放与展示设置
+│       │   ├── icon/route.ts     # POST/DELETE 卡片图标（手动上传/移除）
+│       │   └── icon/auto/route.ts # POST 按标题重新匹配内置模型图标
 │       ├── projects/             # schema v2 接口（新 UI 与二次开发使用）
 │       │   ├── route.ts          # GET 列表 / POST 新建
 │       │   └── [id]/
@@ -82,6 +85,9 @@ src/
     ├── video-store.ts            # v1 兼容门面：旧 /api/videos* 语义适配到默认项目（v2）
     ├── v1-project-param.ts       # v1 路由的 ?project= 解析（400/404 语义）
     ├── v2-project-param.ts       # v2 路由的 [id] 解析（与 v1 同语义，防幽灵项目）
+    ├── model-icon-rules.ts       # 模型图标识别规则：17 家厂商关键词表 + 归一化匹配 + 自动填充状态机
+    ├── model-icon-store.ts       # 服务端：把 public/model-icons 的内置图复制进项目 files/ 并挂到条目
+    ├── file-title.ts             # 文件名 → 标题（去扩展名/副本后缀/分辨率尾巴，过滤录屏噪音名）
     └── utils.ts                  # cn() 工具
 scripts/
 ├── run-with-log.mjs              # 跨平台「终端 + 日志文件」双写运行器（替代 Unix 的 tee）
@@ -95,7 +101,9 @@ scripts/
 ├── setup-demo-mixed.sh           # 生成混合类型演示项目
 ├── test-shrink.sh                # 弹层开合零位移验证（桩化 innerWidth）
 ├── repro-concurrent.sh           # 并发一致性复现脚本
+├── test-model-icons.mjs          # 模型图标识别 + 文件名猜标题回归测试（零依赖，node 直跑）
 └── gen-test-videos.sh            # 用 ffmpeg 生成多规格测试视频（产物不入库）
+public/model-icons/               # 17 家厂商的模型图标（PNG，自动匹配的选择池；加新模型=加图+加规则）
 standalone.html                   # 免部署单页精简版（零依赖，与主应用互不依赖）
 data/                             # 运行时数据（gitignore，不入库）
 ├── projects/[id]/manifest.json   # 项目清单（schema v2：items + layout + slotCount + settings）
@@ -128,6 +136,7 @@ data/                             # 运行时数据（gitignore，不入库）
 - `items[].id`：全生命周期稳定锚点；`order` 决定矩阵位置，**恒为 0..n-1 紧凑无空洞**（任何增删后服务端重排）
 - `items[].kind`：`video | html`（MVP）；html 另有 `status` 加载状态字段；image/svg 等第二阶段预留
 - `slotCount`：可见窗格数（v1 count 的沿用，1–12）；`layout` 可为显式行列或 `"auto"`（近方形）
+- `items[].icon / iconMode / iconPreset`：卡片图标三件套。`icon` 是文件元数据（缺省 = 未设置）；`iconMode` 记录来源——`auto`（系统按标题维护，标题换模型时跟着换）/ `manual`（用户手动上传，永不自动改）/ `off`（用户手动移除，改标题也不再自动填，允许没有 icon）；`iconPreset` 是当前自动图对应的模型 id（= `public/model-icons/[id].png` 的文件名）。三者随 v1 slot 视图透传，旧客户端可安全忽略
 - v1 兼容：`/api/videos*` 仍以 slot 位置语义工作（slot i ↔ order i），由 `video-store.ts` 门面适配；Step 5 起 slot 视图携带扩展字段 `kind`（'video' | 'html'）与 `html`（HTML 条目的文件元数据）；Step 6 起清单携带 `layoutMode`（'auto' | 'manual'）；Step 7 起 slot 携带单卡比例覆盖 `aspectRatio`、清单携带 `settings`（播放与展示设置），旧客户端可安全忽略
 - 旧清单/旧文件迁移后改名为 `manifest.v1.bak.json` / `uploads.v1.bak/`，确认无误后可删除
 
@@ -173,6 +182,16 @@ data/                             # 运行时数据（gitignore，不入库）
   3. 路径逐段校验（`..`、绝对路径、盘符、空字节、Windows 保留设备名），扩展名走白名单。
   全部通过后才落盘，失败不留半包。
 - **越限中止的实现细节**：在 `ondata` 回调里抛错会被 fflate 用空 chunk 再次回调、噪音异常盖掉真实原因，所以先记录 `aborted` 再抛，由 `push` 之后的统一出口上报。
+
+### 4.6 模型图标自动匹配（标题 → 图标）
+
+- **图库**：`public/model-icons/[id].png`（17 家厂商）。命中后把 PNG **复制**进项目 `files/`（uuid 命名），挂成普通 `icon`，渲染、缓存、替换、孤儿清理全部复用既有链路；单张 7–60KB，不引入「外部图标」类型分支
+- **规则表**：`src/lib/model-icon-rules.ts`（纯函数，无 Node API）。每家的 `aliases` 收品牌名、公司名、产品线、中文名、社区俗称（DeepSeek 的「大肥鱼」「鲸鱼」、Llama 的「羊驼」、讯飞「星火」、阶跃「跃问」……）；`strictAliases` 是需要词边界的短词（`meta` / `spark` / `wan` / `seed` / `hy3`），防止 metadata、sparkling、want 之类误判
+- **归一化**：NFKC（全角→半角）+ 小写 + 只保留字母/数字/汉字。大小写、空格、`- ‐ ‑ ‒ – — ― −`、下划线、点号、斜杠、括号、中英文逗号顿号引号、emoji、零宽字符全部抹平；「Deep Seek」「deep-seek」「ＤｅｅｐＳｅｅｋ」「🐳DeepSeek」等价
+- **选择**：命中多个别名时取**最长**（更具体），长度相同取标题里更早出现的；纯数字别名自带数字边界（`step3` 不命中 `step30`）
+- **状态机**（`decideAutoIcon`）：无图 + 命中 → 填；`auto` 图 + 标题换了另一家 → 换图（旧图由 `writeManifest` 集中清理）；`manual` / `off` → 永不自动改；老数据有图但无 `iconMode` → 视为手动，保守不动。菜单「根据标题自动匹配」是显式动作，可覆盖 manual/off
+- **触发点**：`PATCH /api/videos` 写标题后、`POST /api/videos/upload` 猜测标题后；都在 `withManifestLock` 内，新图标先落盘、写清单失败即删，不留孤儿
+- **文件名 → 标题**：`src/lib/file-title.ts` 去扩展名 / `(1)` 副本后缀 / `1080p` 之类尾巴，下划线转空格；uuid、纯数字时间戳、`lv_0_…`（抖音导出）、`IMG_`/`Screenshot` 等噪音名直接判为猜不出（标题保持空）
 
 ## 5. 运行指南
 
@@ -273,6 +292,7 @@ DEST=/var/backups bash scripts/backup-data.sh
 3. **上传**：点任意空位选文件；或把文件直接拖进页面；或点「一键导入」多选文件。文件多于空位时自动扩位
 4. **写标题**：标题框（顶栏「标题」菜单可切下方/上方/叠加三种位置），点击输入，失焦后自动收折，600ms 防抖保存，最多 100 字；字重在「标题 → 标题粗细」滑杆 100-900 自由调节（含快捷档）
    「内容上方」模式下标题行呈排行榜式布局：位置编号 + 内容头像 + 标题；整行无框贴边（仅 6px 微边距，无底色无描边无圆角）与卡片背景融为一体，上传的图标零边框零底色（未上传时显示带框占位）；点击头像可上传/替换/移除图标（PNG/JPG/GIF/WebP/SVG/BMP/AVIF，≤5MB）
+   标题写好会自动匹配模型图标：写「DeepSeek」「通义千问」「小米 MiMo」「羊驼」等都能认出来（大小写/空格/横杠/全角/标点不敏感），改标题换模型会跟着换图；手动上传或移除过的图标不会被自动覆盖，点头像 →「根据标题自动匹配」可随时重算
 5. **播放与显示（顶栏随内容自动适配）**：含视频的项目显示「同时播放 / 暂停」；纯 HTML 项目没有播放概念，主动作自动变为「刷新全部」（重载全部页面回到初始状态）；混合项目两者并存（播放仅对视频生效）。循环/静音/播放速度/标题显隐/属性显隐统一收在顶栏「显示」菜单，状态保存在服务端随项目记住。无需手动选模式——导入什么内容，顶栏就长出什么控件
 6. **专注模式（录屏模式）满幅自适应**：进入后顶栏/侧栏隐藏，视频墙满幅展开——容器解除 1800px 宽度上限，大屏（2K/4K）不再「聚在中间留大边」；autoFit 求解器改为双向：墙高于视口时等比缩到恰好同屏（录屏全入镜），视口变大时逐轮回涨至满宽（旧版「只缩不放」会把历史收缩值永久卡死在屏幕中央）。右下角两个悬浮按钮（从头循环/退出）由求解器预留空间——右侧避让（墙右缘退到按钮左缘外）与底部避让（墙底缘退到按钮顶缘外）两条路径取代价更小者，任何视频数量/比例/视口下均不重叠遮挡、按钮可点。退出入口在右下角圆形按钮
 7. **使用须知**：顶栏项目切换器右侧的书本按钮可随时查看完整使用说明（弹窗形式，点空白处 / Esc / 关闭按钮均可关）
@@ -289,14 +309,15 @@ DEST=/var/backups bash scripts/backup-data.sh
 | 方法与路径 | 参数 | 成功返回 | 失败 |
 |---|---|---|---|
 | `GET /api/videos` | — | 完整 Manifest | — |
-| `POST /api/videos/upload` | FormData：`file`（视频 ≤200MB / 单文件 HTML ≤10MB / 图片 ≤20MB（PNG/JPG/GIF/WebP/SVG/BMP/AVIF）/ zip 包 ≤50MB，kind 服务端双判；zip 解压为 bundle 型 HTML 条目）、`slot`（0-based 数字字符串） | 更新后的 Manifest（slots 带扩展字段 kind/html/image/bundle）；被替换条目的旧文件/旧包目录同步删除 | 400 缺参/类型/大小/位置非法/包校验失败 |
-| `PATCH /api/videos` | JSON：`{ slot, title?, aspectRatio? }`（至少一项），标题 trim 后截断到 100 字；aspectRatio 为单卡比例覆盖（'16:9'/'9:16'/'1:1'/'original'/'custom' 或 null=恢复跟随全局，蓝图 §13） | 更新后的 Manifest | 400 |
+| `POST /api/videos/upload` | FormData：`file`（视频 ≤200MB / 单文件 HTML ≤10MB / 图片 ≤20MB（PNG/JPG/GIF/WebP/SVG/BMP/AVIF）/ zip 包 ≤50MB，kind 服务端双判；zip 解压为 bundle 型 HTML 条目）、`slot`（0-based 数字字符串）；标题为空时用文件名猜一个标题并按标题匹配图标 | 更新后的 Manifest（slots 带扩展字段 kind/html/image/bundle/icon/iconMode/iconPreset）；被替换条目的旧文件/旧包目录同步删除 | 400 缺参/类型/大小/位置非法/包校验失败 |
+| `PATCH /api/videos` | JSON：`{ slot, title?, aspectRatio? }`（至少一项），标题 trim 后截断到 100 字；aspectRatio 为单卡比例覆盖（'16:9'/'9:16'/'1:1'/'original'/'custom' 或 null=恢复跟随全局，蓝图 §13）；写标题后会按标题自动填充/切换模型图标（manual/off 不动） | 更新后的 Manifest（含 icon/iconMode/iconPreset） | 400 |
 | `DELETE /api/videos?slot=i` | 删除位置 i 的视频 | 更新后的 Manifest | 400/404 |
 | `DELETE /api/videos?all=1` | 清空全部视频与标题，**保留**当前数量与矩阵 | 更新后的 Manifest | 400 |
 | `PATCH /api/videos/layout` | JSON：`{ count(1-12), rows, cols }`，须满足 `rows*cols >= count`；缩减时删除被移除区间的文件 | 更新后的 Manifest | 400 非法参数/矩阵放不下 |
 | `PATCH /api/videos/settings` | JSON：`{ aspectRatio?, showTitles?, showInfo?, loop?, muted?, playbackRate?(0.5/1/1.25/1.5/2), letterboxFill?(base/blur), titlePosition?(below/above/overlay), titleWeight?(100-900 步进 100，旧枚举 normal/medium/bold 自动迁移为 400/500/700), titleFontSize?(12-96) }` 全部可选，仅更新提供的字段（完整字段判据见 src/lib/settings-schema.ts 规格表） | 更新后的 Manifest（含 settings） | 400 |
-| `POST /api/videos/icon?slot=n` | multipart：`file` = 卡片图标图片（PNG/JPG/GIF/WebP/SVG/BMP/AVIF，≤5MB；空位不可设置）；上传/替换该位置图标，旧图标文件同临界区清理 | 更新后的 Manifest | 201/400 |
-| `DELETE /api/videos/icon?slot=n` | 移除该位置图标（连同文件）；幂等，未设置时直接返回清单 | 更新后的 Manifest | 400 |
+| `POST /api/videos/icon?slot=n` | multipart：`file` = 卡片图标图片（PNG/JPG/GIF/WebP/SVG/BMP/AVIF，≤5MB；空位不可设置）；上传/替换该位置图标（`iconMode=manual`，此后改标题不再自动换图），旧图标文件同临界区清理 | 更新后的 Manifest | 201/400 |
+| `DELETE /api/videos/icon?slot=n` | 移除该位置图标（连同文件），并记 `iconMode=off`（改标题也不会自动加回来）；幂等，未设置时直接返回清单 | 更新后的 Manifest | 400 |
+| `POST /api/videos/icon/auto?slot=n` | 按当前标题重新匹配内置模型图标（显式覆盖 manual/off）；识别不到返回 `matched: null` 与未变更的清单 | 更新后的 Manifest + `matched`（模型 id 或 null）+ `label` | 400/500 |
 | `GET /api/files/[name]` | `name` 为 uuid 文件名（跨项目解析）；支持 `Range` 请求头；`.html`/`.svg` 强制沙箱安全响应头且禁缓存 | 200 全量 / 206 分片流 | 404（含路径穿越 `..%2F`）；非法 Range 416 |
 | `GET /api/bundles/[name]/[...path]` | zip 包内静态资产：`name` = 包目录名（[uuid].html），`path` = 包内相对路径，缺省 = `index.html`；包内 `.html`/`.htm`/**`.svg`** 同样强制 CSP 沙箱 | 200 资产流 | 400/404（含穿越） |
 
@@ -340,6 +361,7 @@ bash scripts/api-v2-smoke-test.sh      # v2 API 38 项（会在 default 外新�
 # 3) 静态体检（任一失败即需修复）
 bun run typecheck                      # tsc --noEmit
 bun run lint                           # eslint .
+bun run test:icons                     # 模型图标识别 + 文件名猜标题（133 项，零依赖，node 直跑）
 bun run scripts/find-dead-code.mjs     # import 图可达性，列出死代码
 
 # 4) 浏览器端到端（需 agent-browser；会自带临时 dev server，跑完自动收尾、
@@ -350,6 +372,8 @@ bash scripts/e2e-focus-fill.sh         # 专注模式全面适配 78 项（1-12 
 ```
 
 测试覆盖：v1 清单结构、布局非法参数 9 组、标题非法 7 组 + 截断、上传对抗 6 组、替换删旧文件、3 路并发一致性、缩减删文件、Range 206/416、路径穿越防护、清空无残留、排序专项（§19）；图片专项（§20）：kind 判别/SVG MIME/超大与非法类型拒收/服务响应头（immutable 与 CSP 沙箱）/替换清理；zip 包专项（§21）：bundle 标志/缺入口/zip-slip/白名单外扩展拒收/入口与深层资产服务/包内穿越 404/标志往返/包目录清理；v2 项目 CRUD、多类型上传与 kind 判别、HTML 安全响应头（CSP sandbox/nosniff/no-store）、条目排序/删除紧凑重排、布局 auto/显式、设置逐字段校验（含 letterboxFill）、默认项目删除保护。每项二元判定（通过/失败），末尾汇总。
+
+图标专项（`scripts/test-model-icons.mjs`，133 项）：17 家厂商关键词（含中文名、系列名、产品线、社区俗称）、全角/空格/各式横杠/标点/emoji 干扰、短别名误判防护（metadata / sparkling / want / step30）、最长别名优先规则、自动填充状态机（auto / manual / off / 老数据）、文件名 → 标题清洗与噪音过滤。
 
 > 注意：这两个脚本是**二元判定**，不覆盖下面这些 2026-09 修复项的行为，改动相关代码时需要手工回归
 > （或用本仓库同款手法写 PowerShell/Node 版断言）：

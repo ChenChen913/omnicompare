@@ -148,12 +148,27 @@ export async function writeManifest(
     // null = 显式清除（/api/videos/icon DELETE）；对象 = 新值/原值透传。
     // 空位不生成条目 → 连带 icon 一并消亡（移除内容即移除图标，孤儿清理扫走文件）
     const icon = slot.icon !== undefined ? slot.icon : (existing?.icon ?? null);
+    // 图标来源标记（auto/manual/off）与自动图来源：视图未携带时保留原值；
+    // 图标被换成另一张、且视图没声明模式 → 视为用户手动替换，标记降级为 manual
+    const iconChanged =
+      slot.icon !== undefined && (slot.icon?.filename ?? null) !== (existing?.icon?.filename ?? null);
+    // off 是唯一允许「没有图标」的模式：用户手动移除后，改标题不该再自动填回来
+    const iconMode: Slot['iconMode'] = icon
+      ? (slot.iconMode === 'off' ? 'manual' : (slot.iconMode ?? (iconChanged ? 'manual' : existing?.iconMode)))
+      : slot.icon !== undefined
+        ? (slot.iconMode === 'off' ? 'off' : undefined)
+        : existing?.iconMode;
+    const iconPreset = icon && iconMode === 'auto'
+      ? (slot.iconPreset ?? (iconChanged ? undefined : existing?.iconPreset))
+      : undefined;
     const base = {
       id: existing?.id ?? randomUUID(),
       title: slot.title,
       order,
       aspectRatio: slot.aspectRatio !== undefined ? slot.aspectRatio ?? null : existing?.aspectRatio ?? null,
       ...(icon ? { icon } : {}),
+      ...(iconMode ? { iconMode } : {}),
+      ...(iconPreset ? { iconPreset } : {}),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };

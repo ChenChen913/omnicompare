@@ -1,6 +1,7 @@
 /**
  * 前后端共享的常量、类型与纯工具函数（不含任何 Node API，可安全用于客户端）
  */
+import type { IconMode } from './model-icon-rules';
 
 /** 视频数量下限 / 上限 */
 export const SLOT_MIN = 1;
@@ -226,6 +227,11 @@ export interface Slot {
   /** 卡片图标/头像（above 标题带内展示，44px 圆形）：null/缺省 = 未设置；
    *  undefined = 视图未携带（旧客户端，写路径保留原值）；仅由 /api/videos/icon 路由变更 */
   icon?: FileMeta | null;
+  /** 图标管理模式（v2 扩展字段，向后兼容）：auto = 系统按标题自动维护（标题换模型时跟着换）；
+   *  manual = 用户手动上传；off = 用户手动移除后不再自动填；undefined = 老数据/未管理 */
+  iconMode?: IconMode;
+  /** 自动图标对应的模型 id（即 public/model-icons/[id].png 的文件名），仅 iconMode='auto' 时有值 */
+  iconPreset?: string;
   /** 单卡比例覆盖（Step 7 扩展字段，向后兼容）：null/缺省 = 跟随全局（蓝图 §13） */
   aspectRatio?: AspectRatio | null;
 }
@@ -380,6 +386,10 @@ export interface ContentItemBase {
   aspectRatio: AspectRatio | null;
   /** 卡片图标/头像（above 标题带）：缺省 = 未设置；仅由 /api/videos/icon 路由变更 */
   icon?: FileMeta | null;
+  /** 图标管理模式（auto/manual/off）：缺省 = 老数据或未管理；见 model-icon-rules.ts */
+  iconMode?: IconMode;
+  /** 自动图标对应的模型 id（= public/model-icons 文件名） */
+  iconPreset?: string;
   createdAt: string;
   updatedAt: string;
 }

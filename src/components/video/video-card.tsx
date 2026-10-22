@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Code2, Image as ImageIcon, ImagePlus, Loader2, Pause, Play, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
+import { Code2, Image as ImageIcon, ImagePlus, Loader2, Pause, Play, RefreshCw, Sparkles, Trash2, UploadCloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   AspectRatio,
@@ -97,6 +97,8 @@ export interface VideoCardProps {
   onIconFiles?: (file: File, slotIndex: number) => void;
   /** 移除卡片图标（连同服务端文件）：未传则头像不可移除 */
   onIconRemove?: (slotIndex: number) => void;
+  /** 按当前标题重新匹配模型图标（显式覆盖 manual/off）：未传则不显示该菜单项 */
+  onIconAuto?: (slotIndex: number) => void;
   onClear: (slotIndex: number) => void;
   setVideoRef: (index: number, el: HTMLVideoElement | null) => void;
 }
@@ -163,6 +165,7 @@ export const VideoCard = memo(function VideoCard({
   onTitleChange,
   onIconFiles,
   onIconRemove,
+  onIconAuto,
   onClear,
   setVideoRef,
 }: VideoCardProps) {
@@ -533,6 +536,17 @@ export const VideoCard = memo(function VideoCard({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="min-w-[10rem] border-border bg-card">
+                  {onIconAuto && (
+                    <DropdownMenuItem
+                      onClick={() => onIconAuto(index)}
+                      disabled={uploading || !title.trim()}
+                      title={title.trim() ? '按标题里的模型名重新匹配图标' : '先写标题再自动匹配'}
+                      className="text-[13px]"
+                    >
+                      <Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                      根据标题自动匹配
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     onClick={() => iconInputRef.current?.click()}
                     disabled={uploading}

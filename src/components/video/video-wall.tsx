@@ -42,6 +42,7 @@ import {
   isContentFile,
   validateClientFile,
 } from '@/lib/types';
+import { presetForIconFile } from '@/lib/model-icon-rules';
 import { VideoCard } from './video-card';
 import { createTabRecorder, downloadRecording, estimateRecorderMeta, recordingFilename, requestTabCapture, type RecorderMeta } from '@/lib/screen-recorder';
 import { useWallSettings } from './wall/use-wall-settings';
@@ -71,6 +72,11 @@ import {
 export function VideoWall() {
   /* ---------- 清单状态（内容位与矩阵） ---------- */
   const [slots, setSlots] = useState<Slot[]>(defaultSlots);
+  /** slots 最新快照：标题防抖请求回来时，用它判断「请求期间图标有没有被本地改过」 */
+  const slotsRef = useRef<Slot[]>(slots);
+  useEffect(() => {
+    slotsRef.current = slots;
+  }, [slots]);
   const [count, setCount] = useState(6);
   const [layout, setLayout] = useState<Layout>({ rows: 2, cols: 3 });
   /** 布局模式：auto = 按数量自动近方形（默认）；manual = 用户显式选矩阵（蓝图 §12） */
@@ -710,6 +716,8 @@ export function VideoWall() {
       // （防抖窗口内切换项目后，标题仍写进编辑它时所属的项目，而不是新项目）
       const url = withPid('/api/videos');
       titlePending.current.set(index, { title, url });
+      // 请求发出前的图标：回包里若图标变了，说明服务端按标题自动匹配/换图了
+      const beforeIcon = slotsRef.current.find((s) => s.index === index)?.icon?.filename ?? null;
       titleTimers.current.set(
         index,
         setTimeout(() => {
@@ -719,8 +727,31 @@ export function VideoWall() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ slot: index, title }),
           })
-            .then((res) => {
-              if (!res.ok) toast.error('标题保存失败，请重试', { id: 'title-save' });
+            .then(async (res) => {
+              if (!res.ok) {
+                toast.error('标题保存失败，请重试', { id: 'title-save' });
+                return;
+              }
+              // 回包只用来同步图标：标题以本地输入为准，绝不回填（避免打断正在输入的文字）
+              const data = (await res.json().catch(() => null)) as
+                | (Manifest & { error?: string })
+                | null;
+              const nextIcon = data?.slots?.find((s) => s.index === index)?.icon ?? null;
+              const nextName = nextIcon?.filename ?? null;
+              if (nextName === beforeIcon) return;
+              // 请求期间本地图标被改过（例如刚手动上传）→ 放弃合并，用户操作优先
+              const currentName =
+                slotsRef.current.find((s) => s.index === index)?.icon?.filename ?? null;
+              if (currentName !== beforeIcon) return;
+              setSlots((prev) =>
+                prev.map((s) => (s.index === index ? { ...s, icon: nextIcon } : s)),
+              );
+              if (nextIcon) {
+                const preset = presetForIconFile(nextIcon.originalName);
+                if (preset) {
+                  toast.success(`已根据标题自动匹配「${preset.label}」图标`, { id: 'icon' });
+                }
+              }
             })
             .catch(() => toast.error('标题保存失败，请检查网络后重试', { id: 'title-save' }));
         }, 600),
@@ -789,6 +820,36 @@ export function VideoWall() {
         toast.success(`已移除位置 ${index + 1} 的图标`, { id: 'icon' });
       } catch (e) {
         toast.error(e instanceof Error ? e.message : '图标移除失败，请重试', { id: 'icon' });
+      }
+    },
+    [withPid],
+  );
+
+  /** 按标题重新匹配图标（显式动作）：覆盖 manual/off；识别不到时给一句提示 */
+  const handleIconAuto = useCallback(
+    async (index: number) => {
+      try {
+        const res = await fetch(withPid(`/api/videos/icon/auto?slot=${index}`), {
+          method: 'POST',
+        });
+        const data = (await res.json().catch(() => null)) as
+          | (Manifest & { matched?: string | null; label?: string; error?: string })
+          | null;
+        if (!res.ok || !data?.slots) {
+          toast.error(data?.error || '自动匹配失败，请重试', { id: 'icon' });
+          return;
+        }
+        setSlots(data.slots);
+        const slotTitle = data.slots.find((s) => s.index === index)?.title?.trim() ?? '';
+        if (data.matched) {
+          toast.success(`已根据标题匹配「${data.label ?? data.matched}」图标`, { id: 'icon' });
+        } else if (!slotTitle) {
+          toast.info('标题还是空的，先写标题再自动匹配', { id: 'icon' });
+        } else {
+          toast.info('标题里没识别到模型名称，可手动上传图标', { id: 'icon' });
+        }
+      } catch {
+        toast.error('自动匹配失败，请重试', { id: 'icon' });
       }
     },
     [withPid],
@@ -1535,6 +1596,7 @@ export function VideoWall() {
       onTitleChange: handleTitleChange,
       onIconFiles: handleIconFiles,
       onIconRemove: handleIconRemove,
+      onIconAuto: handleIconAuto,
       onClear: handleClearSlot,
       setVideoRef,
     }),
@@ -1544,7 +1606,8 @@ export function VideoWall() {
       settings.letterboxFill, settings.htmlScale, settings.titleAlign, settings.titleFontSize,
       settings.titlePosition, settings.titleWeight, settings.titleColor,
       mode, gridDrag, htmlRefreshTick, htmlCommand, htmlReload, handleHtmlReady, focusSuspended,
-      handleSlotAspect, handleCardFiles, handleTitleChange, handleIconFiles, handleIconRemove, handleClearSlot, setVideoRef,
+      handleSlotAspect, handleCardFiles, handleTitleChange, handleIconFiles, handleIconRemove,
+      handleIconAuto, handleClearSlot, setVideoRef,
     ],
   );
 

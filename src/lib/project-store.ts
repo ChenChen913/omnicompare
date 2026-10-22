@@ -41,6 +41,7 @@ import {
   isVideoFile,
   mimeFromExt,
 } from './types';
+import type { IconMode } from './model-icon-rules';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const PROJECTS_DIR = path.join(DATA_DIR, 'projects');
@@ -151,6 +152,16 @@ function normalizeItem(raw: unknown, order: number): ContentItem | null {
   const now = new Date().toISOString();
   // 卡片图标（above 标题带）：非法/缺省省略键，落库保持精简
   const icon = normalizeFileMeta(r.icon);
+  // 图标管理模式与自动图来源（v2 扩展字段）：
+  // off 允许在没有图标时存在（用户手动移除后不再自动填）；auto/manual 必须依附图标
+  const iconMode: IconMode | undefined =
+    r.iconMode === 'off' || (icon && (r.iconMode === 'auto' || r.iconMode === 'manual'))
+      ? r.iconMode
+      : undefined;
+  const iconPreset =
+    icon && iconMode === 'auto' && typeof r.iconPreset === 'string' && /^[a-z0-9-]{1,32}$/.test(r.iconPreset)
+      ? r.iconPreset
+      : undefined;
   const base = {
     id: typeof r.id === 'string' && r.id.length > 0 ? r.id : randomUUID(),
     kind,
@@ -165,6 +176,8 @@ function normalizeItem(raw: unknown, order: number): ContentItem | null {
           : null,
     // 卡片图标（above 标题带）：非法/缺省省略键，落库保持精简
     ...(icon ? { icon } : {}),
+    ...(iconMode ? { iconMode } : {}),
+    ...(iconPreset ? { iconPreset } : {}),
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : now,
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : now,
   };
@@ -331,6 +344,13 @@ export function toSlots(project: Project): Slot[] {
     // 卡片图标随视图透传（above 标题带展示，undefined = 未设置）
     const aspect = item.aspectRatio ?? null;
     const icon = item.icon ?? null;
+    // 图标三件套一起透传：视图回写时 writeManifest 才能保留 auto/manual/off 语义
+    // （off 允许没有图标——「手动移除后别再自动填」正是不带图的状态）
+    const iconFields = {
+      ...(icon ? { icon } : {}),
+      ...(item.iconMode ? { iconMode: item.iconMode } : {}),
+      ...(item.iconPreset ? { iconPreset: item.iconPreset } : {}),
+    };
     if (item.kind === 'html') {
       return {
         index: i,
@@ -339,7 +359,7 @@ export function toSlots(project: Project): Slot[] {
         kind: 'html' as const,
         html: item.file,
         image: null,
-        ...(icon ? { icon } : {}),
+        ...iconFields,
         ...(item.bundle ? { bundle: true as const } : {}),
         aspectRatio: aspect,
       };
@@ -352,7 +372,7 @@ export function toSlots(project: Project): Slot[] {
         kind: 'image' as const,
         html: null,
         image: item.file,
-        ...(icon ? { icon } : {}),
+        ...iconFields,
         aspectRatio: aspect,
       };
     }
@@ -363,7 +383,7 @@ export function toSlots(project: Project): Slot[] {
       kind: 'video' as const,
       html: null,
       image: null,
-      ...(icon ? { icon } : {}),
+      ...iconFields,
       aspectRatio: aspect,
     };
   });
