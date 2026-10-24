@@ -19,7 +19,7 @@
 - **批量播放控制**：全部播放 / 暂停 / 重新开始 / 循环 / 全局静音，只作用于视频内容
 - **标题介绍**：标题框（通常填模型名）位置三选一——内容下方 / 内容上方标题行（编号 + 头像 + 标题，无框贴边与卡片背景融为一体，不遮内容）/ 内容顶部叠加，全局同步；字重 100-900 滑杆自由调节、字号上限 96px；自动增高、防抖保存（600ms），刷新不丢
 - **卡片图标**：内容上方标题带左侧可上传头像/图标（48~96px 随字号自适应，按原始宽高比完整显示不裁切；上传后零边框零底色，与卡片背景融为一体；PNG/JPG/WebP/SVG 等，≤5MB），点击替换或移除；图标依附内容条目持久化，替换内容不清除
-- **标题自动匹配模型图标**：标题里写了模型名（「DeepSeek V3.2」「小米 MiMo-V2.6」「大肥鱼」「Ｑｗｅｎ３」……）就自动把对应厂商图标填到标题左侧——内置 17 家厂商的图库与关键词表（含中文名、系列名、产品线、社区俗称），全角/空格/各式横杠/标点/emoji 干扰一律抹平；上传文件时标题为空会先用文件名猜一个标题再匹配；手动上传/手动移除的图标永不自动覆盖，菜单里可一键「根据标题自动匹配」重新识别
+- **标题自动匹配模型图标**：标题里写了模型名（「DeepSeek V3.2」「小米 MiMo-V2.6」「大肥鱼」「Ｑｗｅｎ３」……）就自动把对应厂商图标填到标题左侧——内置 17 家厂商的图库与关键词表（含中文名、系列名、产品线、社区俗称），全角/空格/各式横杠/标点/emoji 干扰一律抹平；上传文件时标题为空且文件名里认得出模型，就把标题填成模型名（`Kimi飞机发动机.mp4` → `Kimi`），文件名里的其余文字不进标题；手动上传/手动移除的图标永不自动覆盖，菜单里可一键「根据标题自动匹配」重新识别
 - **Studio / Focus 双模式**：Studio 完整管理，Focus 极简演示，切换不丢内容、不打断播放
 - **暗 / 亮双主题**：暗色默认，全界面语义化配色，一键切换
 - **服务端多项目持久化**：内容文件与清单按项目存服务器，刷新页面、换设备打开均不丢失
@@ -87,7 +87,6 @@ src/
     ├── v2-project-param.ts       # v2 路由的 [id] 解析（与 v1 同语义，防幽灵项目）
     ├── model-icon-rules.ts       # 模型图标识别规则：17 家厂商关键词表 + 归一化匹配 + 自动填充状态机
     ├── model-icon-store.ts       # 服务端：把 public/model-icons 的内置图复制进项目 files/ 并挂到条目
-    ├── file-title.ts             # 文件名 → 标题（去扩展名/副本后缀/分辨率尾巴，过滤录屏噪音名）
     └── utils.ts                  # cn() 工具
 scripts/
 ├── run-with-log.mjs              # 跨平台「终端 + 日志文件」双写运行器（替代 Unix 的 tee）
@@ -101,7 +100,7 @@ scripts/
 ├── setup-demo-mixed.sh           # 生成混合类型演示项目
 ├── test-shrink.sh                # 弹层开合零位移验证（桩化 innerWidth）
 ├── repro-concurrent.sh           # 并发一致性复现脚本
-├── test-model-icons.mjs          # 模型图标识别 + 文件名猜标题回归测试（零依赖，node 直跑）
+├── test-model-icons.mjs          # 模型图标识别 + 文件名只取模型名回归测试（零依赖，node 直跑）
 └── gen-test-videos.sh            # 用 ffmpeg 生成多规格测试视频（产物不入库）
 public/model-icons/               # 17 家厂商的模型图标（PNG，自动匹配的选择池；加新模型=加图+加规则）
 standalone.html                   # 免部署单页精简版（零依赖，与主应用互不依赖）
@@ -191,8 +190,8 @@ data/                             # 运行时数据（gitignore，不入库）
   （规则表里的别名统一写成小写，只是书写约定：匹配前标题和别名都会过同一次 `normalizeKey`，所以大小写、全角大写都不影响命中；展示用的 `label` 保留正常大小写）
 - **选择**：命中多个别名时取**最长**（更具体），长度相同取标题里更早出现的；纯数字别名自带数字边界（`step3` 不命中 `step30`）
 - **状态机**（`decideAutoIcon`）：无图 + 命中 → 填；`auto` 图 + 标题换了另一家 → 换图（旧图由 `writeManifest` 集中清理）；`manual` / `off` → 永不自动改；老数据有图但无 `iconMode` → 视为手动，保守不动。菜单「根据标题自动匹配」是显式动作，可覆盖 manual/off
-- **触发点**：`PATCH /api/videos` 写标题后、`POST /api/videos/upload` 猜测标题后；都在 `withManifestLock` 内，新图标先落盘、写清单失败即删，不留孤儿
-- **文件名 → 标题**：`src/lib/file-title.ts` 去扩展名 / `(1)` 副本后缀 / `1080p` 之类尾巴，下划线转空格；uuid、纯数字时间戳、`lv_0_…`（抖音导出）、`IMG_`/`Screenshot` 等噪音名直接判为猜不出（标题保持空）
+- **触发点**：`PATCH /api/videos` 写标题后、`POST /api/videos/upload` 按文件名填标题后；都在 `withManifestLock` 内，新图标先落盘、写清单失败即删，不留孤儿
+- **文件名 → 标题只取模型名**：`modelTitleFromFileName` 先剥扩展名再识别，命中就返回 `label`（`Kimi飞机发动机.mp4` → `Kimi`、`小米的MiMo飞机发动机.mov` → `小米 MiMo`）；认不出模型就保持空标题。**绝不把整串文件名塞进标题**——标题只该写模型名，作品名由用户自己写
 
 ## 5. 运行指南
 
@@ -310,7 +309,7 @@ DEST=/var/backups bash scripts/backup-data.sh
 | 方法与路径 | 参数 | 成功返回 | 失败 |
 |---|---|---|---|
 | `GET /api/videos` | — | 完整 Manifest | — |
-| `POST /api/videos/upload` | FormData：`file`（视频 ≤200MB / 单文件 HTML ≤10MB / 图片 ≤20MB（PNG/JPG/GIF/WebP/SVG/BMP/AVIF）/ zip 包 ≤50MB，kind 服务端双判；zip 解压为 bundle 型 HTML 条目）、`slot`（0-based 数字字符串）；标题为空时用文件名猜一个标题并按标题匹配图标 | 更新后的 Manifest（slots 带扩展字段 kind/html/image/bundle/icon/iconMode/iconPreset）；被替换条目的旧文件/旧包目录同步删除 | 400 缺参/类型/大小/位置非法/包校验失败 |
+| `POST /api/videos/upload` | FormData：`file`（视频 ≤200MB / 单文件 HTML ≤10MB / 图片 ≤20MB（PNG/JPG/GIF/WebP/SVG/BMP/AVIF）/ zip 包 ≤50MB，kind 服务端双判；zip 解压为 bundle 型 HTML 条目）、`slot`（0-based 数字字符串）；标题为空且文件名里认得出模型时，把标题填成模型名（其余文字不进标题）并按标题匹配图标 | 更新后的 Manifest（slots 带扩展字段 kind/html/image/bundle/icon/iconMode/iconPreset）；被替换条目的旧文件/旧包目录同步删除 | 400 缺参/类型/大小/位置非法/包校验失败 |
 | `PATCH /api/videos` | JSON：`{ slot, title?, aspectRatio? }`（至少一项），标题 trim 后截断到 100 字；aspectRatio 为单卡比例覆盖（'16:9'/'9:16'/'1:1'/'original'/'custom' 或 null=恢复跟随全局，蓝图 §13）；写标题后会按标题自动填充/切换模型图标（manual/off 不动） | 更新后的 Manifest（含 icon/iconMode/iconPreset） | 400 |
 | `DELETE /api/videos?slot=i` | 删除位置 i 的视频 | 更新后的 Manifest | 400/404 |
 | `DELETE /api/videos?all=1` | 清空全部视频与标题，**保留**当前数量与矩阵 | 更新后的 Manifest | 400 |
@@ -362,7 +361,7 @@ bash scripts/api-v2-smoke-test.sh      # v2 API 38 项（会在 default 外新�
 # 3) 静态体检（任一失败即需修复）
 bun run typecheck                      # tsc --noEmit
 bun run lint                           # eslint .
-bun run test:icons                     # 模型图标识别 + 文件名猜标题（133 项，零依赖，node 直跑）
+bun run test:icons                     # 模型图标识别 + 文件名只取模型名（153 项，零依赖，node 直跑）
 bun run scripts/find-dead-code.mjs     # import 图可达性，列出死代码
 
 # 4) 浏览器端到端（需 agent-browser；会自带临时 dev server，跑完自动收尾、
@@ -374,7 +373,7 @@ bash scripts/e2e-focus-fill.sh         # 专注模式全面适配 78 项（1-12 
 
 测试覆盖：v1 清单结构、布局非法参数 9 组、标题非法 7 组 + 截断、上传对抗 6 组、替换删旧文件、3 路并发一致性、缩减删文件、Range 206/416、路径穿越防护、清空无残留、排序专项（§19）；图片专项（§20）：kind 判别/SVG MIME/超大与非法类型拒收/服务响应头（immutable 与 CSP 沙箱）/替换清理；zip 包专项（§21）：bundle 标志/缺入口/zip-slip/白名单外扩展拒收/入口与深层资产服务/包内穿越 404/标志往返/包目录清理；v2 项目 CRUD、多类型上传与 kind 判别、HTML 安全响应头（CSP sandbox/nosniff/no-store）、条目排序/删除紧凑重排、布局 auto/显式、设置逐字段校验（含 letterboxFill）、默认项目删除保护。每项二元判定（通过/失败），末尾汇总。
 
-图标专项（`scripts/test-model-icons.mjs`，133 项）：17 家厂商关键词（含中文名、系列名、产品线、社区俗称）、全角/空格/各式横杠/标点/emoji 干扰、短别名误判防护（metadata / sparkling / want / step30）、最长别名优先规则、自动填充状态机（auto / manual / off / 老数据）、文件名 → 标题清洗与噪音过滤。
+图标专项（`scripts/test-model-icons.mjs`，153 项）：17 家厂商关键词（含中文名、系列名、产品线、社区俗称）、全角/空格/各式横杠/标点/emoji 干扰、短别名误判防护（metadata / sparkling / want / step30）、最长别名优先规则、自动填充状态机（auto / manual / off / 老数据）、文件名只取模型名当标题（`Kimi飞机发动机.mp4` → `Kimi`，认不出则保持空标题）。
 
 > 注意：这两个脚本是**二元判定**，不覆盖下面这些 2026-09 修复项的行为，改动相关代码时需要手工回归
 > （或用本仓库同款手法写 PowerShell/Node 版断言）：

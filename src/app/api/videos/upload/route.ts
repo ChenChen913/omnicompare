@@ -14,7 +14,7 @@ import {
 } from '@/lib/video-store';
 import { resolveProjectParam } from '@/lib/v1-project-param';
 import { applyAutoIcon } from '@/lib/model-icon-store';
-import { guessTitleFromFileName } from '@/lib/file-title';
+import { modelTitleFromFileName } from '@/lib/model-icon-rules';
 import type { FileMeta } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -90,11 +90,12 @@ export async function POST(req: NextRequest) {
       target.kind = 'video';
       target.video = meta;
     }
-    // 标题为空时用文件名猜一个（「DeepSeek-V3.2-Exp.mp4」→「DeepSeek-V3.2-Exp」）；
-    // 已有标题（用户手写过）一律不覆盖
+    // 标题为空时，只在文件名里认出模型的情况下填「模型名」：
+    // 「Kimi飞机发动机.mp4」→「Kimi」，其余文字一概不进标题（作品名让用户自己写）；
+    // 认不出模型就保持空标题。已有标题（用户手写过）一律不覆盖。
     if (!target.title.trim()) {
-      const guessed = guessTitleFromFileName(file.name);
-      if (guessed) target.title = guessed;
+      const modelTitle = modelTitleFromFileName(file.name);
+      if (modelTitle) target.title = modelTitle;
     }
     // 标题有了就顺手匹配图标（手动设置/手动移除过的槽位不动）
     const newIcon: FileMeta | null = await applyAutoIcon(p.id, target);

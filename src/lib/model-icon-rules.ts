@@ -278,6 +278,20 @@ export function detectModelIcon(title: string): ModelIconPreset | null {
 }
 
 /**
+ * 文件名里只取「模型名」当标题：命中内置图标返回展示名（如 "Kimi"），否则 null。
+ * 例：「Kimi飞机发动机.mp4」→「Kimi」；「飞机发动机.mp4」→ null。
+ * 标题只该写模型名，文件名里的其他文字（作品名、分辨率、后缀）一概不塞进标题。
+ *
+ * 先剥掉扩展名再识别：否则 "Spark.mp4" 会被归一化成 "sparkmp4"，
+ * 词边界把 spark 当成单词中间而漏判（strict 别名尤其明显）。
+ */
+export function modelTitleFromFileName(fileName: string): string | null {
+  const base = fileName.replace(/^.*[\\/]/, '');
+  const stem = base.replace(/\.[A-Za-z0-9]{1,8}$/, '');
+  return detectModelIcon(stem)?.label ?? null;
+}
+
+/**
  * 是否应该（重新）自动填充图标：
  * - 用户手动上传过（manual）或手动移除过（off）→ 永不自动改；
  * - 没有图 → 命中就填；

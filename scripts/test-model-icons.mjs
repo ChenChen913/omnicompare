@@ -6,15 +6,15 @@
  *
  * 覆盖：各厂商中英文名、俗称、模型系列名、全角/空格/各式横杠/标点/emoji 干扰、
  * 短别名误命中防护（metadata / sparkling / want / step30）、最高分选择、
- * 以及「文件名 → 标题」的清洗与噪音过滤。
+ * 以及「文件名里只取模型名当标题」（作品名/分辨率等其余文字不得进标题）。
  */
 import {
   detectModelIcon,
   decideAutoIcon,
   normalizeKey,
+  modelTitleFromFileName,
   presetForIconFile,
 } from '../src/lib/model-icon-rules.ts';
-import { guessTitleFromFileName, titleFromFileName } from '../src/lib/file-title.ts';
 
 let passed = 0;
 const failures = [];
@@ -225,12 +225,19 @@ check(
 check('presetForIconFile', 'deepseek.png', 'deepseek', presetForIconFile('deepseek.png')?.id ?? null);
 check('presetForIconFile', 'nope.png', null, presetForIconFile('nope.png')?.id ?? null);
 
-/* ---------------- 7. 文件名 → 标题 ---------------- */
+/* ---------------- 7. 文件名 → 标题：只取模型名，其余文字不进标题 ---------------- */
 const titleCases = [
-  ['DeepSeek-V3.2-Exp_1080p.mp4', 'DeepSeek-V3.2-Exp'],
-  ['【即梦】豆包视频.mp4', '【即梦】豆包视频'],
-  ['kimi-k2_trailer_4k.webm', 'kimi-k2 trailer'],
-  ['qwen3.5-demo (1).html', 'qwen3.5-demo'],
+  ['Kimi飞机发动机.mp4', 'Kimi'],
+  ['Kimi飞机发动机_1080p.mp4', 'Kimi'],
+  ['DeepSeek-V3.2-Exp_1080p.mp4', 'DeepSeek'],
+  ['【即梦】豆包视频.mp4', '豆包'],
+  ['小米的MiMo飞机发动机.mov', '小米 MiMo'],
+  ['qwen3.5-demo (1).html', '通义千问'],
+  ['Spark.mp4', '讯飞星火'],       // 扩展名先剥掉，strict 别名才不会被吃进单词中间
+  ['Meta.mp4', 'Meta Llama'],
+  ['Seedance 2.0 宣传片.mp4', '豆包'],
+  // 认不出来 → 保持空标题，绝不把整串文件名塞进标题
+  ['飞机发动机演示.mp4', null],
   ['lv_0_20251022163000.mp4', null],
   ['VID_20251022_163000.mp4', null],
   ['IMG_1234.png', null],
@@ -240,12 +247,10 @@ const titleCases = [
   ['未命名.mp4', null],
   ['20251022.mp4', null],
   ['x.mp4', null],
-  ['DeepSeek.mp4', 'DeepSeek'],
 ];
 for (const [name, expected] of titleCases) {
-  check('title', name, expected, guessTitleFromFileName(name));
+  check('modelTitle', name, expected, modelTitleFromFileName(name));
 }
-check('titleFromFileName', 'a_b c.mp4', 'a b c', titleFromFileName('a_b c.mp4'));
 
 /* ---------------- 输出 ---------------- */
 console.log(`\n通过 ${passed} 项`);
